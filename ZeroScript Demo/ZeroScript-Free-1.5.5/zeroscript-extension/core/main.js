@@ -138,6 +138,11 @@
     { name: "Qwen", url: "https://chat.qwen.ai/" },
     { name: "Arena", url: "https://arena.ai/text/direct" },
     { name: "Meta AI", url: "https://www.meta.ai/" },
+    { name: "Perplexity", url: "https://www.perplexity.ai/" },
+    { name: "Copilot", url: "https://copilot.microsoft.com/" },
+    { name: "Grok", url: "https://grok.com/" },
+    { name: "Poe", url: "https://poe.com/" },
+    { name: "Mistral", url: "https://chat.mistral.ai/" },
   ];
 
   const A = {

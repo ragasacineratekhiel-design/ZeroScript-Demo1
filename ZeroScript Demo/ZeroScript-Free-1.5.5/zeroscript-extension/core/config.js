@@ -8,8 +8,8 @@ const ZS = (() => {
 
   // Display name + unique marker injected at the top of the system prompt so the
   // content script can reliably recognise (and camouflage) the bootstrap turn.
-  const APP_NAME = "ZeroScript";
-  const APP_VERSION = "2.2.0";
+  const APP_NAME = "ZeroScript V2";
+  const APP_VERSION = "2.3.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── Ultra Transport (middle layer) — all possible methods ────────────
@@ -23,33 +23,33 @@ const ZS = (() => {
     PORT_HTTP: 17614,
     // All methods the bridge implements (for UI/diagnostics)
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel"],
-    // Timing tuned for ultra-low latency — v2.2.0 even tighter
-    RECONNECT_MIN: 200,      // ms — 5× faster reconnect
-    RECONNECT_MAX: 4000,
-    HEARTBEAT_MS: 4000,      // ms active — tighter for faster stale detection
-    STALE_MS: 7000,          // ms stale detection — 7000 for instant half-open catch
-    HTTP_TIMEOUT: 7000,      // tighter http timeout so hedge wins faster
-    WS_PING_MS: 4000,
-    HEDGE_MS: 280,           // WS→HTTP hedge — 280ms for ultra-fast fallback
+    // Timing tuned for ultra-low latency — v2.3.0 V2 even tighter
+    RECONNECT_MIN: 150,      // ms — ultra fast reconnect
+    RECONNECT_MAX: 3000,
+    HEARTBEAT_MS: 3500,      // ms active — V2 tighter
+    STALE_MS: 6500,          // ms stale detection — instant half-open catch
+    HTTP_TIMEOUT: 6500,      // tighter http timeout so hedge wins faster
+    WS_PING_MS: 3500,
+    HEDGE_MS: 250,           // WS→HTTP hedge — 250ms V2 ultra-fast fallback
     // Features
-    BATCH_MAX: 12,           // max tools per batch call
-    CACHE_TTL_MS: 1200,      // tools list cache — 1200ms balanced freshness
+    BATCH_MAX: 16,           // max tools per batch call — V2 expanded
+    CACHE_TTL_MS: 1000,      // tools list cache — 1000ms V2
     COMPRESSION: "deflate",  // ws per-message-deflate
     PREFERRED: "ws",         // fastest-first: ws → http → sse
-    VERSION: "2.2.0",
+    VERSION: "2.3.0",
   };
 
-// ── STABILITY v2.2 ULTRA+: super-stable agent + Studio hardening ───────
+// ── STABILITY V2.3 V2: super-stable agent + all-AI hardening ───────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 20000,        // tighter keepalive for never-lose-connection
-  STUDIO_POLL_MS: 2500,             // faster studio poll
-  STUDIO_HEARTBEAT_MS: 3000,        // 3s heartbeat — instant Studio drop detection
-  EDITOR_REDISCOVER_MS: 4000,       // faster editor rediscovery after DOM churn
-  GEN_VOTE_IDLE_MS: 1000,
-  SEND_RETRY: 3,
-  RECONNECT_BACKOFF_MS: [150, 300, 600, 1200], // faster backoff ladder
-  MAX_RECONNECT_ATTEMPTS: 12,
-  STUDIO_RECONNECT_MS: 1500,
+  AGENT_KEEPALIVE_MS: 18000,        // V2 tighter keepalive
+  STUDIO_POLL_MS: 2000,             // V2 faster studio poll
+  STUDIO_HEARTBEAT_MS: 2500,        // V2 2.5s heartbeat — instant drop detection
+  EDITOR_REDISCOVER_MS: 3500,       // V2 faster rediscovery
+  GEN_VOTE_IDLE_MS: 800,
+  SEND_RETRY: 4,
+  RECONNECT_BACKOFF_MS: [120, 250, 500, 1000], // V2 ultra backoff
+  MAX_RECONNECT_ATTEMPTS: 16,
+  STUDIO_RECONNECT_MS: 1200,
 };
   // A re-statement of the system prompt mid-session (see withSysResend in
   // core/main.js). It carries SYS_MARKER TOO - that is what drives camouflage

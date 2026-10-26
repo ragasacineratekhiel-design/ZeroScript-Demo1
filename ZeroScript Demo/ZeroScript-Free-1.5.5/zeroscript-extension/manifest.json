@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ZeroScript Free × Roblox Studio Agent",
-  "version": "2.2.0",
-  "description": "Turn ChatGPT, DeepSeek, Gemini, Claude, Kimi, GLM, Qwen, Arena or Meta AI into a Roblox Studio agent that drives Studio through a local bridge. Ultra-fast (WS+HTTP/SSE/Batch).",
+  "name": "ZeroScript V2 × Roblox Studio Agent",
+  "version": "2.3.0",
+  "description": "ZeroScript V2 — All AI supported: ChatGPT, DeepSeek, Gemini, Claude, Kimi, GLM, Qwen, Arena, Meta AI + Perplexity, Copilot, Grok, Poe, Mistral. Turn any AI into a Roblox Studio agent via local bridge. Ultra-fast (WS+HTTP/SSE/Batch).",
   "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -19,6 +19,14 @@
     "https://*.claude.ai/*",
     "https://www.meta.ai/*",
     "https://meta.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
+    "https://copilot.microsoft.com/*",
+    "https://grok.com/*",
+    "https://x.ai/*",
+    "https://poe.com/*",
+    "https://chat.mistral.ai/*",
+    "https://*.mistral.ai/*",
     "http://127.0.0.1/*",
     "http://127.0.0.1:17614/*",
     "http://localhost/*",
@@ -35,7 +43,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript Free",
+    "default_title": "ZeroScript V2",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -106,6 +114,36 @@
     {
       "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
       "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/claude.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.perplexity.ai/*", "https://perplexity.ai/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/generic.js", "providers/perplexity.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://copilot.microsoft.com/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/generic.js", "providers/copilot.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://grok.com/*", "https://x.ai/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/generic.js", "providers/grok.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://poe.com/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/generic.js", "providers/poe.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://chat.mistral.ai/*", "https://*.mistral.ai/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/generic.js", "providers/mistral.js", "core/main.js"],
       "css": ["overlay.css"],
       "run_at": "document_idle"
     }

@@ -5,6 +5,8 @@ const SUPPORTED_HOSTS = [
   "gemini.google.com", "claude.ai",
   "www.kimi.ai", "kimi.ai",
   "chat.z.ai", "chat.qwen.ai", "arena.ai", "www.meta.ai", "meta.ai",
+  "perplexity.ai", "www.perplexity.ai", "copilot.microsoft.com",
+  "grok.com", "x.ai", "poe.com", "chat.mistral.ai",
 ];
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
 

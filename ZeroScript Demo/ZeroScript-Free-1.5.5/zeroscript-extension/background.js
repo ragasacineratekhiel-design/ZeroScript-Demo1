@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript Service Worker ULTRA+ v2.2.0
+// background.js — ZeroScript Service Worker ULTRA+ v2.3.0 V2
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -17,7 +17,7 @@ const PORT_WS = 17613;
 const PORT_HTTP = 17614;
 const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
-const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://chat.deepseek.com/*"];
+const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*","https://chat.deepseek.com/*"];
 
 const RECONNECT_MIN = 150;   // v2.2 ultra fast: 150ms
 const RECONNECT_MAX = 3000;
