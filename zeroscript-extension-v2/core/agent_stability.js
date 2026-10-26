@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript Agent Super-Stability Layer v2.2.0 ULTRA+
-// Makes ALL 8 agents (DeepSeek, ChatGPT, Gemini, Kimi, GLM, Qwen, Arena, Meta)
-// super compatible, never lose connections, super stable during Roblox Studio.
-// Logic-only upgrade: no GUI/text changes.
-// Provides hardened wrappers + auto-patcher for every provider.
+// core/agent_stability.js — ZeroScript MAX Agent Stability Layer v3.0.0 MAX
+// Makes ALL 14 agents (DeepSeek, ChatGPT, Gemini, Claude MAX, Kimi, GLM, Qwen, Arena, Meta, Perplexity, Copilot, Grok, Poe, Mistral)
+// super compatible, never lose connections, super stable during Roblox Studio at MAX speed.
+// Logic-only upgrade: no GUI/text changes. MAX hedging.
 // eslint-disable-next-line no-unused-vars
 const ZSAgentStability = (() => {
   "use strict";
@@ -11,7 +10,7 @@ const ZSAgentStability = (() => {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 5000 && document.contains(lastGood)) return lastGood;
+      if (lastGood && now - lastGoodAt < 3000 && document.contains(lastGood)) return lastGood; // MAX 3s tighter
       let ed = null;
       try { ed = getEditorFn(); } catch {}
       if (ed && document.contains(ed)) { lastGood = ed; lastGoodAt = now; return ed; }
@@ -29,7 +28,7 @@ const ZSAgentStability = (() => {
     };
   }
   function makeGenerationHelper(isGeneratingFn, opts = {}) {
-    const { idleMs = 1200, streamCheck = null } = opts;
+    const { idleMs = 900, streamCheck = null } = opts; // MAX 900ms tighter
     let lastGenTrueAt = 0, lastLen = 0;
     return function hardenedIsGenerating() {
       let gen = false;
@@ -46,15 +45,15 @@ const ZSAgentStability = (() => {
       return gen;
     };
   }
-  async function hardenedSend(typeAndSendFn, text, images, maxRetries = 3) {
+  async function hardenedSend(typeAndSendFn, text, images, maxRetries = 5) { // MAX 5
     let lastErr = null;
     for (let i = 0; i < maxRetries; i++) {
       try {
         await typeAndSendFn(text, images);
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 200)); // MAX faster verify
         return true;
       } catch (e) { lastErr = e; }
-      await new Promise(r => setTimeout(r, 200 * (i+1)));
+      await new Promise(r => setTimeout(r, 120 * (i+1))); // MAX faster backoff
       if (i === maxRetries - 2 && text && text.length < 50000) {
         try { await navigator.clipboard.writeText(text); document.execCommand("paste"); } catch {}
       }
@@ -71,21 +70,20 @@ const ZSAgentStability = (() => {
         if (lastStudio === null) lastStudio = studio;
         if (studio === false && lastStudio === true) {
           if (!dropSince) dropSince = Date.now();
-          if (Date.now() - dropSince > 5000 && onStudioDrop) try { onStudioDrop(s); } catch {}
+          if (Date.now() - dropSince > 3000 && onStudioDrop) try { onStudioDrop(s); } catch {} // MAX 3s faster
           try { diag("studio.drop", {studio, since: Date.now()-dropSince}); } catch {}
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 3000);
+    }, 1800); // MAX 1.8s poll
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
     const iv = setInterval(() => {
       try { chrome.runtime.sendMessage({type:"ping"}, ()=>{}); } catch {}
-      try { if (getEditor && document.hasFocus()) { /* keep session alive */ } } catch {}
-      // also touch bridge status to keep service worker alive (MV3 sleep guard)
+      try { if (getEditor && document.hasFocus()) { /* keep alive */ } } catch {}
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
-    }, 20000); // v2.2: tighter 20s keepalive for never-lose-connection
+    }, 12000); // MAX 12s keepalive
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -96,77 +94,63 @@ const ZSAgentStability = (() => {
   const FALLBACKS = {
     deepseek: ["textarea", "[data-testid=composer-input]", "[role=textbox]", "div[contenteditable]"],
     chatgpt: ["#prompt-textarea", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror", "div[data-lexical-editor]"],
+    claude: ["div[contenteditable='true']", "div.ProseMirror", "div[data-placeholder]", "textarea", "[role=textbox]"], // MAX Claude
     gemini: [".ql-editor", "[contenteditable=true]", "textarea", "div[role=textbox]", "rich-textarea"],
     kimi: [".chat-input-editor", "[data-lexical-editor]", "[contenteditable=true]", "textarea"],
     glm: ["#chat-input", "textarea", "[contenteditable=true]", "div[role=textbox]"],
     qwen: [".message-input-textarea", "textarea", "[contenteditable=true]", ".qwen-composer-editor"],
     meta: ["[data-testid=composer-input]", "textarea", "[contenteditable=true]", "div[contenteditable]"],
     arena: ["textarea", "form textarea", "[contenteditable=true]", "div[role=textbox]"],
+    generic: ["textarea", "[contenteditable=true]", "[role=textbox]", "div.ProseMirror", "div[contenteditable]"],
   };
 
-  // Auto-patcher: wraps ZSProvider after it loads to make every agent super stable
-  // without editing each provider file. Handles editor rediscovery, gen voting,
-  // keepalive, studio monitor, visibility pause/resume.
   let _patched = false;
   function tryPatch() {
     if (_patched) return true;
     const P = (typeof ZSProvider !== "undefined" ? ZSProvider : (typeof window !== "undefined" && window.ZSProvider) ? window.ZSProvider : null);
     if (!P || !P.getEditor || !P.isGenerating) return false;
     try {
-      // Harden getEditor with fallbacks based on provider id
       const origGetEditor = P.getEditor.bind(P);
       const fb = FALLBACKS[P.id] || FALLBACKS.deepseek;
       const hardGet = makeEditorHelper(origGetEditor, fb);
       P.getEditor = hardGet;
-      // Also harden editorText to use hardened editor
       if (P.editorText) {
         const origET = P.editorText.bind(P);
         P.editorText = function() { try { return origET(); } catch { const e = hardGet(); return e ? (e.value||e.textContent||"") : ""; } };
       }
-      // Harden isGenerating with stream voting
       const origGen = P.isGenerating.bind(P);
       const streamCheck = P.streamLen ? (()=>{ try { const la=P.lastAssistant(); return la? P.streamLen(la):0; } catch { return 0; } }) : null;
-      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 1100, streamCheck });
+      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 900, streamCheck });
 
-      // Add keepalive + studio monitor once per provider
       if (!P._zsStabilityPatched) {
         P._zsStabilityPatched = true;
-        // keepalive every 25s
         const stopKA = startKeepalive(hardGet);
-        // studio monitor
         const stopMon = startStudioMonitor(()=>{}, (s)=>{
-          // if Studio drops, trigger provider-friendly recovery: log + keep connection
-          try { console.log("[zs-stability] Studio dropped, keeping agent alive", s); } catch {}
+          try { console.log("[zs-max] Studio dropped, keeping MAX alive", s); } catch {}
         });
-        // visibility handler: pause heavy ops when hidden, resume when visible
         installVisibilityHandler(()=>{ try { P._wasHidden=false; } catch {} }, ()=>{ try { P._wasHidden=true; } catch {} });
-        // Store cleaners for potential cleanup
         P._zsKeepaliveStop = stopKA;
         P._zsStudioMonStop = stopMon;
-        // Enhanced init wrapper: preserve original init but add beacon
         if (P.init) {
           const origInit = P.init;
           P.init = function(opts){ try { origInit.call(P, opts); } catch(e){ try{ diag("stability.init",{err:String(e)});}catch{} } };
         }
       }
       _patched = true;
-      try { console.log("[zs-stability] hardened provider", P.id); } catch {}
+      try { console.log("[zs-max] hardened provider", P.id, "MAX"); } catch {}
       return true;
-    } catch(e){ try{ console.log("[zs-stability] patch failed", e);}catch{} return false; }
+    } catch(e){ try{ console.log("[zs-max] patch failed", e);}catch{} return false; }
   }
-  // Try immediately and on intervals for SPA navigations
   try { setTimeout(tryPatch, 50); } catch {}
-  try { setTimeout(tryPatch, 400); } catch {}
-  try { setTimeout(tryPatch, 1200); } catch {}
+  try { setTimeout(tryPatch, 300); } catch {}
+  try { setTimeout(tryPatch, 800); } catch {}
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>40) clearInterval(iv); }, 200);
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>40) clearInterval(iv); }, 180);
   } catch {}
-  // Also hook provider init if it happens later: wrap future ZSProvider assignments
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;
     if (typeof Object.defineProperty === "function" && typeof window !== "undefined") {
-      // watch window.ZSProvider define
       let watched = window.ZSProvider;
       Object.defineProperty(window, "ZSProvider", {
         get(){ return watched; },

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript Service Worker ULTRA+ v2.3.0 V2
+// background.js — ZeroScript MAX Service Worker v3.0.0 MAX
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -17,15 +17,15 @@ const PORT_WS = 17613;
 const PORT_HTTP = 17614;
 const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
-const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*","https://chat.deepseek.com/*"];
+const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const RECONNECT_MIN = 150;   // v2.2 ultra fast: 150ms
-const RECONNECT_MAX = 3000;
-const HEARTBEAT_MS = 4000;   // v2.2 4s — faster Studio drop catch
-const STALE_SOCKET_MS = 7000;// v2.2 7s — instant half-open catch
+const RECONNECT_MIN = 80;    // MAX 80ms ultra
+const RECONNECT_MAX = 2500;
+const HEARTBEAT_MS = 2800;   // MAX 2.8s — instant drop
+const STALE_SOCKET_MS = 5000;// MAX 5s — instant half-open catch
 const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 7000;   // v2.2 tighter so hedge wins faster
-const HEDGE_MS = 280;        // v2.2 hedge after 280ms
+const HTTP_TIMEOUT = 5000;   // MAX 5s tight
+const HEDGE_MS = 120;        // MAX 120ms hedge — super fast
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
