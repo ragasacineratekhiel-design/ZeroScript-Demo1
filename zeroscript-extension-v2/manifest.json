@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ZeroScript V2 × Roblox Studio Agent",
-  "version": "2.3.0",
-  "description": "ZeroScript V2 — All AI supported: ChatGPT, DeepSeek, Gemini, Claude, Kimi, GLM, Qwen, Arena, Meta AI + Perplexity, Copilot, Grok, Poe, Mistral. Turn any AI into a Roblox Studio agent via local bridge. Ultra-fast (WS+HTTP/SSE/Batch).",
+  "name": "ZeroScript MAX × Roblox Studio Agent",
+  "version": "3.0.0",
+  "description": "ZeroScript MAX 3.0 — MAXIMUM power: Claude MAX + All AI (ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena, Meta, Perplexity, Copilot, Grok, Poe, Mistral). Super-fast MAX 120ms hedge, 24-batch, zero hallucination, total Studio control (Play, settings, all services).",
   "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -43,7 +43,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript V2",
+    "default_title": "ZeroScript MAX 3.0",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
