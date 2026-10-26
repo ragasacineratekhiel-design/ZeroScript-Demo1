@@ -11,7 +11,7 @@ call :log "===== %DATE% %TIME%  start.bat launched ====="
 for /f "tokens=*" %%v in ('ver') do call :log "%%v"
 
 echo.
-echo   === ZeroScript Bridge v2.2 — KEEP THIS WINDOW OPEN ===
+echo   === ZeroScript Bridge v2.2.0 ULTRA+ — KEEP THIS WINDOW OPEN ===
 echo   Do NOT close this window ^— ZeroScript stops if you do.
 echo.
 

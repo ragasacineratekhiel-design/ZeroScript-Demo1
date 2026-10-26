@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript ULTRA command parsing v2.0.0 (super-fast, all logic upgraded)
+// core/parser.js - ZeroScript ULTRA+ command parsing v2.2.0 (super-fast, all logic upgraded)
 // Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here
@@ -12,7 +12,7 @@ const ZSParse = (() => {
   "use strict";
 
   // ── ULTRA: parse cache (LRU 64, 800ms TTL) — dedupes repeated watches on same turn text ─
-  const _cache=new Map(); const CACHE_MAX=64, CACHE_TTL=800;
+  const _cache=new Map(); const CACHE_MAX=128, CACHE_TTL=1200; // v2.2: bigger + longer for stability
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }
 

@@ -36,10 +36,10 @@ pause_and_exit() {
 }
 
 echo
-echo "  === ZeroScript Bridge v2.0.0 ULTRA ==="
-echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary"
+echo "  === ZeroScript Bridge v2.2.0 ULTRA+ ==="
+echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary | Studio Full Access | All 8 Agents Super-Stable"
 echo
-log "===== MacOS_Start.command launched ====="
+log "===== MacOS_Start.command v2.2.0 launched ====="
 
 # --- 0. bridge.py must be next to us ---------------------------------------
 # If the user ran this out of a half-extracted download, bridge.py is missing
@@ -128,15 +128,26 @@ echo "  ############################################################"
 echo
 log "Launching bridge.py with $PY"
 
-"$PY" bridge.py
-BRIDGE_EXIT=$?
-log "bridge.py exited with code $BRIDGE_EXIT"
-
-echo
-if [ "$BRIDGE_EXIT" -ne 0 ]; then
-    echo "  Bridge stopped with ERROR code $BRIDGE_EXIT - scroll up for the Python"
-    echo "  error and include this whole window in any bug report (logs/start.log)."
-else
-    echo "  Bridge stopped normally."
-fi
+# Run bridge with auto-restart on non-zero exit (like start.bat)
+while true; do
+    "$PY" bridge.py
+    BRIDGE_EXIT=$?
+    log "bridge.py exited with code $BRIDGE_EXIT"
+    echo
+    if [ "$BRIDGE_EXIT" -eq 0 ]; then
+        echo "  Bridge stopped normally. You can close this window."
+        break
+    elif [ "$BRIDGE_EXIT" -eq 1073807364 ] || [ "$BRIDGE_EXIT" -eq 3221225786 ]; then
+        echo "  Bridge crashed (code $BRIDGE_EXIT) — Python/websockets mismatch."
+        echo "  Try: $PY -m pip install --upgrade --user websockets"
+        echo "  Or use Python 3.12 from python.org"
+        break
+    else
+        echo "  Bridge stopped with ERROR code $BRIDGE_EXIT — scroll up for details."
+        echo "  Auto-restarting in 3s... (close this window to stop)"
+        sleep 3
+        echo "  Restarting bridge..."
+        continue
+    fi
+done
 pause_and_exit "$BRIDGE_EXIT"

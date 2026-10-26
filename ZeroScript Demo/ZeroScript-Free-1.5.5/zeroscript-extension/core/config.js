@@ -9,7 +9,7 @@ const ZS = (() => {
   // Display name + unique marker injected at the top of the system prompt so the
   // content script can reliably recognise (and camouflage) the bootstrap turn.
   const APP_NAME = "ZeroScript";
-  const APP_VERSION = "2.1.0";
+  const APP_VERSION = "2.2.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── Ultra Transport (middle layer) — all possible methods ────────────
@@ -23,29 +23,33 @@ const ZS = (() => {
     PORT_HTTP: 17614,
     // All methods the bridge implements (for UI/diagnostics)
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel"],
-    // Timing tuned for ultra-low latency
-    RECONNECT_MIN: 200,      // ms (was 1000) — 5× faster reconnect
+    // Timing tuned for ultra-low latency — v2.2.0 even tighter
+    RECONNECT_MIN: 200,      // ms — 5× faster reconnect
     RECONNECT_MAX: 4000,
-    HEARTBEAT_MS: 5000,      // ms active (was 10000)
-    STALE_MS: 8000,          // ms stale detection (was 25000)
-    HTTP_TIMEOUT: 9000,
-    WS_PING_MS: 5000,
+    HEARTBEAT_MS: 4000,      // ms active — tighter for faster stale detection
+    STALE_MS: 7000,          // ms stale detection — 7000 for instant half-open catch
+    HTTP_TIMEOUT: 7000,      // tighter http timeout so hedge wins faster
+    WS_PING_MS: 4000,
+    HEDGE_MS: 280,           // WS→HTTP hedge — 280ms for ultra-fast fallback
     // Features
     BATCH_MAX: 12,           // max tools per batch call
-    CACHE_TTL_MS: 1500,      // tools list cache
+    CACHE_TTL_MS: 1200,      // tools list cache — 1200ms balanced freshness
     COMPRESSION: "deflate",  // ws per-message-deflate
     PREFERRED: "ws",         // fastest-first: ws → http → sse
+    VERSION: "2.2.0",
   };
 
-// ── STABILITY v2.1: super-stable agent + Studio hardening ───────────────
+// ── STABILITY v2.2 ULTRA+: super-stable agent + Studio hardening ───────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 25000,
-  STUDIO_POLL_MS: 3000,
-  STUDIO_HEARTBEAT_MS: 4000,
-  EDITOR_REDISCOVER_MS: 5000,
-  GEN_VOTE_IDLE_MS: 1100,
+  AGENT_KEEPALIVE_MS: 20000,        // tighter keepalive for never-lose-connection
+  STUDIO_POLL_MS: 2500,             // faster studio poll
+  STUDIO_HEARTBEAT_MS: 3000,        // 3s heartbeat — instant Studio drop detection
+  EDITOR_REDISCOVER_MS: 4000,       // faster editor rediscovery after DOM churn
+  GEN_VOTE_IDLE_MS: 1000,
   SEND_RETRY: 3,
-  RECONNECT_BACKOFF_MS: [200, 400, 800, 1500],
+  RECONNECT_BACKOFF_MS: [150, 300, 600, 1200], // faster backoff ladder
+  MAX_RECONNECT_ATTEMPTS: 12,
+  STUDIO_RECONNECT_MS: 1500,
 };
   // A re-statement of the system prompt mid-session (see withSysResend in
   // core/main.js). It carries SYS_MARKER TOO - that is what drives camouflage

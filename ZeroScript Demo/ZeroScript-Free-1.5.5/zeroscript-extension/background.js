@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript Service Worker ULTRA v2.0.0
+// background.js — ZeroScript Service Worker ULTRA+ v2.2.0
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -19,12 +19,13 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://chat.deepseek.com/*"];
 
-const RECONNECT_MIN = 200;   // ultra fast: 200ms (was 1000)
-const RECONNECT_MAX = 4000;
-const HEARTBEAT_MS = 5000;   // 5s (was 10s)
-const STALE_SOCKET_MS = 8000;// 8s (was 25s) — detect half-open instantly
+const RECONNECT_MIN = 150;   // v2.2 ultra fast: 150ms
+const RECONNECT_MAX = 3000;
+const HEARTBEAT_MS = 4000;   // v2.2 4s — faster Studio drop catch
+const STALE_SOCKET_MS = 7000;// v2.2 7s — instant half-open catch
 const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 9000;
+const HTTP_TIMEOUT = 7000;   // v2.2 tighter so hedge wins faster
+const HEDGE_MS = 280;        // v2.2 hedge after 280ms
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -132,32 +133,28 @@ async function httpGet(path, timeout=HTTP_TIMEOUT){
 }
 
 async function transportCall(name, args, timeout){
-  // Race WS vs HTTP, fastest wins; prefer WS when healthy
   timeout = timeout||120000;
   if(isLeader && connected && wsHealthy){
-    // try WS first with short-circuit; if WS fails quickly fallback to HTTP
+    // True hedge: WS primary, HTTP hedges after 280ms if WS hasn't resolved — proper race
     const wsPromise=sendWS({type:'call_tool', name, arguments:args, timeout}, timeout+8000);
-    // hedge with HTTP after 400ms if WS hasn't resolved (covers WS stall without fully abandoning it)
-    let httpHedge=null;
-    const hedgeTimer=setTimeout(async ()=>{
-      httpHedge=await httpPost('/api/call',{name, arguments:args, timeout});
-      // if WS still pending, resolve hedge wins only if WS hasn't yet
-      // we implement via pending map: whichever resolves first wins; wsPromise will try to resolve same pending id? Instead we do separate ids.
-    },400);
-    // But simpler: just race
-    const httpPromise=httpPost('/api/call',{name, arguments:args, timeout}, timeout+10000);
-    const res=await Promise.race([wsPromise, httpPromise.then(r=>{
-      if(r.ok) fastestTransport='http';
-      return r;
-    })]);
-    clearTimeout(hedgeTimer);
-    // If WS hedge picked http, still resolve WS pending will be ignored (separate)
+    const hedgePromise=new Promise(resolve=>{
+      const t=setTimeout(async ()=>{
+        try{ const r=await httpPost('/api/call',{name, arguments:args, timeout}, timeout+10000);
+          if(r && r.ok) fastestTransport='http';
+          resolve(r);
+        }catch(e){ resolve({ok:false, error:String(e)}); }
+      }, 280);
+      wsPromise.then(()=>clearTimeout(t)).catch(()=>clearTimeout(t));
+    });
+    const res=await Promise.race([wsPromise, hedgePromise]);
+    if(res && res.ok) return res;
+    // if hedge/WS returned error, try the other still-pending as fallback
+    try{ const a=await wsPromise; if(a && a.ok) return a; }catch{}
     return res;
   } else {
-    // WS not healthy, use HTTP directly
     const r=await httpPost('/api/call',{name, arguments:args, timeout}, timeout+10000);
-    if(r.ok) fastestTransport='http';
-    return r.ok? {ok:true, text:r.text, images:r.images||[]} : r;
+    if(r && r.ok) fastestTransport='http';
+    return r && r.ok ? {ok:true, text:r.text, images:r.images||[]} : (r||{ok:false, error:'http failed'});
   }
 }
 async function transportListTools(){

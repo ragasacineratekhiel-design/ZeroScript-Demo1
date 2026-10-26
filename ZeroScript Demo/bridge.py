@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# bridge.py — ZeroScript Bridge v2.1.0 ULTRA (all logic upgraded, designs untouched)
+# bridge.py — ZeroScript Bridge v2.2.0 ULTRA+ (all logic upgraded, designs untouched)
 # ──────────────────────────────────────────────────────────────────────────
 #  ZeroScript Bridge — Ultra-Fast Middle Layer
 #  Local WebSocket + HTTP/SSE <-> Roblox Studio MCP server
@@ -105,7 +105,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="2.0.0"
+BRIDGE_VERSION="2.2.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -185,7 +185,7 @@ metrics=Metrics()
 
 # ── rate limit (token bucket, per IP, generous for localhost) ─────────
 class RateLimiter:
-    def __init__(self, rps=200, burst=400):
+    def __init__(self, rps=250, burst=500):  # v2.2: higher throughput for batch/bulk ops
         self.rps=rps; self.burst=burst; self.tokens=burst; self.last=time.monotonic(); self.lock=threading.Lock()
     def allow(self, n=1):
         with self.lock:
@@ -197,7 +197,7 @@ _rate_limiter=RateLimiter()
 
 # ── LRU cache for idempotent queries ──────────────────────────────────
 class TTLCache:
-    def __init__(self, ttl=2.0, maxsize=256):
+    def __init__(self, ttl=1.2, maxsize=512):  # v2.2: tighter TTL, larger cache for ultra-fast
         self.ttl=ttl; self.maxsize=maxsize; self.store={}; self.lock=threading.Lock()
     def get(self,k):
         with self.lock:
@@ -214,8 +214,8 @@ class TTLCache:
                 oldest=min(self.store, key=lambda kk: self.store[kk][1])
                 self.store.pop(oldest,None)
             self.store[k]=(v, time.monotonic()+self.ttl)
-_cache_tools=TTLCache(ttl=1.5)
-_cache_status=TTLCache(ttl=1.0)
+_cache_tools=TTLCache(ttl=1.2)
+_cache_status=TTLCache(ttl=0.8)  # v2.2: tighter for instant Studio drop detection
 
 # ── Spinner/log/banner (kept from v1.5.5) ───────────────────────────────
 class _Spinner:
@@ -707,9 +707,10 @@ STUDIO_ALL_SERVICES = [
     "StarterCharacterScripts","Teams","SoundService","Chat","LocalizationService",
     "TestService","HttpService","TweenService","RunService","UserInputService",
     "ContextActionService","CollectionService","DataStoreService","MemoryStoreService",
-    "MarketplaceService","InsertService","AssetService","ContentProvider"
+    "MarketplaceService","InsertService","AssetService","ContentProvider",
+    "StarterPlayerScripts","Players","ReplicatedStorage","ServerScriptService"
 ]
-STUDIO_HEARTBEAT_INTERVAL = 4.0
+STUDIO_HEARTBEAT_INTERVAL = 3.0  # v2.2: tighter 3s for super-stable Studio monitoring
 _studio_last_ok = time.time()
 _studio_consec_fails = 0
 
@@ -1023,8 +1024,8 @@ def _start_http_server():
         server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         # TCP keepalive tuning where available
-        if hasattr(socket,"TCP_KEEPIDLE"): server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
-        if hasattr(socket,"TCP_KEEPINTVL"): server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        if hasattr(socket,"TCP_KEEPIDLE"): server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 20)  # v2.2 tighter
+        if hasattr(socket,"TCP_KEEPINTVL"): server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
         if hasattr(socket,"TCP_KEEPCNT"): server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
     except: pass
     server.daemon_threads=True

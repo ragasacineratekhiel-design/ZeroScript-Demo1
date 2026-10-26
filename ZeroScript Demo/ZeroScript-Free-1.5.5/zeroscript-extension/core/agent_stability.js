@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript Agent Super-Stability Layer v2.0.0
+// core/agent_stability.js — ZeroScript Agent Super-Stability Layer v2.2.0 ULTRA+
 // Makes ALL 8 agents (DeepSeek, ChatGPT, Gemini, Kimi, GLM, Qwen, Arena, Meta)
 // super compatible, never lose connections, super stable during Roblox Studio.
 // Logic-only upgrade: no GUI/text changes.
@@ -83,7 +83,9 @@ const ZSAgentStability = (() => {
     const iv = setInterval(() => {
       try { chrome.runtime.sendMessage({type:"ping"}, ()=>{}); } catch {}
       try { if (getEditor && document.hasFocus()) { /* keep session alive */ } } catch {}
-    }, 25000);
+      // also touch bridge status to keep service worker alive (MV3 sleep guard)
+      try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
+    }, 20000); // v2.2: tighter 20s keepalive for never-lose-connection
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -92,14 +94,14 @@ const ZSAgentStability = (() => {
     return () => document.removeEventListener("visibilitychange", h);
   }
   const FALLBACKS = {
-    deepseek: ["textarea", "[data-testid=composer-input]", "[role=textbox]"],
-    chatgpt: ["#prompt-textarea", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror"],
-    gemini: [".ql-editor", "[contenteditable=true]", "textarea", "div[role=textbox]"],
-    kimi: [".chat-input-editor", "[data-lexical-editor]", "[contenteditable=true]"],
-    glm: ["#chat-input", "textarea", "[contenteditable=true]"],
-    qwen: [".message-input-textarea", "textarea", "[contenteditable=true]"],
-    meta: ["[data-testid=composer-input]", "textarea", "[contenteditable=true]"],
-    arena: ["textarea", "form textarea", "[contenteditable=true]"],
+    deepseek: ["textarea", "[data-testid=composer-input]", "[role=textbox]", "div[contenteditable]"],
+    chatgpt: ["#prompt-textarea", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror", "div[data-lexical-editor]"],
+    gemini: [".ql-editor", "[contenteditable=true]", "textarea", "div[role=textbox]", "rich-textarea"],
+    kimi: [".chat-input-editor", "[data-lexical-editor]", "[contenteditable=true]", "textarea"],
+    glm: ["#chat-input", "textarea", "[contenteditable=true]", "div[role=textbox]"],
+    qwen: [".message-input-textarea", "textarea", "[contenteditable=true]", ".qwen-composer-editor"],
+    meta: ["[data-testid=composer-input]", "textarea", "[contenteditable=true]", "div[contenteditable]"],
+    arena: ["textarea", "form textarea", "[contenteditable=true]", "div[role=textbox]"],
   };
 
   // Auto-patcher: wraps ZSProvider after it loads to make every agent super stable

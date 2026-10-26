@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript ULTRA transport abstraction v2.0.0
+// core/transport.js — ZeroScript ULTRA+ transport abstraction v2.2.0
 // Provides unified Transport API for all middle-layer methods.
 // The actual WebSocket/HTTP/SSE/Batch logic lives in background.js (service worker);
 // this module is the content-script side thin client that talks to background via
@@ -10,7 +10,7 @@
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 1500;
+    const CACHE_MS = 1200; // v2.2: tighter cache for faster Studio attach
     const _cache = new Map(); // key -> {v, exp}
     const _inflight = new Map(); // key -> promise
 
@@ -48,8 +48,8 @@
       return p;
     }
 
-    async function status(){ return _bg({type:"status"}, {cacheTtl:400}); }
-    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:800}); }
+    async function status(){ return _bg({type:"status"}, {cacheTtl:300}); } // v2.2: 300ms for instant studio drop detection
+    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:600}); }
     async function callTool(name, args, timeout=120000){
       return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:1});
     }
