@@ -97,6 +97,7 @@
   }
   function waitForDOMChange(timeout=250){
     ensureMO();
+  try{ startStudioHealthPoll(diag); }catch{}
     return new Promise(res=>{
       const t=setTimeout(()=>{ const i=_moWaiters.indexOf(done); if(i!==-1) _moWaiters.splice(i,1); res(false); }, timeout);
       const done=()=>{ clearTimeout(t); res(true); };

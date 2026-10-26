@@ -9,7 +9,7 @@ const ZS = (() => {
   // Display name + unique marker injected at the top of the system prompt so the
   // content script can reliably recognise (and camouflage) the bootstrap turn.
   const APP_NAME = "ZeroScript";
-  const APP_VERSION = "2.0.0";
+  const APP_VERSION = "2.1.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── Ultra Transport (middle layer) — all possible methods ────────────
@@ -36,6 +36,17 @@ const ZS = (() => {
     COMPRESSION: "deflate",  // ws per-message-deflate
     PREFERRED: "ws",         // fastest-first: ws → http → sse
   };
+
+// ── STABILITY v2.1: super-stable agent + Studio hardening ───────────────
+const STABILITY = {
+  AGENT_KEEPALIVE_MS: 25000,
+  STUDIO_POLL_MS: 3000,
+  STUDIO_HEARTBEAT_MS: 4000,
+  EDITOR_REDISCOVER_MS: 5000,
+  GEN_VOTE_IDLE_MS: 1100,
+  SEND_RETRY: 3,
+  RECONNECT_BACKOFF_MS: [200, 400, 800, 1500],
+};
   // A re-statement of the system prompt mid-session (see withSysResend in
   // core/main.js). It carries SYS_MARKER TOO - that is what drives camouflage
   // and session detection, and neither should change - plus this second marker,
