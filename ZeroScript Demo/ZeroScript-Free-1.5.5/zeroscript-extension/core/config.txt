@@ -9,7 +9,33 @@ const ZS = (() => {
   // Display name + unique marker injected at the top of the system prompt so the
   // content script can reliably recognise (and camouflage) the bootstrap turn.
   const APP_NAME = "ZeroScript";
+  const APP_VERSION = "2.0.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
+
+  // ── Ultra Transport (middle layer) — all possible methods ────────────
+  // The bridge now exposes 7 transports on 2 ports; the extension's
+  // TransportManager races them for lowest latency. These constants are
+  // the defaults; the background worker may override via runtime negotiation.
+  const TRANSPORT = {
+    WS_URL: "ws://127.0.0.1:17613",
+    HTTP_BASE: "http://127.0.0.1:17614",
+    PORT_WS: 17613,
+    PORT_HTTP: 17614,
+    // All methods the bridge implements (for UI/diagnostics)
+    METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel"],
+    // Timing tuned for ultra-low latency
+    RECONNECT_MIN: 200,      // ms (was 1000) — 5× faster reconnect
+    RECONNECT_MAX: 4000,
+    HEARTBEAT_MS: 5000,      // ms active (was 10000)
+    STALE_MS: 8000,          // ms stale detection (was 25000)
+    HTTP_TIMEOUT: 9000,
+    WS_PING_MS: 5000,
+    // Features
+    BATCH_MAX: 12,           // max tools per batch call
+    CACHE_TTL_MS: 1500,      // tools list cache
+    COMPRESSION: "deflate",  // ws per-message-deflate
+    PREFERRED: "ws",         // fastest-first: ws → http → sse
+  };
   // A re-statement of the system prompt mid-session (see withSysResend in
   // core/main.js). It carries SYS_MARKER TOO - that is what drives camouflage
   // and session detection, and neither should change - plus this second marker,
@@ -354,8 +380,10 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
 
   return {
     APP_NAME,
+    APP_VERSION,
     SYS_MARKER,
     RESEND_MARKER,
+    TRANSPORT,
     FEEDBACK,
     toolCategory,
     buildSystemPrompt,

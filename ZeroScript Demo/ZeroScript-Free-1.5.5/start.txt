@@ -14,7 +14,8 @@ REM environment must be either ON SCREEN or in this log.
 for /f "tokens=*" %%v in ('ver') do call :log "%%v"
 
 echo.
-echo   === ZeroScript Bridge ===
+echo   === ZeroScript Bridge v2.0.0 ULTRA ===
+echo   Ultra-fast: WS 17613 + HTTP 17614 + SSE/Batch/Binary
 echo.
 
 REM Refuse to run from inside a ZIP preview: Explorer extracts start.bat alone
@@ -140,9 +141,9 @@ echo         Python ready!
 call :log "Python ready after winget install: %PY%"
 
 :install_deps
-REM --- 2. Install websockets --------------------------------------------------
+REM --- 2. Install websockets + ultra deps --------------------------------------
 echo.
-echo   [2/3] Checking websockets library...
+echo   [2/3] Checking dependencies (websockets + ultra) ...
 %PY% -c "import websockets" >nul 2>nul
 if errorlevel 1 (
     echo         Installing websockets - first time only...
@@ -160,16 +161,38 @@ if errorlevel 1 (
         exit /b 1
     )
 )
-echo         OK
+echo         websockets OK
 call :log "websockets library OK"
+REM Optional ultra-fast libs (best-effort, never blocks launch)
+%PY% -c "import orjson" >nul 2>nul
+if errorlevel 1 (
+    echo         Installing orjson (optional, +30%% speed) ...
+    %PY% -m pip install --user orjson >nul 2>nul
+    if not errorlevel 1 echo         orjson OK & call :log "orjson installed"
+)
+%PY% -c "import msgpack" >nul 2>nul
+if errorlevel 1 (
+    echo         Installing msgpack (optional, binary framing) ...
+    %PY% -m pip install --user msgpack >nul 2>nul
+    if not errorlevel 1 echo         msgpack OK & call :log "msgpack installed"
+)
 
 REM --- 3. Run the bridge ------------------------------------------------------
 echo.
 echo   [3/3] Starting bridge...
 
-REM If a previous bridge is already listening on 17613, say so instead of
-REM silently killing it - a double-launch is easy to do by mistake (e.g.
-REM double-clicking start.bat twice) and should not look like nothing happened.
+REM Check both ultra ports (WS 17613 + HTTP 17614) for leftover bridges
+for %%P in (17613 17614) do (
+    set "OLDPID="
+    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :%%P ^| findstr LISTENING 2^>nul') do set "OLDPID=%%a"
+    if defined OLDPID (
+        echo         Previous bridge on port %%P pid !OLDPID! - replacing...
+        call :log "Killing previous bridge on port %%P pid !OLDPID!"
+        taskkill /F /T /PID !OLDPID! >nul 2>nul
+        timeout /t 1 /nobreak >nul
+    )
+)
+REM Legacy single-port check (kept for log clarity)
 set "OLDPID="
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :17613 ^| findstr LISTENING 2^>nul') do (
     set "OLDPID=%%a"

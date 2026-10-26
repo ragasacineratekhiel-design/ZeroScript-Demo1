@@ -78,6 +78,32 @@
     }, EXPECT);
   }
 
+  // ── ULTRA: metrics + transport awareness ─────────────────────────────────
+  const ULTRA = {
+    version: (ZS.APP_VERSION||"2.0.0"),
+    transport: (ZS.TRANSPORT||{PORT_WS:17613, PORT_HTTP:17614, RECONNECT_MIN:200, HEARTBEAT_MS:5000}),
+    metrics:{ sends:0, tools:0, avgMs:0, p95Ms:0, lastToolMs:0 },
+    // micro-cache for bg status (avoid hammering bridge)
+    _statusCache:null, _statusAt:0,
+  };
+  // Fast MutationObserver helper — wakes waitForResponse instantly on DOM change
+  let _mo=null, _moWaiters=[];
+  function ensureMO(){
+    if(_mo) return;
+    try{
+      _mo=new MutationObserver(()=>{ const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch{} });
+      _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
+    }catch{}
+  }
+  function waitForDOMChange(timeout=250){
+    ensureMO();
+    return new Promise(res=>{
+      const t=setTimeout(()=>{ const i=_moWaiters.indexOf(done); if(i!==-1) _moWaiters.splice(i,1); res(false); }, timeout);
+      const done=()=>{ clearTimeout(t); res(true); };
+      _moWaiters.push(done);
+    });
+  }
+
   // Ko-fi tip link.
   const KOFI_URL = "https://ko-fi.com/sebattfg";
   // GitHub releases page - where users download the Bridge + start.bat.
@@ -489,7 +515,7 @@
           // on Qwen kept ending "empty" with a complete command in the net tap,
           // and without the branch name the cause was unfindable from the log.
           if (Date.now() - preStartSilent > 60000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; }
-          await sleep(200);
+          await Promise.race([sleep(80), waitForDOMChange(200)]);
           continue;
         }
       }
@@ -546,7 +572,7 @@
         // (effective) open-block reading is holding us.
         if (genOffFirstAt) { if (gen) waitedFlicker++; else if (effectiveBlock) waitedBlock++; }
         doneSince = 0;
-        await sleep(160);
+        await Promise.race([sleep(80), waitForDOMChange(200)]);
         continue;
       }
       if (stuckDone && gen) log("generating flag stuck - falling back to text stability");
@@ -582,8 +608,8 @@
       }
 
       if (!doneSince) doneSince = Date.now();
-      if (Date.now() - doneSince < 500) {  // 500ms settle – DOM is stable
-        await sleep(120);
+      if (Date.now() - doneSince < 280) {  // ULTRA: 280ms settle (was 500) — DOM is stable
+        await Promise.race([sleep(60), waitForDOMChange(280)]);
         continue;
       }
 
@@ -785,22 +811,51 @@
   const isContextInvalidated = (m) =>
     /Extension context invalidated|Receiving end does not exist|message port closed/i.test(m || "");
 
+  // ── ULTRA bg wrapper: dedupe, cache, retry, metrics ───────────────────
+  const _bgInflight=new Map(); // msg.type+name -> promise (coalesce identical calls within 100ms)
+  const _bgCache=new Map(); // cache for idempotent status queries (500ms)
+  function bgKey(m){ try{ return m.type+":"+(m.name||m.server_id||"")+":"+JSON.stringify(m.arguments||""); }catch{ return m.type; } }
   function bg(msg) {
-    return new Promise((resolve) => {
+    // short cache for status/list_tools so rapid UI polls don't flood bridge
+    if(msg.type==="status" && Date.now()-ULTRA._statusAt < 400 && ULTRA._statusCache){
+      return Promise.resolve(ULTRA._statusCache);
+    }
+    const k=bgKey(msg);
+    if(_bgInflight.has(k)) return _bgInflight.get(k);
+    const p=new Promise((resolve) => {
       const fail = (m) => resolve({
         ok: false,
         kind: isContextInvalidated(m) ? "stale-extension" : "disconnected",
         error: m,
       });
       try {
+        const t0=Date.now();
         chrome.runtime.sendMessage(msg, (resp) => {
           if (chrome.runtime.lastError) fail(chrome.runtime.lastError.message);
-          else resolve(resp || { ok: false, kind: "disconnected", error: "no response from background" });
+          else {
+            const out=resp || { ok: false, kind: "disconnected", error: "no response from background" };
+            if(msg.type==="status" && out && typeof out==='object' && !out.error){ ULTRA._statusCache=out; ULTRA._statusAt=Date.now(); }
+            // metrics
+            if(msg.type==="call_tool"){
+              const ms=Date.now()-t0; ULTRA.metrics.tools++; ULTRA.metrics.lastToolMs=ms;
+              ULTRA.metrics.avgMs = Math.round((ULTRA.metrics.avgMs*(ULTRA.metrics.tools-1)+ms)/ULTRA.metrics.tools);
+            }
+            resolve(out);
+          }
         });
       } catch (e) {
         fail(String(e && e.message || e));
       }
     });
+    _bgInflight.set(k,p);
+    // auto-evict coalesce after 120ms (so distinct quick calls don't wrongly share)
+    setTimeout(()=> _bgInflight.delete(k), 120);
+    // cache eviction for status already via TTL above
+    return p;
+  }
+  // Batch helper — new in ULTRA (uses bridge /api/batch if available)
+  function bgBatch(calls){
+    return bg({type:"call_batch", calls});
   }
 
   // 'subagent' is always blocked (long-running, hangs the loop). 'screen_capture'
@@ -860,7 +915,9 @@
   } catch {}
 
   // How long a fetched catalogue stays good enough to reuse without a round trip.
-  const TOOLS_TTL_MS = 30000;
+  // ULTRA: shorter TTL (8s vs 30s) so Studio MCP attach is seen ~4× faster,
+  // but still coalesced via bg cache so repeated calls don't flood.
+  const TOOLS_TTL_MS = 8000;
 
   // Refresh the tool catalogue - but never pay for it twice in a row.
   //

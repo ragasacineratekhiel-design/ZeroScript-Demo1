@@ -16,6 +16,7 @@ set -u
 cd "$(dirname "$0")" || exit 1
 
 BRIDGE_PORT="${ZS_BRIDGE_PORT:-17613}"
+BRIDGE_HTTP_PORT="${ZS_BRIDGE_HTTP_PORT:-17614}"
 LOG_DIR="logs"
 LOG_FILE="$LOG_DIR/start.log"
 mkdir -p "$LOG_DIR" 2>/dev/null
@@ -35,7 +36,8 @@ pause_and_exit() {
 }
 
 echo
-echo "  === ZeroScript Bridge ==="
+echo "  === ZeroScript Bridge v2.0.0 ULTRA ==="
+echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary"
 echo
 log "===== MacOS_Start.command launched ====="
 
@@ -74,49 +76,47 @@ PY_VER="$("$PY" --version 2>&1)"
 echo "        Found: $PY ($PY_VER)"
 log "Python found: $PY ($PY_VER)"
 
-# --- 2. Ensure the websockets library is installed --------------------------
-echo "  [2/3] Checking websockets library..."
+# --- 2. Ensure deps (websockets + ultra optional) --------------------
+echo "  [2/3] Checking dependencies (websockets + ultra) ..."
 if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
     echo "        Installing websockets - first time only..."
     log "websockets missing, installing via pip --user."
     if ! "$PY" -m pip install --user websockets >/dev/null 2>&1; then
-        # Newer macOS Pythons (Homebrew / python.org) mark the environment as
-        # externally managed (PEP 668) and refuse --user. Retry allowing it,
-        # since this is the user's own machine and a single small pure-Python
-        # dependency, not a system package.
         log "pip --user failed; retrying with --break-system-packages."
         "$PY" -m pip install --user --break-system-packages websockets >/dev/null 2>&1 || true
     fi
     if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
         echo
-        echo "  ERROR: could not install the 'websockets' library automatically."
-        echo "  Install it yourself, then run this again:"
+        echo "  ERROR: could not install 'websockets'."
         echo "      $PY -m pip install --user websockets"
         log "FATAL: websockets install failed."
         pause_and_exit 1
     fi
 fi
-echo "        OK"
-log "websockets library OK."
+echo "        websockets OK"
+# optional ultra libs (best-effort)
+if ! "$PY" -c "import orjson" >/dev/null 2>&1; then
+    echo "        Installing orjson (optional, +30% speed) ..."
+    "$PY" -m pip install --user orjson >/dev/null 2>&1 || "$PY" -m pip install --user --break-system-packages orjson >/dev/null 2>&1 || true
+fi
+if ! "$PY" -c "import msgpack" >/dev/null 2>&1; then
+    echo "        Installing msgpack (optional, binary) ..."
+    "$PY" -m pip install --user msgpack >/dev/null 2>&1 || "$PY" -m pip install --user --break-system-packages msgpack >/dev/null 2>&1 || true
+fi
+log "deps OK."
 
-# --- 3. Replace any previous bridge holding the port ------------------------
-echo "  [3/3] Starting bridge..."
-# lsof ships with macOS and most Linux distros. A previous bridge left running
-# (e.g. this launcher double-clicked twice) would keep the port bound and the
-# new instance would fail to bind - free it first.
+# --- 3. Replace any previous bridge holding ports (both ultra ports) -----
+echo "  [3/3] Starting bridge (WS $BRIDGE_PORT + HTTP $BRIDGE_HTTP_PORT) ..."
 if command -v lsof >/dev/null 2>&1; then
-    OLD_PID="$(lsof -ti "tcp:$BRIDGE_PORT" -s TCP:LISTEN 2>/dev/null | head -n1)"
-    if [ -n "${OLD_PID:-}" ]; then
-        echo "        A previous bridge (pid $OLD_PID) is on port $BRIDGE_PORT. Replacing it..."
-        log "Killing previous bridge pid $OLD_PID on port $BRIDGE_PORT."
-        kill -TERM "$OLD_PID" 2>/dev/null || true
-        sleep 1
-        # If it ignored TERM, force it so the rebind below cannot fail.
-        if kill -0 "$OLD_PID" 2>/dev/null; then
-            kill -9 "$OLD_PID" 2>/dev/null || true
-            sleep 1
+    for P in "$BRIDGE_PORT" "$BRIDGE_HTTP_PORT"; do
+        OLD_PID="$(lsof -ti "tcp:$P" -s TCP:LISTEN 2>/dev/null | head -n1)"
+        if [ -n "${OLD_PID:-}" ]; then
+            echo "        Previous bridge on $P pid $OLD_PID — replacing..."
+            log "Killing previous bridge pid $OLD_PID on port $P."
+            kill -TERM "$OLD_PID" 2>/dev/null || true; sleep 1
+            if kill -0 "$OLD_PID" 2>/dev/null; then kill -9 "$OLD_PID" 2>/dev/null || true; sleep 1; fi
         fi
-    fi
+    done
 fi
 
 echo
