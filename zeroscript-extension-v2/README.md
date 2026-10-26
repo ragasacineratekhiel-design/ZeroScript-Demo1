@@ -1,75 +1,55 @@
-# ZeroScript Free - AI Roblox Studio Agent (ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena, Meta AI)
+# ZeroScript V2 — Claude + All AI Roblox Studio Agent
 
-Control Roblox Studio with AI, for free. ZeroScript turns a normal AI chat (ChatGPT, DeepSeek, Google Gemini, Kimi, GLM, Qwen, Arena, or Meta AI) into an agent that builds and scripts your Roblox game for you: just describe what you want, and it reads/edits scripts, runs Luau, inspects the game tree, and generates assets directly in Roblox Studio. No API key, no terminal, no coding required.
+> **ZeroScript V2 × Roblox Studio Agent (v2.3.0)** — Name you see in `chrome://extensions` is **ZeroScript V2**.
+> Supports **14 AI sites**: ChatGPT, DeepSeek, Gemini, **Claude**, Kimi, GLM, Qwen, Arena, Meta AI, Perplexity, Copilot, Grok, Poe, Mistral.
 
-It's a Chrome/Edge browser extension plus a small local bridge that connects the chat to Roblox Studio through the official MCP server. **DeepSeek is the recommended provider.** ChatGPT, Gemini, Kimi, GLM, Qwen, Arena and Meta AI also work. On ChatGPT, screenshots and image input are disabled on purpose (its free tier caps files/images on a separate quota from messages, so vision would only work part of the day); ChatGPT also summarises its own context in long sessions, so ZeroScript re-states its operating instructions periodically (shown as a "Reminder" chip) to stop it forgetting it can run commands. Gemini and Kimi can be less stable: Gemini tends to stop using the Roblox tools in long sessions, and Kimi sometimes reaches for its own native tools instead of the Roblox commands. On Arena, keep the mode dropdown on **Direct** (ZeroScript only supports Direct mode).
+Control **every part of Roblox Studio** with any AI chat — scripts, Luau, explorer tree, assets, **Play mode (start/stop/is_start)**, all game settings & services. No API key needed.
 
-## Setup
+It's a Chrome/Edge extension + local bridge to Studio's official MCP server.
 
-**Load the extension manually (Edge or Chrome):**
-1. Go to `edge://extensions` (Edge) or `chrome://extensions` (Chrome)
-2. Enable **Developer mode** (top right toggle)
-3. Click **Load unpacked**
-4. Select the `zeroscript-extension` folder
-5. The extension is now active
+## Install (V2) — FIXED
 
-**Then set up the Bridge:**
-1. **Download the Bridge** from the [GitHub releases page](https://github.com/sebattfg/ZeroScript-Free)
-2. **Open Roblox Studio** and load a Place
-3. **Enable the MCP server in Roblox Studio** (first time only): click **Assistant AI** in the top bar, then **...** > **Manage MCP Servers** > **Enable Studio as MCP Server**
-4. **Run the Bridge** - double-click `start.bat` (Windows) or `MacOS_Start.command` (macOS); a small window opens, the Bridge is running. On macOS, the first launch shows a Gatekeeper warning (normal for any downloaded script): click **Done**, then **System Settings > Privacy & Security**, scroll down, and click **Open Anyway**.
-5. **Go to https://chat.deepseek.com** (recommended), https://chatgpt.com, https://gemini.google.com, https://www.kimi.com, https://chat.z.ai, https://chat.qwen.ai, https://arena.ai, or https://www.meta.ai, open a new chat (only works on these exact addresses; on Arena use Direct mode)
-6. Click **Start session** in the ZeroScript panel
-7. Type what you want to build
+1. `chrome://extensions` (or `edge://extensions`) → enable **Developer mode** (top-right)
+2. **Load unpacked** → select the **`zeroscript-extension-v2`** folder at the repo root
+   - You will see **ZeroScript V2 × Roblox Studio Agent 2.3.0** with icon — if you still see the old version, click **Remove** on the old card first, then Load unpacked again, then **Reload**.
+3. Bridge: double-click `start.bat` (Windows) / `MacOS_Start.command` (macOS)
+4. In Studio: **Assistant AI → … → Manage MCP Servers → Enable Studio as MCP Server**
+5. Open any supported AI — claude.ai, chat.deepseek.com, chatgpt.com, gemini.google.com, etc. — new chat → **Start session** in the ZeroScript panel.
 
-📺 [Watch the setup tutorial](https://youtu.be/kPKiZLZ9_Ps)
+Why `zeroscript-extension-v2` at root? The old nested path `ZeroScript Demo/.../zeroscript-extension` has spaces and was not showing as V2 on GitHub main. The root copy is the same V2 extension, just easier to load.
+
+## Claude
+
+Go to https://claude.ai → new chat → panel appears via **Switch AI → Claude**. Same tools: run Luau, edit scripts, inspect tree, play mode.
+
+## All AI (Perplexity/Copilot/Grok/Poe/Mistral)
+
+Universal `providers/generic.js` fallback — any of perplexity.ai, copilot.microsoft.com, grok.com, poe.com, chat.mistral.ai works. For best stability use DeepSeek/Claude/ChatGPT.
 
 ## Architecture (for contributors)
 
-The extension is split between a provider-agnostic core and per-AI-site providers:
-
 ```
-core/config.js        system prompt, feedback strings, tool categories (global ZS)
-core/parser.js        ZeroScript command parsing - pure string logic   (global ZSParse)
-core/main.js          agentic loop, UI, camouflage, session state      (uses ZSProvider)
-providers/deepseek.js everything DeepSeek-specific: DOM selectors, generation
-                      detection, send mechanics, composer modes…       (global ZSProvider)
-providers/gemini.js   same interface for Google Gemini (Angular DOM, Quill
-                      composer, code-block masking)                    (global ZSProvider)
-providers/kimi.js     same interface for Kimi / Moonshot AI (Vue DOM, Lexical
-                      composer, segment-code masking)                  (global ZSProvider)
-providers/glm.js      same interface for GLM / Z.ai (Svelte DOM, code-block
-                      wrapper masking)                                 (global ZSProvider)
-providers/qwen.js     same interface for Qwen / chat.qwen.ai (Vue DOM, network-tap
-                      SSE stream, Monaco disposal guard)               (global ZSProvider)
-providers/qwen-net.js MAIN-world fetch tap for Qwen SSE stream        (injected by manifest)
-providers/chatgpt.js  same interface for ChatGPT / chatgpt.com (React DOM,
-                      ProseMirror composer, CodeMirror reply reading) (global ZSProvider)
-providers/chatgpt-cm.js MAIN-world CodeMirror tap: republishes each code block's
-                      TRUE document (the rendered DOM truncates long
-                      lines)                                          (injected by manifest)
-providers/arena.js    same interface for Arena / arena.ai (React DOM, multi-model
-                      playground, A/B-comparison auto-commit, Direct-mode gate) (global ZSProvider)
-providers/meta.js     same interface for Meta AI / meta.ai (React DOM, textarea
-                      composer, JSON-viewer + code-collapse masking)   (global ZSProvider)
-background.js         WebSocket to the local bridge (provider-agnostic)
+core/config.js        system prompt + OP methods + Studio total control (global ZS)
+core/parser.js        command parsing — pure strings (global ZSParse)
+core/main.js          agentic loop, UI, camouflage (uses ZSProvider)
+providers/deepseek.js per-site DOM + generation detection + send (global ZSProvider)
+providers/gemini.js   Google Gemini
+providers/claude.js   Claude (claude.ai / claude.ai)
+providers/generic.js  Universal fallback — Perplexity/Copilot/Grok/Poe/Mistral/any AI
+providers/perplexity.js wrapper → generic, etc.
+background.js         WebSocket to bridge (provider-agnostic)
+manifest.json         14 hosts + 16 content_scripts, v2.3.0
+popup.html/js         shows v2.3.0 badge, handles hosts, bridge status
 ```
 
-`core/main.js` never touches the host site's DOM directly - it only calls the
-`ZSProvider` interface. To integrate another AI site: write a new
-`providers/<site>.js` exporting the same interface, then add its URL pattern to
-`manifest.json` (`content_scripts` + `host_permissions`) and to
-`PROVIDER_URLS` in `background.js`. No core change required.
+Add a provider: write `providers/<site>.js` on the ZSProvider interface, add its URL to `manifest.json` + `PROVIDER_URLS` in `background.js`. No core change.
 
-Smoke tests (plain Node, no dependencies - run them from this directory):
+## Troubleshooting: still seeing old version / HTML doesn't work
 
-- `node test-parser.js` - the command parser (`core/parser.js`).
-- `node test-chatgpt.js` - ChatGPT reply reading (`providers/chatgpt.js`),
-  driven against a stub DOM: CodeMirror line joining, the `data-zs-cm`
-  MAIN-world tap that long code blocks depend on, and subtree exclusion.
-
-Both print `PASS`/`FAIL` per case and exit non-zero on failure.
+- GitHub now shows main at v2.3.0 (merged 2026-10-27). Hard-refresh the repo page (Ctrl+Shift+R).
+- In `chrome://extensions`, the card title must say **ZeroScript V2 × Roblox Studio Agent**. If it says anything else, you loaded the old nested folder — Remove it, Load unpacked → `zeroscript-extension-v2`.
+- Opening `popup.html` directly as a file shows a static preview — it only goes live as an extension popup. The HTML itself is valid; the popup needs `chrome.runtime` which is extension-only.
 
 ## Support
 
-☕ [Ko-fi](https://ko-fi.com/sebattfg) - Robux tip passes available in the extension panel
+☕ [Ko-fi](https://ko-fi.com/sebattfg)
