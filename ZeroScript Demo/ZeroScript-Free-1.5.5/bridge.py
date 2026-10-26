@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# bridge.py — ZeroScript Bridge v2.0.0 ULTRA (all logic upgraded, designs untouched)
+# bridge.py — ZeroScript Bridge v2.1.0 ULTRA (all logic upgraded, designs untouched)
 # ──────────────────────────────────────────────────────────────────────────
 #  ZeroScript Bridge — Ultra-Fast Middle Layer
 #  Local WebSocket + HTTP/SSE <-> Roblox Studio MCP server
@@ -775,7 +775,7 @@ def studio_bulk_ops(ops):
 
 def safe_call(name,arguments,timeout):
     try: result=mgr.call(name,arguments,timeout); return {"ok":True,"text":result["text"],"images":result["images"]}
-    except TimeoutError as e: return {"ok":False,"error":str(e),"kind":"timeout"}
+    except TimeoutError as e: return {"ok":False,"error":str(e)+ " — TIP: large simulator builds may hit timeout; split into smaller execute_luau blocks or multi_edits.","kind":"timeout"}
     except Exception as e: return {"ok":False,"error":str(e),"kind":type(e).__name__}
 
 async def run_tool_task(ws,name,args,timeout,rid):
