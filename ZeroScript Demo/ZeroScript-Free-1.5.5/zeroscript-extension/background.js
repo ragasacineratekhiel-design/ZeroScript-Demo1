@@ -17,7 +17,7 @@ const PORT_WS = 17613;
 const PORT_HTTP = 17614;
 const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
-const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://chat.deepseek.com/*"];
+const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://chat.deepseek.com/*"];
 
 const RECONNECT_MIN = 150;   // v2.2 ultra fast: 150ms
 const RECONNECT_MAX = 3000;

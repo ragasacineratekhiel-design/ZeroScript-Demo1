@@ -132,6 +132,7 @@
     { name: "DeepSeek", url: "https://chat.deepseek.com/" },
     { name: "ChatGPT", url: "https://chatgpt.com/" },
     { name: "Gemini", url: "https://gemini.google.com/app" },
+    { name: "Claude", url: "https://claude.ai/" },
     { name: "Kimi", url: "https://www.kimi.ai/" },
     { name: "GLM", url: "https://chat.z.ai/" },
     { name: "Qwen", url: "https://chat.qwen.ai/" },

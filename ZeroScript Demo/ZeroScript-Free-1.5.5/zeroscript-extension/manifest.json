@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ZeroScript Free × Roblox Studio Agent",
   "version": "2.2.0",
-  "description": "Turn ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena or Meta AI into a Roblox Studio agent that drives Studio through a local bridge. Ultra-fast (WS+HTTP/SSE/Batch).",
+  "description": "Turn ChatGPT, DeepSeek, Gemini, Claude, Kimi, GLM, Qwen, Arena or Meta AI into a Roblox Studio agent that drives Studio through a local bridge. Ultra-fast (WS+HTTP/SSE/Batch).",
   "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -15,6 +15,8 @@
     "https://chat.z.ai/*",
     "https://chat.qwen.ai/*",
     "https://arena.ai/*",
+    "https://claude.ai/*",
+    "https://*.claude.ai/*",
     "https://www.meta.ai/*",
     "https://meta.ai/*",
     "http://127.0.0.1/*",
@@ -98,6 +100,12 @@
     {
       "matches": ["https://chat.qwen.ai/*"],
       "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/qwen.js", "core/main.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://*.claude.ai/*"],
+      "js": ["core/config.js", "core/agent_stability.js", "core/transport.js", "core/parser.js", "providers/claude.js", "core/main.js"],
       "css": ["overlay.css"],
       "run_at": "document_idle"
     }
