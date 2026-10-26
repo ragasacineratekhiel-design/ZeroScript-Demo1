@@ -18,3 +18,4 @@ devtools/
 Thumbs.db
 desktop.ini
 __pycache__/
+ZeroScript Demo/__pycache__/
