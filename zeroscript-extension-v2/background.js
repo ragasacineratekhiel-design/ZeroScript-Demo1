@@ -26,7 +26,7 @@ const HEARTBEAT_MS = 2800;   // MAX 2.8s — instant drop
 const STALE_SOCKET_MS = 5000;// MAX 5s — instant half-open catch
 const REQUEST_TIMEOUT_DEFAULT = 130000;
 const HTTP_TIMEOUT = 5000;   // MAX 5s tight
-const HEDGE_MS = 120;        // MAX 120ms hedge — super fast
+const HEDGE_MS = 80;         // ULTRA 80ms hedge — matches config TRANSPORT
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
