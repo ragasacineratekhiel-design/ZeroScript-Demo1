@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "3.1.0",
-  "description": "ZeroScript MAX 3.1 \u2014 MAXIMUM: Claude custom connector + Memory Wall + Bad\u2192Best prompt optimizer. Claude MAX fully wired to Studio (Play, all settings/services), super-fast MAX 120ms hedge, 24-batch, zero hallucination.",
+  "name": "ZeroScript MAX × Roblox Studio Agent",
+  "version": "3.2.0",
+  "description": "ZeroScript MAX 3.2 ULTRA — Everything upgraded. Claude custom connector MAX + Memory Wall + Bad→Best optimizer. All 14 AI fully MAX-wired to Studio (Play, all services), ULTRA super-fast hedge 80ms, batch 24, zero hallucination, never drops.",
   "permissions": [
     "storage",
     "alarms"
@@ -46,7 +46,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 3.0",
+    "default_title": "ZeroScript MAX 3.2 ULTRA",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",

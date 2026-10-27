@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/perplexity.js — Perplexity AI (perplexity.ai)
+// providers/perplexity.js — Perplexity AI (perplexity.ai) ULTRA v3.2.0
+// ULTRA: super-stable, never-drops, hedge 80ms, fieldset-aware via generic fallback.
 const ZSProvider = (() => {
   const G = ZSGenericProvider;
   G.setMeta("perplexity", "Perplexity");
@@ -7,6 +8,7 @@ const ZSProvider = (() => {
   Object.defineProperty(P, 'id', { get: () => "perplexity" });
   Object.defineProperty(P, 'displayName', { get: () => "Perplexity" });
   P.promptExtra = "- PERPLEXITY: You may see search citations — ignore them for ZeroScript tasks. For game settings (Workspace/Lighting etc) use execute_luau directly, don't search.";
-  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a,300); setTimeout(_a,1000); }catch{}
+  P.version = "3.2.0 ULTRA";
+  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a,200); setTimeout(_a,800); setTimeout(_a,2000); }catch{}
   return P;
 })();

@@ -1019,3 +1019,8 @@ html.zs-light .zs-tip-sub,
 html.zs-light .zs-rbx-cur,
 html.zs-light .zs-tip-sep { color: #6b7280; }
 html.zs-light .zs-tip-rbx { color: #374151; }
+
+/* ULTRA 3.2.0 perf — no color change, pure logic speed */
+#zs-bar, #zs-menu, .zs-chip { will-change: transform; contain: layout style; }
+#zs-input-cover { will-change: transform; }
+.zs-chip-body pre { contain: layout; }

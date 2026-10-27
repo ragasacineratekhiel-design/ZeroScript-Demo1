@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/memory_wall.js — ZeroScript MAX Memory Wall v3.1.0 MAX
+// core/memory_wall.js — ZeroScript MAX ULTRA Memory Wall v3.2.0
 // Persistent cross-session project memory that survives reloads, SPA navs, and conversation switches.
 // The Wall stores: Overview, Where things live, Conventions, Key systems, Decisions & gotchas, User prefs, Open TODO
 // — mirrored in 3 layers: chrome.storage.local (instant), DOM beacon #zs-memory-wall (inspectable), and Roblox Studio ModuleScript at game.ServerStorage.ZeroScript.Memory (source of truth)
@@ -7,7 +7,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "3.1.0 MAX";
+  const WALL_VERSION = "3.2.0 ULTRA";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 300;
   const WALL_PRUNE_AT = 360;
