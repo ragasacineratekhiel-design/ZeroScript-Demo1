@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude.js — Anthropic Claude (claude.ai) MAX provider v3.0
+// providers/claude.js — Anthropic Claude (claude.ai) ULTRA provider v3.2.0
+// UPGRADED: fieldset composer 2026 (Claude redesign), ProseMirror inside fieldset, hedge 80ms, never drops.
 // Exports ZSProvider interface — copied 1:1 from deepseek/chatgpt quality, adapted for Claude's ProseMirror SPA.
 // Claude DOM notes (claude.ai 2025-2026, validated):
 // - Conversations: /chat/<uuid>, /new, /projects/<id>/chat/<uuid>
@@ -21,10 +22,10 @@ const ZSProvider = (() => {
     // Claude renders markdown inside assistant turn as .markdown / .prose / font-claude-response
     reply: "[data-testid='assistant-message'] .markdown, [data-testid='assistant-message'] [class*='markdown'], .font-claude-response, [data-is-user-message='false'] .prose, [data-is-user-message='false']",
     thinking: "[data-testid='thinking'], [class*='thinking'], details.thinking, [data-testid*='thought']",
-    // MAX editor selector: ProseMirror + fallbacks
-    editor: "div[contenteditable='true']",
-    sendBtn: "button[aria-label='Send message'], button[aria-label*='Send'], button[data-testid='send-button'], form button[type='submit']",
-    stopBtn: "button[aria-label*='Stop'], button[aria-label*='Cancel'], button[data-testid='stop-button']",
+    // ULTRA editor selector: fieldset composer 2026 + ProseMirror + fallbacks
+    editor: "fieldset div[contenteditable='true'], fieldset [contenteditable='true'], div[contenteditable='true']",
+    sendBtn: "fieldset button[type='submit'], button[aria-label='Send message'], button[aria-label*='Send'], button[data-testid='send-button'], form button[type='submit']",
+    stopBtn: "fieldset button[aria-label*='Stop'], button[aria-label*='Stop'], button[aria-label*='Cancel'], button[data-testid='stop-button']",
     codeWrap: "pre, code-block, div[class*='code-block']",
     errorSurfaces: "[data-testid*='error'], [role='alert'], .error, [class*='error-message'], div[class*='toast']",
   };
@@ -38,11 +39,11 @@ const ZSProvider = (() => {
     paused: /limit|quota|rate.?limit/i,
   };
 
-  // MAX timings for Claude MAX — Claude is slower reasoning but stable
+  // ULTRA timings for Claude ULTRA — tighter, never drops
   const timings = {
-    GEN_IDLE_MS: 1200,
-    REASON_IDLE_MS: 15000,
-    WARMUP_MS: 35000,
+    GEN_IDLE_MS: 1100, // was 1200 ULTRA
+    REASON_IDLE_MS: 12000, // was 15000
+    WARMUP_MS: 32000, // was 35000
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 7000,
     RESPONSE_TIMEOUT_MS: 300000,

@@ -12,7 +12,7 @@ const DEFAULT_AI_URL = "https://chat.deepseek.com/";
 
 function safeVer() {
   try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
-  return "v2.3.0";
+  return "v3.2.0";
 }
 try { document.getElementById("ver").textContent = safeVer(); } catch {}
 

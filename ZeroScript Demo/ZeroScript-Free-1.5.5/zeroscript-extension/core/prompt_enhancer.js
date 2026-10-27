@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/prompt_enhancer.js — ZeroScript MAX Prompt Optimizer v3.1.0 MAX
+// core/prompt_enhancer.js — ZeroScript MAX ULTRA Prompt Optimizer v3.2.0
 // Converts BAD / vague prompts into BEST prompts at MAX quality before they reach the AI.
 // Runs 100% locally, no network. Used by core/main.js submitAndGetBase() as pre-processor.
 // Philosophy: "make me a game" → PUBLISH-READY spec with architecture, save, polish, anti-exploit, mobile, test.
@@ -9,7 +9,7 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "3.1.0 MAX";
+  const ENHANCER_VERSION = "3.2.0 ULTRA";
 
   // ── prompt patterns → expansion ───────────────────────────────────────
   const THEMES = {

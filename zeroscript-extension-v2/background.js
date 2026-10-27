@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX Service Worker v3.0.0 MAX
+// background.js — ZeroScript MAX Service Worker v3.2.0 ULTRA
+// UPGRADED EVERYTHING: no GUI change, pure logic MAX. Hedge now uses HEDGE_MS (80ms), not hardcoded 280.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -135,7 +136,7 @@ async function httpGet(path, timeout=HTTP_TIMEOUT){
 async function transportCall(name, args, timeout){
   timeout = timeout||120000;
   if(isLeader && connected && wsHealthy){
-    // True hedge: WS primary, HTTP hedges after 280ms if WS hasn't resolved — proper race
+    // True hedge ULTRA: WS primary, HTTP hedges after HEDGE_MS if WS hasn't resolved — proper race
     const wsPromise=sendWS({type:'call_tool', name, arguments:args, timeout}, timeout+8000);
     const hedgePromise=new Promise(resolve=>{
       const t=setTimeout(async ()=>{
@@ -143,7 +144,7 @@ async function transportCall(name, args, timeout){
           if(r && r.ok) fastestTransport='http';
           resolve(r);
         }catch(e){ resolve({ok:false, error:String(e)}); }
-      }, 280);
+      }, HEDGE_MS);
       wsPromise.then(()=>clearTimeout(t)).catch(()=>clearTimeout(t));
     });
     const res=await Promise.race([wsPromise, hedgePromise]);

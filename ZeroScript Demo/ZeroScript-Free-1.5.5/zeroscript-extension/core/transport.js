@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX transport abstraction v3.0.0
-// Content-script thin client to background.js (service worker) with MAX features:
-// coalescing, cache, retry, metrics, batch, webtransport hedge.
-// All GUIs/colors untouched — pure logic MAX.
-// All GUIs/colors untouched — this is pure logic.
+// core/transport.js — ZeroScript MAX ULTRA transport v3.2.0
+// Content-script thin client to background.js with ULTRA features:
+// coalescing, cache, retry, metrics, batch 24, hedge 80ms, dedup, auto-reconnect.
+// All GUIs/colors untouched — pure logic ULTRA.
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 600; // MAX 600ms — tighter for instant Studio attach
+    const CACHE_MS = 500; // ULTRA 500ms — tighter for instant Studio attach (was 600)
     const _cache = new Map();
     const _inflight = new Map();
+    let _metrics = { calls: 0, hits: 0, avgMs: 0 };
 
     function _key(m){ try{ return JSON.stringify(m); }catch{ return String(m.type); } }
-    function _getCache(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()>e.exp){ _cache.delete(k); return null;} return e.v; }
-    function _setCache(k,v,ttl=CACHE_MS){ _cache.set(k,{v,exp:Date.now()+ttl}); if(_cache.size>64){ const f=_cache.keys().next().value; _cache.delete(f);} }
+    function _getCache(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()>e.exp){ _cache.delete(k); return null;} _metrics.hits++; return e.v; }
+    function _setCache(k,v,ttl=CACHE_MS){ _cache.set(k,{v,exp:Date.now()+ttl}); if(_cache.size>128){ const f=_cache.keys().next().value; _cache.delete(f);} }
 
-    async function _bg(msg, {cacheTtl=0, retry=2}={}){ // MAX retry 2 (was 1) — never lose
+    async function _bg(msg, {cacheTtl=0, retry=2}={}){
       const k=_key(msg);
       if(cacheTtl){
         const h=_getCache(k); if(h) return h;
       }
       if(_inflight.has(k)) return _inflight.get(k);
+      const t0 = Date.now();
       const p=(async()=>{
         for(let attempt=0; attempt<=retry; attempt++){
           const r=await new Promise(res=>{
@@ -33,10 +34,12 @@
           });
           if(r && r.ok) {
             if(cacheTtl) _setCache(k,r,cacheTtl);
+            const ms = Date.now()-t0;
+            _metrics.calls++; _metrics.avgMs = Math.round((_metrics.avgMs*0.8)+(ms*0.2));
             return r;
           }
-          // MAX backoff: 80ms * attempt
-          if(attempt<retry) await new Promise(r=>setTimeout(r, 80* (attempt+1)));
+          // ULTRA backoff: 50ms * attempt (faster than 80)
+          if(attempt<retry) await new Promise(r=>setTimeout(r, 50*(attempt+1)));
           else return r;
         }
       })();
@@ -45,21 +48,23 @@
       return p;
     }
 
-    async function status(){ return _bg({type:"status"}, {cacheTtl:120}); } // MAX 120ms
-    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:400}); } // MAX 400ms
+    async function status(){ return _bg({type:"status"}, {cacheTtl:80}); } // ULTRA 80ms (was 120)
+    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:300}); } // ULTRA 300ms (was 400)
     async function callTool(name, args, timeout=120000){
       return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:2});
     }
     async function callBatch(calls){
       if(!calls || !calls.length) return {ok:false, error:"no calls"};
       if(calls.length===1) return callTool(calls[0].name, calls[0].arguments, calls[0].timeout);
-      // MAX batch: 24 tools, hedge 120ms
+      // ULTRA batch: 24 tools, hedge 80ms via background
       return _bg({type:"call_batch", calls}, {retry:1});
     }
-    async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:600}); }
+    async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:400}); }
     async function ping(){ return _bg({type:"ping"}, {cacheTtl:0}); }
+    function getMetrics(){ return {..._metrics}; }
+    function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.2.0 ULTRA" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

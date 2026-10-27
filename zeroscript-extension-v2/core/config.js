@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // MAX identity — ZeroScript MAX 3.1 with custom Claude connector + Memory Wall + Prompt Optimizer
+  // ULTRA identity — ZeroScript MAX 3.2 ULTRA — everything upgraded, no GUI change
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.1.0";
+  const APP_VERSION = "3.2.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
@@ -18,21 +18,21 @@ const ZS = (() => {
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
-    RECONNECT_MIN: 80,       // MAX 80ms — instant reconnect
+    RECONNECT_MIN: 80,       // ULTRA 80ms — instant reconnect
     RECONNECT_MAX: 2500,
-    HEARTBEAT_MS: 2800,      // MAX 2.8s — instant Studio drop
-    STALE_MS: 5000,          // MAX 5s stale detection
-    HTTP_TIMEOUT: 5000,      // MAX 5s timeout
+    HEARTBEAT_MS: 2800,      // ULTRA 2.8s — instant Studio drop
+    STALE_MS: 5000,          // ULTRA 5s stale detection
+    HTTP_TIMEOUT: 5000,      // ULTRA 5s timeout
     WS_PING_MS: 2800,
-    HEDGE_MS: 120,           // MAX 120ms WS→HTTP hedge — super fast
-    BATCH_MAX: 24,           // MAX 24 tools per batch
-    CACHE_TTL_MS: 600,       // MAX 600ms cache — instant attach
+    HEDGE_MS: 80,            // ULTRA 80ms WS→HTTP hedge — even faster (was 120)
+    BATCH_MAX: 24,           // ULTRA 24 tools per batch
+    CACHE_TTL_MS: 500,       // ULTRA 500ms cache — tighter for instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.1.0 MAX",
+    VERSION: "3.2.0 ULTRA",
   };
 
-// ── STABILITY MAX 3.1 — never lose connection, super-stable + Wall + Optimizer ────────
+// ── STABILITY ULTRA 3.2 — never lose connection, super-stable + Wall + Optimizer + Claude fieldset ────
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 12000,        // MAX 12s keepalive
   STUDIO_POLL_MS: 1200,             // MAX 1.2s poll
@@ -152,7 +152,7 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.0 in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.2 ULTRA in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -233,7 +233,7 @@ FORBIDDEN (never):
 REQUIRED MAX PATTERNS:
 - GROUND TRUTH FIRST: Before ANY mutation, inspect_instance or get_studio_state to know real state. Store what you learned, then act. Never invent path.
 - MAX SPEED: Call list_commands first, then MAX payload per command. One execute_luau block creates ENTIRE folder tree via loops (50 parts), not one Folder at a time. Bulk-create, bulk-validate.
-- TRANSPORT MAX: Ultra transport — WebSocket primary hedge 120ms + HTTP/REST + SSE + Long-Poll + BroadcastChannel + Batch + WebTransport. Trust it — never drops. Hedge wins automatically. Use batch for 2+ independent tools.
+- TRANSPORT ULTRA: WebSocket primary hedge 80ms + HTTP/REST + SSE + Long-Poll + BroadcastChannel + Batch + WebTransport + auto-hedge. Trust it — never drops. Hedge wins automatically at 80ms. Use batch for 2+ independent tools.
 - DATAMODEL ROUTING: RIGHT datamodel — Edit for building, Server for live inspection, Client for player input. Bare ###LUA### is Edit-only.
 - INSPECT-BEFORE-MUTATE: Before critical path (DataStore, CurrentCamera, Lighting), inspect_instance first, then mutate, then verify via return.
 - PRODUCTION-LEVEL: Every script is complete, commented, exploiter-safe (server authority, RemoteEvent validation, no client trusting), pcall wrappers, type guards, Maid/cleanup, debounce, anti-exploit (check player, cooldown, distance).
