@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.2.0
+// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.3.0
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
-// UPGRADED: Claude fieldset composer 2026, tighter polls, Web Locks keepalive, universal fallbacks.
-// Logic-only — no GUI/text change.
+// UPGRADED 3.3: Claude+ChatGPT absolute fix (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
+// Logic-only — no GUI/text change except Claude tutorial doc.
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -101,7 +101,7 @@ const ZSAgentStability = (() => {
   }
   const FALLBACKS = {
     deepseek: ["textarea", "[data-testid=composer-input]", "[role=textbox]", "div[contenteditable]"],
-    chatgpt: ["#prompt-textarea", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror", "div[data-lexical-editor]"],
+    chatgpt: ["#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror", "div[data-lexical-editor]", "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][role='textbox']"],
     // ULTRA Claude: fieldset composer (2026 redesign) + legacy + textarea fallback
     claude: ["fieldset [contenteditable='true']", "fieldset textarea", "div[contenteditable='true'][data-placeholder]", "div.ProseMirror", "div[data-placeholder]", "textarea", "[role=textbox]", "[data-testid='composer-input']"],
     gemini: [".ql-editor", "[contenteditable=true]", "textarea", "div[role=textbox]", "rich-textarea"],
@@ -146,7 +146,7 @@ const ZSAgentStability = (() => {
         }
       }
       _patched = true;
-      try { console.log("[zs-ultra] hardened provider", P.id, "ULTRA 3.2.0"); } catch {}
+      try { console.log("[zs-ultra] hardened provider", P.id, "ULTRA 3.3.0"); } catch {}
       return true;
     } catch(e){ try{ console.log("[zs-ultra] patch failed", e);}catch{} return false; }
   }

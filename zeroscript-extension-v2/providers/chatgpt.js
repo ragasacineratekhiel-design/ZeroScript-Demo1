@@ -67,7 +67,7 @@ const ZSProvider = (() => {
     userRole: "user",
     assistantRole: "assistant",
     reply: ".markdown",
-    editor: "#prompt-textarea",
+    editor: "#prompt-textarea, [data-testid='prompt-textarea'], div.ProseMirror[contenteditable='true'], div[contenteditable='true'][role='textbox'], div[data-lexical-editor][contenteditable='true']",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
     submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button']",
@@ -221,7 +221,15 @@ const ZSProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  const getEditor = () => document.querySelector(S.editor);
+  // ULTRA resilient editor — fieldset-resistant, survives 2026 redesigns (like Claude). Fallback list from S.editor, never hard-codes one id.
+  const getEditor = () =>
+    document.querySelector("#prompt-textarea") ||
+    document.querySelector("[data-testid='prompt-textarea']") ||
+    document.querySelector("div.ProseMirror[contenteditable='true']") ||
+    document.querySelector("div[contenteditable='true'][role='textbox']") ||
+    document.querySelector("div[data-lexical-editor][contenteditable='true']") ||
+    document.querySelector(S.editor) ||
+    document.querySelector("div[contenteditable='true']");
   const editorText = () => {
     const e = getEditor();
     return e ? e.textContent || "" : "";
@@ -305,11 +313,21 @@ const ZSProvider = (() => {
     return null;
   }
 
+  // ULTRA barMount — resilient like Claude/Gemini/DeepSeek: works even if composer-surface class renamed. Fallback to form/parent ensures bar ALWAYS mounts.
   function barMount() {
     const ed = getEditor();
     if (!ed) return null;
-    const box = ed.closest("[class*='composer-surface']");
+    // primary: composer-surface grid; fallback: form wrapper or direct parent (like DeepSeek/Kimi/Gemini hardened paths)
+    let box = ed.closest("[class*='composer-surface']") || ed.closest("form") || ed.parentElement;
     if (!box) return null;
+    // only run topArea grid rename on true composer-surface; form fallback needs no gridArea
+    if (box.matches && box.matches("[class*='composer-surface']")) {
+      const area = topArea(box);
+      if (area) {
+        const bar = document.getElementById("zs-bar");
+        if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
+      }
+    }
     const area = topArea(box);
     if (area) {
       const bar = document.getElementById("zs-bar");

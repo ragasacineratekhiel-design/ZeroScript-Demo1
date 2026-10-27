@@ -1,0 +1,358 @@
+{
+  "manifest_version": 3,
+  "name": "ZeroScript MAX × Roblox Studio Agent",
+  "version": "3.3.0",
+  "description": "ZeroScript MAX 3.3 ULTRA — ChatGPT+Claude ABSOLUTE FIX + Play STOP→Edit enforced + Efficient reads (batch) + Mock simulation double-check + ALL AI total Studio control (every setting/service). ULTRA hedge 80ms, batch 24, tutorial included.",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://chat.deepseek.com/*",
+    "https://deepseek.com/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://www.kimi.ai/*",
+    "https://kimi.ai/*",
+    "https://chat.z.ai/*",
+    "https://chat.qwen.ai/*",
+    "https://arena.ai/*",
+    "https://claude.ai/*",
+    "https://*.claude.ai/*",
+    "https://www.meta.ai/*",
+    "https://meta.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
+    "https://copilot.microsoft.com/*",
+    "https://grok.com/*",
+    "https://x.ai/*",
+    "https://poe.com/*",
+    "https://chat.mistral.ai/*",
+    "https://*.mistral.ai/*",
+    "http://127.0.0.1/*",
+    "http://127.0.0.1:17614/*",
+    "http://localhost/*",
+    "ws://127.0.0.1/*",
+    "ws://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ZeroScript MAX 3.3 ULTRA",
+    "default_icon": {
+      "16": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.deepseek.com/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/deepseek.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "providers/chatgpt-cm.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/chatgpt.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/gemini.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.kimi.ai/*",
+        "https://kimi.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/kimi.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chat.z.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/glm.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://arena.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/arena.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.meta.ai/*",
+        "https://meta.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/meta.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chat.qwen.ai/*"
+      ],
+      "js": [
+        "providers/qwen-net.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://chat.qwen.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/qwen.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://*.claude.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/claude-connector.js",
+        "providers/claude.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/generic.js",
+        "providers/perplexity.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://copilot.microsoft.com/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/generic.js",
+        "providers/copilot.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://grok.com/*",
+        "https://x.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/generic.js",
+        "providers/grok.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://poe.com/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/generic.js",
+        "providers/poe.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chat.mistral.ai/*",
+        "https://*.mistral.ai/*"
+      ],
+      "js": [
+        "core/config.js",
+        "core/agent_stability.js",
+        "core/transport.js",
+        "core/parser.js",
+        "core/memory_wall.js",
+        "core/prompt_enhancer.js",
+        "providers/generic.js",
+        "providers/mistral.js",
+        "core/main.js"
+      ],
+      "css": [
+        "overlay.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
