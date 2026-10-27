@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX Service Worker v3.2.0 ULTRA
+// background.js — ZeroScript MAX Service Worker v3.4.0 ULTRA — UNIVERSAL AI + single-ext guard
 // UPGRADED EVERYTHING: no GUI change, pure logic MAX. Hedge now uses HEDGE_MS (80ms), not hardcoded 280.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
@@ -20,6 +20,7 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
+const EXT_VERSION = "3.4.0";
 const RECONNECT_MIN = 80;    // MAX 80ms ultra
 const RECONNECT_MAX = 2500;
 const HEARTBEAT_MS = 2800;   // MAX 2.8s — instant drop
@@ -35,6 +36,7 @@ let toolsCache=[], mcpAlive=false, serversCache=[];
 let studioConnected=null, studioApp=null, studioProc=null;
 let bridgeToken=null, bridgeCaps=[];
 let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
+let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 let fastestTransport='ws'; // learned
 let httpHealthy=false;
 
@@ -55,6 +57,10 @@ try{
   bc.onmessage=(ev)=>{
     const m=ev.data;
     if(!m) return;
+    // v3.4 single-ext guard: if another EXTENSION (different extId) announces leader, log warning (user has 2 cards)
+    if(m.extId && m.extId!==extId){
+      console.warn("[zs-bg] DUPLICATE EXTENSION detected: another extension instance", m.extId, "vs", extId, "— keep only zeroscript-extension-v2");
+    }
     if(m.type==='leader-ping'){
       // another leader exists; if its id < ours, yield
       if(m.leaderId < leaderId) isLeader=false;
@@ -81,9 +87,9 @@ try{
     }
   };
   // announce leadership attempt
-  setTimeout(()=>{ if(!isLeader) return; bc.postMessage({type:'leader-announce',leaderId}); }, 100);
+  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 100);
   // periodic leader ping
-  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId}); }catch{} }, 3000);
+  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 3000);
   // default: we try to be leader; if another tab already is, we'll be told
   isLeader=true;
 }catch(e){ bc=null; isLeader=true; }
