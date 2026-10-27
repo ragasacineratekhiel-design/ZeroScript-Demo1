@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // MAX identity — ZeroScript MAX 3.0
+  // MAX identity — ZeroScript MAX 3.1 with custom Claude connector + Memory Wall + Prompt Optimizer
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.0.0";
+  const APP_VERSION = "3.1.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
@@ -29,10 +29,10 @@ const ZS = (() => {
     CACHE_TTL_MS: 600,       // MAX 600ms cache — instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.0.0 MAX",
+    VERSION: "3.1.0 MAX",
   };
 
-// ── STABILITY MAX 3.0 — never lose connection, super-stable ────────
+// ── STABILITY MAX 3.1 — never lose connection, super-stable + Wall + Optimizer ────────
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 12000,        // MAX 12s keepalive
   STUDIO_POLL_MS: 1200,             // MAX 1.2s poll
