@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // ULTRA identity — ZeroScript MAX 3.3 — ChatGPT+Claude absolute fix + Play enforcement + Mock sim
+  // ULTRA identity — ZeroScript MAX 3.4 — UNIVERSAL AI + syntax auto-correct + self-heal STOP-on-mistake
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.3.0";
+  const APP_VERSION = "3.4.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
@@ -29,10 +29,10 @@ const ZS = (() => {
     CACHE_TTL_MS: 500,       // ULTRA 500ms cache — tighter for instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.3.0 ULTRA",
+    VERSION: "3.4.0 ULTRA",
   };
 
-// ── STABILITY ULTRA 3.3 — never lose connection, super-stable + Wall + Optimizer + Claude/ChatGPT absolute fix ────
+// ── STABILITY ULTRA 3.4 — universal AI + syntax-fix + self-heal, super-stable + Wall + Optimizer + Claude/ChatGPT absolute fix ────
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 12000,        // MAX 12s keepalive
   STUDIO_POLL_MS: 1200,             // MAX 1.2s poll
@@ -152,7 +152,7 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.3 ULTRA in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.4 ULTRA in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -189,6 +189,7 @@ RULES:
 - Use ONLY exact command names/parameter keys from list, every required param (multi_edit needs "datamodel_type": "Edit"; "... is required" means omitted). Do NOT use ${siteName}'s own features unless user explicitly asks.
 - execute_luau: wrap BOTH markers ###LUA### ... ###END_LUA### (three hashes each side). Bare ###LUA### targets "Edit" and only works when Studio NOT playing. To run while game IS playing, add datamodel: ###LUA:Server### or ###LUA:Client### (bare fails with "Edit datamodel is not available in Play mode"). Changes during Play are temporary - fine for checking live state, but for permanent change make in Edit or via real Script/LocalScript (multi_edit). Use \`return\` for output (print NOT captured). Runs sync ~20s budget, never yield/block: WaitForChild("X", 5) WITH timeout, put waits/events/HttpService inside real Script instead. (Per-command tips in list_commands output.)
 - ⚠️ PLAY MODE ENFORCEMENT (MANDATORY): Before ANY \"D\" (DataModel Edit) change (multi_edit, execute_luau bare Edit, script_write), you MUST check get_studio_state first. If studio.is_playing=true, STOP it IMMEDIATELY via start_stop_play is_start=false, wait 2s, verify stopped (get_studio_state again), THEN perform Edit. Never attempt Edit while playing - it will error. After stopping, double-check result says stopped before proceeding. If user explicitly wants live-test mutation (e.g. tweak live value), use ###LUA:Server### or ###LUA:Client### explicitly and NOTE it is temporary; for permanent save always STOP first.
+- 🔧 SYNTAX AUTO-CORRECTION & SELF-HEAL (MANDATORY — like Play STOP): If ANY tool returns ERROR containing 'syntax', 'Failed to parse', 'unexpected', 'attempt to', 'nil value', 'is not a valid', 'unknown property', 'Expected', 'Got', 'malformed', 'unclosed', 'Edit datamodel is not available' → you MUST self-correct IMMEDIATELY (same workflow as Play STOP): 1) Read error message carefully — it tells the EXACT line/type. 2) script_read the file you just edited to see current state (inspect before mutate). 3) Fix syntax/logic: missing 'end'/')'/'}'/quote/paren, comma, wrong API name (search via inspect_instance/list), type mismatch (Vector3 needs Vector3.new, not string). 4) Retry corrected multi_edit/execute_luau immediately (max 3 retries). Same if YOU think you made mistake (logic wrong, hallucinated path/property, test failed): treat EXACTLY like Play mode — get_studio_state → if playing start_stop_play {is_start:false} → wait 2s + verify stopped (get_studio_state again) → correct → verify with script_read/return + inspect_instance. Never leave broken code. Always STOP before fixing Edit errors. The Play-STOP handling (get_studio_state→start_stop_play false→verify→retry) is your universal self-heal loop for ANY error, not just Play.
 - 📂 READ FILES EFFICIENTLY (NO WASTE): Before editing, you MUST discover efficiently: 1) script_search (or search_game_tree) with keyword to find exact script(s) — never list entire DataModel. 2) script_read ONLY the 1-3 files you actually need (exact path). 3) If modifying, inspect_instance the parent to confirm structure first. Batch pattern: search → read → mutate → verify (inspect_instance). Never read every script in Workspace; never read same file twice without need. For \"fix bug in Shop\", search \"Shop\", read those 2 hits, fix, done. Cost: 3 calls not 30.
 - 🧪 MOCK SIMULATION DOUBLE-CHECK (MANDATORY BEFORE DONE): After building any system, you MUST self-verify by mock simulation: 1) STOP if playing, ensure Edit. 2) script_read the critical Script(s) you just wrote to verify logic (anti-hallucination: inspect BEFORE mutate, verify AFTER mutate). 3) START Play via start_stop_play is_start=true, wait 4s, run verification execute_luau in Server/CLient: e.g. inspect currency, fire RemoteEvent, check Leaderstats, capture screen_capture if available. 4) STOP again and report verified results. Never claim \"it works\" without live Play proof. If verification fails, fix and re-verify loop until pass.
 - BUILD UI/OBJECTS FIRST, THEN SCRIPT THEM: create instances with execute_luau, then Script/LocalScript that finds them via WaitForChild(name, timeout). Use runtime Instance.new only when truly required.
@@ -201,6 +202,11 @@ RULES:
 PERMANENT EDIT: get_studio_state → if playing then start_stop_play {is_start:false} → verify stopped → multi_edit/execute_luau (Edit) → inspect_instance verify → if test needed start_stop_play {is_start:true} → verify live → start_stop_play {is_start:false} → final verify in Edit
 LIVE TWEAK (temporary): get_studio_state → if not playing optionally start → execute_luau ###LUA:Server### / ###LUA:Client### → return live value
 RULE: Bare ###LUA### NEVER in Play; Edit writes NEVER in Play. When doubt, STOP then Edit.
+
+━━━ SYNTAX SELF-CORRECTION LOOP — DIAGRAM — MAX ━━━
+SYNTAX ERROR: execute_luau/multi_edit → ERROR 'syntax'/'parse'/'nil value'/'unexpected' → script_read broken file (see exact line) → fix missing end/quote/paren/api/type → retry corrected command → inspect_instance verify → if still error repeat (≤3) → else continue
+SELF-MISTAKE (AI doubts): you think logic/path/property wrong OR tool returned unexpected value → get_studio_state → if playing start_stop_play {is_start:false} → wait 2s + verify stopped → script_read relevant files → correct logic → retry → verify with return + inspect_instance → report fix
+RULE: Treat syntax errors and “I made a mistake” EXACTLY like Play-STOP — STOP→verify→fix→verify. Never retry blindly without reading error and file.
 
 ━━━ EFFICIENT READING — BATCH PATTERN — MAX ━━━
 Pattern: search_game_tree/script_search "keyword" → script_read exact hit(s) (1-3 files) → inspect_instance parent → mutate → script_read again to verify → play-verify.
@@ -374,7 +380,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "On error you get long internal stack prefix - REAL message is LAST segment after final ':' " +
       "(e.g. '... : Vector3 expected, got string', or 'Failed to parse command code' for syntax error). " +
       "Create objects with Instance.new and set .Parent; reach services via game:GetService(\"Name\"). MAX: bulk loop 20+ Instances per call. " +
-      "⚠️ PLAY ENFORCE: Bare ###LUA### targets Edit only — if get_studio_state shows playing, STOP first via start_stop_play {is_start:false} then Edit. For live read/tweak, use ###LUA:Server### or ###LUA:Client### explicitly. Edit datamodel is not available in Play mode = you forgot to STOP.",
+      "⚠️ PLAY+SYNTAX ENFORCE: Bare ###LUA### targets Edit only — if get_studio_state shows playing, STOP first via start_stop_play {is_start:false} then Edit. For live read/tweak, use ###LUA:Server### or ###LUA:Client### explicitly. On ANY error (syntax/parse/nil value/unexpected) do self-heal STOP-loop: get_studio_state→start_stop_play false if playing→verify→script_read→fix→retry (≤3). Edit datamodel is not available in Play mode = you forgot to STOP; Failed to parse = syntax fix needed.",
     multi_edit:
       "old_string must match script's current text EXACTLY, byte-for-byte, including tabs/spaces - otherwise " +
       "'old_string ... not found'. ALWAYS script_read first and copy exact text. " +
@@ -386,8 +392,8 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "Paste old_string verbatim from script_read. (new_string may contain unicode safely - written as-is.) " +
       "Edits apply in order, each on result of previous, atomic (all succeed or none). " +
       "To CREATE script: set className (Script/LocalScript/ModuleScript) and make first edit old_string:\"\" with full initial source. " +
-      "datamodel_type must be \"Edit\" — REQUIRES Studio NOT playing. If playing, call start_stop_play {is_start:false} FIRST, verify stopped via get_studio_state, THEN multi_edit. Never multi_edit in Play. MAX: batch up to 24 edits per call. " +
-      "EFFICIENT READS: search_game_tree/script_search FIRST to locate file, then script_read 1-3 hits only — never read whole Workspace.",
+      "datamodel_type must be \"Edit\" — REQUIRES Studio NOT playing. If playing, call start_stop_play {is_start:false} FIRST, verify stopped via get_studio_state, THEN multi_edit. Never multi_edit in Play. On syntax ERROR (missing end/quote/paren, bad API), STOP if needed→script_read→fix→retry ≤3. MAX: batch up to 24 edits per call. " +
+      "EFFICIENT READS: search_game_tree/script_search FIRST to locate file, then script_read 1-3 hits only — never read whole Workspace. SYNTAX self-heal shares same STOP→verify→fix loop as Play.",
     inspect_instance:
       "Path dot-notation case-insensitive, e.g. 'Workspace.Model.Part'. Returns all readable properties, attributes, " +
       "and children summary (not children's properties - inspect separately). If several instances share path, " +

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/chatgpt.js - the OpenAI ChatGPT (chatgpt.com) provider.
+// providers/chatgpt.js - the OpenAI ChatGPT (chatgpt.com) provider ULTRA 3.4 — universal editor + guaranteed GUI
 // Exports the same ZSProvider interface as providers/deepseek.js and
 // providers/gemini.js; the core (core/main.js) is provider-agnostic. To DISABLE
 // ChatGPT support, remove this file from manifest.json (and its URL from
@@ -67,7 +67,8 @@ const ZSProvider = (() => {
     userRole: "user",
     assistantRole: "assistant",
     reply: ".markdown",
-    editor: "#prompt-textarea, [data-testid='prompt-textarea'], div.ProseMirror[contenteditable='true'], div[contenteditable='true'][role='textbox'], div[data-lexical-editor][contenteditable='true']",
+    // ULTRA 3.4 UNIVERSAL composer — survives 2026 redesigns (grid header→eyebrow etc)
+    editor: "#prompt-textarea, [data-testid='prompt-textarea'], [data-testid='composer-input'], textarea, div.ProseMirror[contenteditable='true'], div[contenteditable='true'][role='textbox'], div[data-lexical-editor][contenteditable='true'], div[contenteditable='true']",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
     submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button']",
@@ -221,15 +222,41 @@ const ZSProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  // ULTRA resilient editor — fieldset-resistant, survives 2026 redesigns (like Claude). Fallback list from S.editor, never hard-codes one id.
-  const getEditor = () =>
-    document.querySelector("#prompt-textarea") ||
-    document.querySelector("[data-testid='prompt-textarea']") ||
-    document.querySelector("div.ProseMirror[contenteditable='true']") ||
-    document.querySelector("div[contenteditable='true'][role='textbox']") ||
-    document.querySelector("div[data-lexical-editor][contenteditable='true']") ||
-    document.querySelector(S.editor) ||
-    document.querySelector("div[contenteditable='true']");
+  // ULTRA 3.4 getEditor — universal bottom-scan, never loses composer across redesigns
+  const getEditor = () => {
+    const priority = [
+      "#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid='composer-input']", "[data-testid='composer']",
+      "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][role='textbox']",
+      "div[data-lexical-editor][contenteditable='true']", "textarea", "div[contenteditable='true']"
+    ];
+    let best=null, bestY=-1;
+    for(const sel of priority){
+      try{
+        const nodes=[...document.querySelectorAll(sel)].filter(e=> !e.closest("#zs-root"));
+        for(const e of nodes){
+          if(!e) continue;
+          try{
+            const r=e.getBoundingClientRect();
+            const vis = e.offsetParent!==null || r.height>6;
+            if(!vis || r.width<35 || r.height<6) continue;
+            const y=r.top + r.height;
+            if(y > bestY){ best=e; bestY=y; }
+          }catch{}
+        }
+        // if we already found a high-confidence bottom editor, keep it — but continue scanning for even lower one
+      }catch{}
+    }
+    if(best) return best;
+    try{
+      const all=[...document.querySelectorAll("[contenteditable=true], [contenteditable='true'], textarea, [role=textbox], [data-testid*='composer']")].filter(e=>!e.closest("#zs-root"));
+      let last=null, lastY=-1;
+      for(const e of all){
+        try{ const r=e.getBoundingClientRect(); if(r.width>35 && r.top>lastY){ last=e; lastY=r.top; } }catch{}
+      }
+      if(last) return last;
+    }catch{}
+    return null;
+  };
   const editorText = () => {
     const e = getEditor();
     return e ? e.textContent || "" : "";
@@ -272,6 +299,24 @@ const ZSProvider = (() => {
   // raw result peeking above and below the cover on a big send. Covering this box
   // instead matches exactly what is visible. It is its own grid cell, so the "+"
   // button and the right-hand icons stay outside the cover and remain usable.
+  function overlayBlocking(){
+    try{
+      const dlg=document.querySelector("dialog[open], [role='dialog'][aria-modal='true']");
+      if(dlg && dlg.offsetParent!==null) return true;
+      // ChatGPT login wall
+      const login=document.querySelector("[data-testid='login'], div[class*='auth-wall']");
+      if(login && login.offsetParent!==null) return true;
+    }catch{}
+    return false;
+  }
+  function captchaPresent(){
+    try{
+      const cap=document.querySelector("iframe[src*='captcha'], div[class*='captcha'], [data-testid*='captcha']");
+      if(cap && cap.offsetParent!==null) return true;
+    }catch{}
+    return false;
+  }
+
   const coverTarget = () => {
     const ed = getEditor();
     if (!ed) return null;
@@ -313,30 +358,61 @@ const ZSProvider = (() => {
     return null;
   }
 
-  // ULTRA barMount — resilient like Claude/Gemini/DeepSeek: works even if composer-surface class renamed. Fallback to form/parent ensures bar ALWAYS mounts.
+  // ULTRA 3.4 barMount — never null if editor exists, survives composer-surface rename + grid collapse
   function barMount() {
     const ed = getEditor();
     if (!ed) return null;
-    // primary: composer-surface grid; fallback: form wrapper or direct parent (like DeepSeek/Kimi/Gemini hardened paths)
-    let box = ed.closest("[class*='composer-surface']") || ed.closest("form") || ed.parentElement;
-    if (!box) return null;
-    // only run topArea grid rename on true composer-surface; form fallback needs no gridArea
-    if (box.matches && box.matches("[class*='composer-surface']")) {
+    // Try composer-surface (ChatGPT 2026 grid)
+    let box = null;
+    try{ box = ed.closest("[class*='composer-surface']"); }catch{}
+    if(box && box.getBoundingClientRect().width>80){
       const area = topArea(box);
       if (area) {
         const bar = document.getElementById("zs-bar");
         if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
       }
+      let before = box.firstElementChild;
+      if (before && before.id === "zs-bar") before = before.nextElementSibling;
+      return { parent: box, before, inside: true };
     }
-    const area = topArea(box);
-    if (area) {
-      const bar = document.getElementById("zs-bar");
-      if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
-    }
-    // Skip our own bar if already mounted, otherwise we'd insert it before itself.
-    let before = box.firstElementChild;
-    if (before && before.id === "zs-bar") before = before.nextElementSibling;
-    return { parent: box, before, inside: true };
+    // Fallback 1: form wrapper (robust, no gridArea theft)
+    try{
+      const form = ed.closest("form");
+      if(form && form !== document.body && form.getBoundingClientRect().width>80){
+        let before=form.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: form, before, inside: true};
+      }
+    }catch{}
+    // Fallback 2: ChatGPT eyebrow/controls/body grid container or any composer wrapper
+    try{
+      const wrap = ed.closest("div[class*='composer'], div[class*='input'], div[class*='prompt'], div.sticky, div[class*='bottom-0']");
+      if(wrap && wrap !== document.body && wrap.getBoundingClientRect().width>80){
+        let before=wrap.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: wrap, before, inside: true};
+      }
+    }catch{}
+    // Fallback 3: parent chain — guarantees GUI mounts even if site restructures entirely
+    try{
+      let parent = ed.parentElement;
+      // climb up to 4 levels to find a container with reasonable width
+      for(let i=0;i<4 && parent; i++){
+        if(parent.getBoundingClientRect().width>80) break;
+        if(parent.parentElement) parent=parent.parentElement;
+      }
+      if(parent && parent !== document.body){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+      if(parent){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+    }catch{}
+    return null;
   }
 
   // ── Input lock ────────────────────────────────────────────────────────────
@@ -962,7 +1038,7 @@ const ZSProvider = (() => {
       if (d) diag = d;
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsGptVer).
-      try { document.documentElement.setAttribute("data-zs-gpt-ver", "2026-08-13_cmtap+toolkey"); } catch {}
+      try { document.documentElement.setAttribute("data-zs-gpt-ver", "2026-10-27_Ultra34_ChatGPT_Universal"); } catch {}
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
@@ -974,6 +1050,7 @@ const ZSProvider = (() => {
     // band's own ~245px ceiling so a full composer is covered edge to edge.
     coverTarget,
     coverMaxH: 280,
+    overlayBlocking, captchaPresent,
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,

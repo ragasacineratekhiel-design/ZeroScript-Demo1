@@ -1,32 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.3.0
+// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.4.0
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
-// UPGRADED 3.3: Claude+ChatGPT absolute fix (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
+// UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.4.0 — UNIVERSAL AI + self-heal syntax + STOP-on-error
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 4000 && document.contains(lastGood)) return lastGood;
+      if (lastGood && now - lastGoodAt < 3500 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
       let ed = null;
       try { ed = getEditorFn(); } catch {}
-      if (ed && document.contains(ed)) { lastGood = ed; lastGoodAt = now; return ed; }
+      if (ed && document.contains(ed) && ed.offsetParent!==null) { lastGood = ed; lastGoodAt = now; return ed; }
+      // ULTRA 3.4: scan all fallbacks bottom-biased instead of first-match (fixes ChatGPT fieldset drift)
+      let best=null, bestY=-1;
       for (const sel of fallbacks) {
         try {
-          const cand = document.querySelector(sel);
-          if (cand && document.contains(cand) && cand.offsetParent !== null) { lastGood = cand; lastGoodAt = now; return cand; }
+          const nodes = [...document.querySelectorAll(sel)].filter(c=>!c.closest("#zs-root"));
+          for(const cand of nodes){
+            if(!cand || !document.contains(cand) || cand.offsetParent===null) continue;
+            try{ const r=cand.getBoundingClientRect(); const y=r.top+r.height; if(y>bestY && r.width>40){ best=cand; bestY=y; } }catch{}
+          }
         } catch {}
       }
+      if(best){ lastGood=best; lastGoodAt=now; return best; }
       try {
-        // also try shadow DOM
-        const cands = [...document.querySelectorAll("textarea, [contenteditable=true], [role=textbox], [data-testid*='composer']")];
-        for (const c of cands) if (c.offsetParent !== null && !c.closest("#zs-root")) { lastGood = c; lastGoodAt = now; return c; }
-        // fieldset fallback for Claude 2026
+        const cands = [...document.querySelectorAll("textarea, [contenteditable=true], [contenteditable='true'], [role=textbox], [data-testid*='composer']")].filter(c=>!c.closest("#zs-root"));
+        for (const c of cands) if (c.offsetParent !== null) {
+          try{ const r=c.getBoundingClientRect(); const y=r.top+r.height; if(y>bestY && r.width>40){ best=c; bestY=y; } }catch{}
+        }
+        if(best){ lastGood=best; lastGoodAt=now; return best; }
         const fs = document.querySelector("fieldset");
         if (fs) {
-          const inner = fs.querySelector("[contenteditable=true], textarea, [role=textbox]");
+          const inner = fs.querySelector("[contenteditable=true], [contenteditable='true'], textarea, [role=textbox]");
           if (inner && inner.offsetParent !== null) { lastGood = inner; lastGoodAt = now; return inner; }
         }
       } catch {}
@@ -101,9 +110,9 @@ const ZSAgentStability = (() => {
   }
   const FALLBACKS = {
     deepseek: ["textarea", "[data-testid=composer-input]", "[role=textbox]", "div[contenteditable]"],
-    chatgpt: ["#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid=prompt-textarea]", "[contenteditable=true]", "div.ProseMirror", "div[data-lexical-editor]", "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][role='textbox']"],
+    chatgpt: ["#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid='composer-input']", "[data-testid='composer']", "textarea", "div.ProseMirror[contenteditable='true']", "div[data-lexical-editor][contenteditable='true']", "div[contenteditable='true'][role='textbox']", "div[contenteditable=true]", "[contenteditable=true]"],
     // ULTRA Claude: fieldset composer (2026 redesign) + legacy + textarea fallback
-    claude: ["fieldset [contenteditable='true']", "fieldset textarea", "div[contenteditable='true'][data-placeholder]", "div.ProseMirror", "div[data-placeholder]", "textarea", "[role=textbox]", "[data-testid='composer-input']"],
+    claude: ["fieldset [contenteditable='true']", "fieldset textarea", "div[contenteditable='true'][data-placeholder]", "div.ProseMirror[contenteditable='true']", "div[data-placeholder]", "textarea", "[role=textbox]", "[data-testid='composer-input']", "div[contenteditable=true]", "div[contenteditable='']"],
     gemini: [".ql-editor", "[contenteditable=true]", "textarea", "div[role=textbox]", "rich-textarea"],
     kimi: [".chat-input-editor", "[data-lexical-editor]", "[contenteditable=true]", "textarea"],
     glm: ["#chat-input", "textarea", "[contenteditable=true]", "div[role=textbox]"],
@@ -146,7 +155,7 @@ const ZSAgentStability = (() => {
         }
       }
       _patched = true;
-      try { console.log("[zs-ultra] hardened provider", P.id, "ULTRA 3.3.0"); } catch {}
+      try { console.log("[zs-ultra] hardened provider", P.id, "ULTRA 3.4.0"); } catch {}
       return true;
     } catch(e){ try{ console.log("[zs-ultra] patch failed", e);}catch{} return false; }
   }
@@ -170,5 +179,5 @@ const ZSAgentStability = (() => {
     }
   } catch {}
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"3.2.0 ULTRA" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"3.4.0 ULTRA" };
 })();
