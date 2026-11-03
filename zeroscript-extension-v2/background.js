@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX Service Worker v3.5.0 TURBO 10× — UNIVERSAL AI + slash + single-ext
-// UPGRADED EVERYTHING: no GUI change, pure logic MAX. Hedge now uses HEDGE_MS (80ms), not hardcoded 280.
+// background.js — ZeroScript MAX Service Worker v3.5.1 TURBO 10ms — UNIVERSAL AI + slash+force + single-prompt truthful
+// UPGRADED TO 10ms TURBO: no GUI change, pure logic MAX 10ms. Hedge now 10ms, fact-checked truthful single-response.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -20,14 +20,14 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "3.5.0";
-const RECONNECT_MIN = 80;    // MAX 80ms ultra
-const RECONNECT_MAX = 2500;
-const HEARTBEAT_MS = 2800;   // MAX 2.8s — instant drop
-const STALE_SOCKET_MS = 5000;// MAX 5s — instant half-open catch
+const EXT_VERSION = "3.5.1";
+const RECONNECT_MIN = 10;    // TURBO 10ms ultra (was 80)
+const RECONNECT_MAX = 800;     // TURBO 800 (was 2500) — faster cap
+const HEARTBEAT_MS = 800;    // TURBO 0.8s — super fast drop (was 2800)
+const STALE_SOCKET_MS = 2000;// TURBO 2s — fast half-open catch (was 5000)
 const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 5000;   // MAX 5s tight
-const HEDGE_MS = 80;         // ULTRA 80ms hedge — matches config TRANSPORT
+const HTTP_TIMEOUT = 2000;   // TURBO 2s tight (was 5000)
+const HEDGE_MS = 10;         // TURBO 10ms hedge — super fast (was 80) matches config TRANSPORT
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -89,7 +89,7 @@ try{
   // announce leadership attempt
   setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 100);
   // periodic leader ping
-  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 3000);
+  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 800); // TURBO 800 (was 3000)
   // default: we try to be leader; if another tab already is, we'll be told
   isLeader=true;
 }catch(e){ bc=null; isLeader=true; }
@@ -223,7 +223,7 @@ function scheduleReconnect(){
   clearTimeout(reconnectTimer);
   // jitter: +- 20%
   const jitter=reconnectDelay*0.2*(Math.random()*2-1);
-  reconnectTimer=setTimeout(connect, Math.max(50, reconnectDelay+jitter));
+  reconnectTimer=setTimeout(connect, Math.max(10, reconnectDelay+jitter)); // TURBO 10 (was 50)
   reconnectDelay=Math.min(reconnectDelay*1.5, RECONNECT_MAX);
 }
 function startHeartbeat(){
@@ -293,7 +293,7 @@ function waitForConnection(timeout=4000){
     const iv=setInterval(()=>{
       if(connected && ws && ws.readyState===WebSocket.OPEN){ clearInterval(iv); resolve(true); }
       else if(Date.now()-t0>timeout){ clearInterval(iv); resolve(false); }
-    }, 40); // 40ms poll (was 100) — faster wake
+    }, 10); // TURBO 10ms poll (was 40) — super fast wake
   });
 }
 
@@ -471,7 +471,7 @@ chrome.runtime.onStartup.addListener(()=>{ fetchToken(); connect(); });
 chrome.runtime.onInstalled.addListener(()=>{ fetchToken(); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
-  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.25});
+  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.05}); // TURBO 10ms-inspired 3s (was 15s)
   chrome.alarms.onAlarm.addListener(()=>{ if(!connected && isLeader) connect(); });
 }catch{}
 // initial

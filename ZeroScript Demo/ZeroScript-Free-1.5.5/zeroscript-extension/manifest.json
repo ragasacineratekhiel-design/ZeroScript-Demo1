@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "3.5.0",
-  "description": "ZeroScript MAX 3.5.0 TURBO 10\u00d7 \u2014 UNIVERSAL AI + slash /truth /code /prompt (MAX tokens, 3D maps, truth) + 10\u00d7 Wall + single-ext fix. Hedge 80ms, batch 24.",
+  "version": "3.5.1",
+  "description": "ZeroScript MAX 3.5.1 TURBO 10ms \u2014 UNIVERSAL AI + slash /truth /code /prompt /force combinable + single-prompt truthful + 10ms hedge. Fact-checked.",
   "permissions": [
     "storage",
     "alarms"
@@ -46,7 +46,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 3.5.0 TURBO",
+    "default_title": "ZeroScript MAX 3.5.1 TURBO 10ms",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",

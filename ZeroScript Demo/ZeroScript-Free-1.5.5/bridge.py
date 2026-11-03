@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# bridge.py — ZeroScript Bridge v3.5.0 TURBO 10× SUPER FAST (all logic upgraded, designs untouched)
+# bridge.py — ZeroScript Bridge v3.5.1 TURBO 10ms SUPER FAST TRUTHFUL (all logic upgraded, designs untouched)
 # ──────────────────────────────────────────────────────────────────────────
 #  ZeroScript Bridge — Ultra-Fast Middle Layer
 #  Local WebSocket + HTTP/SSE <-> Roblox Studio MCP server
@@ -105,7 +105,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="3.5.0 TURBO 10×"
+BRIDGE_VERSION="3.5.1 TURBO 10ms"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -214,8 +214,8 @@ class TTLCache:
                 oldest=min(self.store, key=lambda kk: self.store[kk][1])
                 self.store.pop(oldest,None)
             self.store[k]=(v, time.monotonic()+self.ttl)
-_cache_tools=TTLCache(ttl=0.35)  # TURBO 10× — was 1.2s, now 0.35s super fast
-_cache_status=TTLCache(ttl=0.25)  # TURBO 10× — was 0.8s, now 0.25s instant Studio drop
+_cache_tools=TTLCache(ttl=0.08)  # TURBO 10ms — was 0.35s, now 0.08s super fast truthful
+_cache_status=TTLCache(ttl=0.06)  # TURBO 10ms — was 0.25s, now 0.06s instant Studio drop
 
 # ── Spinner/log/banner (kept from v1.5.5) ───────────────────────────────
 class _Spinner:
@@ -487,13 +487,13 @@ class MCPClient:
                 for _ in range(12):
                     if self.refresh_tools(timeout=3): break
                     if not self.is_alive(): break
-                    time.sleep(0.35)  # TURBO
+                    time.sleep(0.01)  # TURBO 10ms
             log(f"[{self.id}] MCP up ({len(self.tools_cache)} tools)","cy")
 
     def is_alive(self): return self.proc is not None and self.proc.poll() is None
 
     def restart(self):
-        log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.15); self.start()  # TURBO 10×
+        log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.01); self.start()  # TURBO 10ms
 
     def stop(self):
         with self.pend_lock:
@@ -586,14 +586,14 @@ class MCPClient:
                 if msg.get("error"):
                     err=msg["error"]; err_text=err.get("message",json.dumps(err))
                     if attempt==1 and _looks_like_transient_studio_drop(err_text):
-                        log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.6); continue  # TURBO
+                        log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.01); continue  # TURBO 10ms
                     self._fail_count+=1; raise RuntimeError(err_text)
                 content=msg.get("result",{}).get("content",[])
                 text="\n".join(it.get("text","") for it in content if it.get("type")=="text")
                 images=[{"data":it["data"],"mimeType":it.get("mimeType","image/jpeg")} for it in content if it.get("type")=="image" and it.get("data")]
                 if not text and not images and content: text=json.dumps(content)[:4000]
                 if attempt==1 and _looks_like_transient_studio_drop(text):
-                    log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.6); continue  # TURBO
+                    log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.01); continue  # TURBO 10ms
                 self._fail_count=0  # success resets circuit
                 return {"text":text,"images":images}
 
@@ -710,7 +710,7 @@ STUDIO_ALL_SERVICES = [
     "MarketplaceService","InsertService","AssetService","ContentProvider",
     "StarterPlayerScripts","Players","ReplicatedStorage","ServerScriptService"
 ]
-STUDIO_HEARTBEAT_INTERVAL = 1.2  # TURBO 10× — was 3.0s, now 1.2s super-fast monitoring
+STUDIO_HEARTBEAT_INTERVAL = 0.4  # TURBO 10ms — was 1.2s, now 0.4s super fast monitoring
 _studio_last_ok = time.time()
 _studio_consec_fails = 0
 

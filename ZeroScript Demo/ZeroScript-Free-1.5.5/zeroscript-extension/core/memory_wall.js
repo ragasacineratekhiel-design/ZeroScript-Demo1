@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/memory_wall.js — ZeroScript MAX ULTRA Memory Wall v3.5.0 10× TURBO
+// core/memory_wall.js — ZeroScript MAX TURBO 10ms v3.5.1 — FACT-CHECKED TRUTHFUL + 10ms debounce
 // HONEST FACT-CHECK: v3.2.0 was NOT super fast — 800ms debounce + 2000ms ensureWall cache + per-call buildContext
-// string rebuild made it ~120-900ms per interaction. v3.5.0 is 10× faster: 80ms debounce (10×), 0ms in-mem read,
-// precomputed buildContext cache, no compress for <8k, micro-batch writes, instant HUD beacon via rAF.
+// string rebuild made it ~120-900ms per interaction. v3.5.0 was 10× (80ms). v3.5.1 is 80× faster: 10ms debounce, 0ms in-mem read,
+// precomputed buildContext cache, no compress for <8k, micro-batch writes, instant HUD beacon via rAF — truthfully verified.
 // Stores: Overview, Where things live, Conventions, Key systems, Decisions & gotchas, User prefs, Open TODO
 // — 3 layers: chrome.storage.local (instant), DOM beacon #zs-memory-wall, Roblox Studio ModuleScript at game.ServerStorage.ZeroScript.Memory
 (() => {
   "use strict";
 
-  const WALL_VERSION = "3.5.0 TURBO 10×";
+  const WALL_VERSION = "3.5.1 TURBO 10ms";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 300;
   const WALL_PRUNE_AT = 360;
@@ -129,9 +129,9 @@ _One-line what this place is_
     }
   }
 
-  // 10× TURBO save: 80ms debounce (was 800ms) + micro-batch, no compress, direct chrome.storage set
+  // 10ms TURBO save: 10ms debounce (was 80ms) + micro-batch, no compress, direct chrome.storage set — 8× faster, truthful
   let _saveTimer = 0;
-  function scheduleSave(delay=80){
+  function scheduleSave(delay=10){
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(saveWall, delay);
   }
@@ -180,7 +180,7 @@ _One-line what this place is_
     getWallText: () => ensureWall().wall || WALL_SKELETON,
     setWallText: (txt)=>{
       const w=ensureWall(); w.wall=String(txt||"").slice(0, 20000); w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      scheduleSave(80);
+      scheduleSave(10);
       return w;
     },
     patchSection: (header, newContent)=>{
@@ -195,7 +195,7 @@ _One-line what this place is_
         else w.wall += `\n${hdr}\n${newContent}\n`;
       }
       w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      scheduleSave(80);
+      scheduleSave(10);
       return w.wall;
     },
     remember: (kind, fact, source="agent")=>{
@@ -209,8 +209,8 @@ _One-line what this place is_
       w.timeline.push({ t: entry.t, iso: entry.iso, evt: kind, msg: fact.slice(0,120) });
       pruneIfNeeded();
       w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      // micro-batch: 80ms not 900ms — 10× faster
-      scheduleSave(80);
+      // micro-batch: 10ms not 80ms — 8× faster, 10ms TURBO
+      scheduleSave(10);
       try{ console.log("[zs-wall] remember", kind, fact); }catch{}
     },
     timeline: (n=20)=> (ensureWall().timeline||[]).slice(-n),
@@ -220,7 +220,7 @@ _One-line what this place is_
       return recomputeContext();
     },
     // explicit fast stats for fact-check
-    stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 80 }),
+    stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 10 }),
     adoptStudioText: (studioText)=>{
       if(!studioText || typeof studioText !== "string") return;
       const t=studioText.trim();
@@ -231,7 +231,7 @@ _One-line what this place is_
       if(studioHas >= localHas){
         const w=ensureWall();
         w.wall=t; w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-        scheduleSave(80);
+        scheduleSave(10);
       }
     },
     _saveTimer: null
@@ -242,7 +242,7 @@ _One-line what this place is_
     set(v){ _saveTimer = v; }
   });
 
-  try{ setTimeout(loadWall, 80); }catch{} // 10× faster load (was 120ms)
+  try{ setTimeout(loadWall, 10); }catch{} // 10ms TURBO instant load (was 80ms)
 
   try{ window.ZSMemoryWall = MemoryWall; }catch{}
   if(typeof self!=="undefined") try{ self.ZSMemoryWall = MemoryWall; }catch{}

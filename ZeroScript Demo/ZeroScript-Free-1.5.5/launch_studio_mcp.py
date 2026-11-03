@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# launch_studio_mcp.py — TURBO 10× SUPER FAST
+# launch_studio_mcp.py — TURBO 10ms SUPER FAST TRUTHFUL v3.5.1
 # ──────────────────────────────────────────────────────────────────────────
 #  Robust launcher for Roblox's StudioMCP.exe (the Studio MCP studio server).
 #
@@ -64,10 +64,10 @@ def _newest_path(paths: Iterable[Path]) -> Optional[Path]:
 _STUDIO_MCP_CACHE = {"path": None, "at": 0}
 
 def _find_studio_mcp_windows() -> Optional[Path]:
-    # TURBO 10× — cache path for 8s to avoid scanning disk every call
+    # TURBO 10× — cache path for 2s TURBO 10ms to avoid scanning disk every call
     try:
         import time as _t
-        if _STUDIO_MCP_CACHE["path"] and _t.time() - _STUDIO_MCP_CACHE["at"] < 8:
+        if _STUDIO_MCP_CACHE["path"] and _t.time() - _STUDIO_MCP_CACHE["at"] < 2: # TURBO 10ms 2s (was 8)
             cached = _STUDIO_MCP_CACHE["path"]
             if cached and cached.is_file():
                 return cached

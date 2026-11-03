@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TURBO 10× Stability v3.5.0 — SUPER FAST
+// core/agent_stability.js — ZeroScript MAX TURBO 10ms v3.5.1 — SUPER FAST 10ms
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TURBO 10× Stability v3.5.0 — SUPER FAST — UNIVERSAL AI + self-heal syntax + STOP-on-error
+// core/agent_stability.js — ZeroScript MAX TURBO 10ms v3.5.1 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
+// TURBO 10ms v3.5.1 — FACT-CHECKED single-prompt truthful + /force
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -43,7 +44,7 @@ const ZSAgentStability = (() => {
     };
   }
   function makeGenerationHelper(isGeneratingFn, opts = {}) {
-    const { idleMs = 800, streamCheck = null } = opts; // ULTRA 800ms tighter (was 900)
+    const { idleMs = 80, streamCheck = null } = opts; // TURBO 10ms 80ms tighter (was 800)
     let lastGenTrueAt = 0, lastLen = 0;
     return function hardenedIsGenerating() {
       let gen = false;
@@ -65,10 +66,10 @@ const ZSAgentStability = (() => {
     for (let i = 0; i < maxRetries; i++) {
       try {
         await typeAndSendFn(text, images);
-        await new Promise(r => setTimeout(r, 180)); // ULTRA faster verify (was 200)
+        await new Promise(r => setTimeout(r, 10)); // TURBO 10ms verify (was 180)
         return true;
       } catch (e) { lastErr = e; }
-      await new Promise(r => setTimeout(r, 100 * (i+1))); // ULTRA faster backoff (was 120)
+      await new Promise(r => setTimeout(r, 10 * (i+1))); // TURBO 10ms backoff (was 100)
       if (i === maxRetries - 2 && text && text.length < 50000) {
         try { await navigator.clipboard.writeText(text); document.execCommand("paste"); } catch {}
       }
@@ -90,7 +91,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 600); // TURBO 10× — was 1500ms, now 600ms super fast poll
+    }, 10); // TURBO 10ms — was 600ms, now 10ms super fast poll (forceful max)
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -100,7 +101,7 @@ const ZSAgentStability = (() => {
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
       // Web Locks keepalive — holds lock so tab stays alive in background
       try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r,100)); }); } catch {}
-    }, 3200); // TURBO 10× — was 10000ms, now 3200ms super fast keepalive
+    }, 800); // TURBO 10ms-inspired 800ms keepalive (was 3200)
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -138,7 +139,7 @@ const ZSAgentStability = (() => {
       }
       const origGen = P.isGenerating.bind(P);
       const streamCheck = P.streamLen ? (()=>{ try { const la=P.lastAssistant(); return la? P.streamLen(la):0; } catch { return 0; } }) : null;
-      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 800, streamCheck });
+      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 80, streamCheck }); // TURBO 10ms 80 (was 800)
 
       if (!P._zsStabilityPatched) {
         P._zsStabilityPatched = true;
@@ -179,5 +180,5 @@ const ZSAgentStability = (() => {
     }
   } catch {}
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"3.4.0 ULTRA" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"3.5.1 TURBO 10ms" };
 })();

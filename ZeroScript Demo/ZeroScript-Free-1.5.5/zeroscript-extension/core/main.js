@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/main.js — TURBO 10× SUPER FAST — the provider-agnostic agentic loop, UI and session state.
+// core/main.js — TURBO 10ms SUPER FAST v3.5.1 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
 // Drives any AI chat site through the ZSProvider interface (providers/*.js):
 // waits for the model's reply, parses ZeroScript commands (ZSParse), asks the
 // background worker to execute them on the Roblox MCP bridge, and feeds the
@@ -223,7 +223,7 @@
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(10); // TURBO 10ms (was 120)
     }
     return false;
   }
@@ -278,7 +278,7 @@
     diag("park.resumed", { parkedMs: parked });
     // Give the site a beat to repaint: a tab that was hidden has no layout, so
     // the first reads after unhide can come back stale/blank.
-    if (!A.stop) await sleep(400);
+    if (!A.stop) await sleep(10); // TURBO 10ms (was 400)
     return parked;
   }
 
@@ -306,7 +306,7 @@
       // stream shows growth → fall back to the full idle wait.
       const _settleItem = P.lastAssistant();
       const _settleLen0 = _settleItem ? P.streamLen(_settleItem) : 0;
-      await sleep(200);
+      await sleep(10); // TURBO 10ms (was 200)
       if (_settleItem && _settleItem === P.lastAssistant() &&
           P.streamLen(_settleItem) > _settleLen0) {
         await waitFor(() => !P.isGenerating(), 4000);
@@ -374,11 +374,11 @@
       // for the whole phase, so don't lift it here between an injection and the
       // next waitForResponse - it stays up until the loop / bootstrap ends.
       if (!A.starting && !A.running) ui.inputCover(false);
-      setTimeout(() => (A.injecting = false), 400);
+      setTimeout(() => (A.injecting = false), 10); // TURBO 10ms (was 400)
       // Camouflage the turn we just injected without waiting on the rAF observer
       // (paused in a background tab). A couple of nudges cover the render.
-      setTimeout(scheduleSweep, 200);
-      setTimeout(scheduleSweep, 700);
+      setTimeout(scheduleSweep, 10); // TURBO 10ms (was 200)
+      setTimeout(scheduleSweep, 25); // TURBO 25ms (was 700)
     }
   }
 
@@ -522,7 +522,7 @@
           // on Qwen kept ending "empty" with a complete command in the net tap,
           // and without the branch name the cause was unfindable from the log.
           if (Date.now() - preStartSilent > 60000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; }
-          await Promise.race([sleep(80), waitForDOMChange(200)]);
+          await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms
           continue;
         }
       }
@@ -579,7 +579,7 @@
         // (effective) open-block reading is holding us.
         if (genOffFirstAt) { if (gen) waitedFlicker++; else if (effectiveBlock) waitedBlock++; }
         doneSince = 0;
-        await Promise.race([sleep(80), waitForDOMChange(200)]);
+        await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms
         continue;
       }
       if (stuckDone && gen) log("generating flag stuck - falling back to text stability");
@@ -608,15 +608,15 @@
             assistantCount: P.assistantCount ? P.assistantCount() : undefined,
             base, gen, started, replyLen: (d.reply || "").length });
         }
-        if (Date.now() - noTurnSince < NO_TURN_GRACE_MS) { await sleep(200); continue; }
+        if (Date.now() - noTurnSince < NO_TURN_GRACE_MS) { await sleep(10); continue; } // TURBO 10ms
       } else {
         noTurnSince = 0;
         A._noTurnLoggedAt = 0;
       }
 
       if (!doneSince) doneSince = Date.now();
-      if (Date.now() - doneSince < 280) {  // ULTRA: 280ms settle (was 500) — DOM is stable
-        await Promise.race([sleep(60), waitForDOMChange(280)]);
+      if (Date.now() - doneSince < 10) {  // TURBO 10ms settle (was 280) — DOM is stable 10ms
+        await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms (was 60/280)
         continue;
       }
 
@@ -624,7 +624,7 @@
       // finalize it as empty/truncated/text (a premature retry interrupts it).
       if (!sawContent) {
         if (!warmSince) warmSince = Date.now();
-        if (Date.now() - warmSince < WARMUP_MS) { await sleep(200); continue; }
+        if (Date.now() - warmSince < WARMUP_MS) { await sleep(10); continue; } // TURBO
         diag("empty.why", { branch: "warmup", rep: (d.reply||"").length, lastGood: lastGoodReply.length });
         return { kind: "empty" };
       }
@@ -634,7 +634,7 @@
       // exempt so a real stop still ends.
       if (d.thinking && d.thinking.length && !(d.reply && d.reply.length) && !P.turnHalted(d.item)) {
         if (!reasonSince) reasonSince = Date.now();
-        if (Date.now() - reasonSince < REASON_NOREPLY_MS) { await sleep(200); continue; }
+        if (Date.now() - reasonSince < REASON_NOREPLY_MS) { await sleep(10); continue; } // TURBO
       } else {
         reasonSince = 0;
       }
@@ -664,7 +664,7 @@
       );
       if (cmdShaped && P.replyUnsettled(d.item)) {
         if (!unsettledSince) unsettledSince = Date.now();
-        if (Date.now() - unsettledSince < UNSETTLED_GRACE_MS) { await sleep(250); continue; }
+        if (Date.now() - unsettledSince < UNSETTLED_GRACE_MS) { await sleep(10); continue; } // TURBO 10ms
       } else {
         unsettledSince = 0;
       }
@@ -679,12 +679,12 @@
       // No-op for every provider except Qwen. RESPONSE_TIMEOUT still bounds a truly
       // stuck carousel, so this cannot hang.
       if (P.isComparisonTurn && P.isComparisonTurn(d.item)) {
-        if (P.isGenerating()) { await sleep(250); continue; }   // both still writing
+        if (P.isGenerating()) { await sleep(10); continue; }  // TURBO 10ms
         if (P.resolveComparison && P.resolveComparison()) {
           diag("carousel.resolved");
-          await sleep(400); continue;                            // let it collapse, re-read
+          await sleep(10); continue; // TURBO                            // let it collapse, re-read
         }
-        await sleep(250); continue;                              // button not ready yet
+        await sleep(10); continue; // TURBO
       }
       if (ZSParse.hasToolSignature(r)) {
         const calls = ZSParse.parseToolCalls(r);
@@ -824,7 +824,7 @@
   function bgKey(m){ try{ return m.type+":"+(m.name||m.server_id||"")+":"+JSON.stringify(m.arguments||""); }catch{ return m.type; } }
   function bg(msg) {
     // short cache for status/list_tools so rapid UI polls don't flood bridge
-    if(msg.type==="status" && Date.now()-ULTRA._statusAt < 400 && ULTRA._statusCache){
+    if(msg.type==="status" && Date.now()-ULTRA._statusAt < 10 && ULTRA._statusCache){ // TURBO 10ms (was 400)
       return Promise.resolve(ULTRA._statusCache);
     }
     const k=bgKey(msg);
@@ -856,7 +856,7 @@
     });
     _bgInflight.set(k,p);
     // auto-evict coalesce after 120ms (so distinct quick calls don't wrongly share)
-    setTimeout(()=> _bgInflight.delete(k), 120);
+    setTimeout(()=> _bgInflight.delete(k), 10); // TURBO 10ms (was 120)
     // cache eviction for status already via TTL above
     return p;
   }
@@ -2781,7 +2781,7 @@
       const t0 = Date.now();
       // Give the bridge a moment to actually drop before we start polling, so we
       // don't instantly match the pre-restart "connected" state.
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 100)); // TURBO 100ms (was 1200) — fast bridge check
       while (Date.now() - t0 < timeoutMs) {
         const s = await bg({ type: "status" });
         if (s && s.connected) {
@@ -4113,7 +4113,7 @@
   // the first tool result after a reload already knows the real tally.
   loadSysCount();
   bg({ type: "status" }).then(onStatus);
-  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 5000);
+  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 800); // TURBO 800ms (was 5000) — 10ms-inspired super fast
 
   // Session state is derived from the ACTUAL chat, but sites VIRTUALIZE their
   // message lists: the system-prompt turn is dropped from the DOM once it
@@ -4247,7 +4247,7 @@
       ui.updateStartGate(); // block the input until a session is started
       decorate.sweep();
     };
-    if (document.hidden) setTimeout(run, 100);
+    if (document.hidden) setTimeout(run, 10); // TURBO 10ms (was 100)
     else requestAnimationFrame(run);
   }
   // Synchronous pre-hide: MutationObserver callbacks run as a microtask BEFORE
@@ -4293,7 +4293,7 @@
   mo.observe(document.documentElement, { childList: true, subtree: true });
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 650); // TURBO 10× — was 1500ms, now 650ms super fast sweep
+  setInterval(scheduleSweep, 80); // TURBO 10ms-inspired 80ms sweep (was 650) — 12× faster but not 10ms to avoid CPU burn
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 
@@ -4314,7 +4314,7 @@
       // A Stop clicked during this 300ms window sets A.userStopped → honor it and
       // do NOT start the loop (otherwise the stop is silently ignored and the
       // freshly-started loop strands the "Stopping…" flag).
-      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 300);
+      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 10); // TURBO 10ms (was 300) — forceful instant start
     },
     onNativeStop: () => {
       // A click on the site's own stop = a deliberate manual stop → suppress
