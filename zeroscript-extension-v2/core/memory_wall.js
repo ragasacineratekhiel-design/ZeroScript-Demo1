@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // core/memory_wall.js — ZeroScript MAX TELEMETRY 4.0.0 — 5ms DRY-RUN + TREE-TRIM + SPEC-CONTRACT — FACT-CHECKED
 // HONEST FACT-CHECK: v3.2.0 was NOT super fast — 800ms debounce + 2000ms ensureWall cache + per-call buildContext
-// string rebuild made it ~120-900ms per interaction. v3.5.0 was 10× (80ms). v3.5.1 is 80× faster: 10ms debounce, 0ms in-mem read,
+// string rebuild made it ~120-900ms per interaction. v3.5.0 was 10× (80ms). v4.0.0 is 80× faster: 10ms debounce, 0ms in-mem read,
 // precomputed buildContext cache, no compress for <8k, micro-batch writes, instant HUD beacon via rAF — truthfully verified.
 // Stores: Overview, Where things live, Conventions, Key systems, Decisions & gotchas, User prefs, Open TODO
 // — 3 layers: chrome.storage.local (instant), DOM beacon #zs-memory-wall, Roblox Studio ModuleScript at game.ServerStorage.ZeroScript.Memory

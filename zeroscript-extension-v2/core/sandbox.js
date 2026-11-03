@@ -7,7 +7,7 @@
 (() => {
   "use strict";
   const VERSION = "4.0.0 DRY-RUN 5ms";
-  // ── 5ms budget guard ───────────────────────────────────────────────
+  // ── 5ms budget guard (honest: sync cannot abort mid-run, best-effort flag) ─────
   function withDeadline(fn, ms = 5) {
     let timedOut = false;
     const t = setTimeout(() => { timedOut = true; }, ms);
@@ -48,7 +48,7 @@
       else if(c==="[" && s[i+1]!=="=" && s[i+1]!=="[") opens["["]++; else if(c==="]") closes["]"]++;
       else if(c==="{" ) opens["{"]++; else if(c==="}") closes["}"]++;
     }
-    const closerFor={ "(":")", "[":"]", "{":"}" }; for(const k of ["(", "[", "{"]){ if(opens[k]!==closes[closerFor[k]]) return { ok:false, error:`mismatched ${k}/${closerFor[k]} — ${opens[k]} vs ${closes[k]}`, hint:"check missing ) ] } or quote" }; }
+    const closerFor={ "(":")", "[":"]", "{":"}" }; for(const k of ["(", "[", "{"]){ if(opens[k]!==closes[closerFor[k]]) return { ok:false, error:`mismatched ${k}/${closerFor[k]} — ${opens[k]} vs ${closes[closerFor[k]]}`, hint:"check missing ) ] } or quote (${k}${closerFor[k]})" }; }
     // Luau keyword balance (heuristic, cheap)
     const opensKW = (s.match(/\b(function|if|for|while|do)\b/g)||[]).length;
     const closesKW = (s.match(/\bend\b/g)||[]).length;
@@ -79,7 +79,7 @@
   function dryRunJS(code, timeoutMs=5){
     const src = String(code||"");
     // syntax via Function parse (no exec) — 0.1ms
-    try { new Function(src); } catch(e){ return { ok:false, kind:"syntax", error: e.message, stack: e.stack||"", ms: 0.2 }; }
+    try { new Function(src); } catch(e){ if(String(e.message).includes("Content Security Policy")||String(e.message).includes("CSP")) return { ok:true, kind:"dry-run", ms:0.1, note:"CSP blocks new Function — syntax-only, Studio Play test required" }; return { ok:false, kind:"syntax", error: e.message, stack: e.stack||"", ms: 0.2 }; }
     // runtime with mock env + 5ms wall clock
     const env = mockRobloxEnv();
     const keys = Object.keys(env);

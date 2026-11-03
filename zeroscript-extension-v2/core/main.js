@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/main.js — TURBO 10ms SUPER FAST v3.5.1 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
+// core/main.js — TURBO 10ms SUPER FAST v4.0.0 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
 // Drives any AI chat site through the ZSProvider interface (providers/*.js):
 // waits for the model's reply, parses ZeroScript commands (ZSParse), asks the
 // background worker to execute them on the Roblox MCP bridge, and feeds the
@@ -80,7 +80,7 @@
 
   // ── ULTRA: metrics + transport awareness ─────────────────────────────────
   const ULTRA = {
-    version: (ZS.APP_VERSION||"2.0.0"),
+    version: (ZS.APP_VERSION||"4.0.0"),
     transport: (ZS.TRANSPORT||{PORT_WS:17613, PORT_HTTP:17614, RECONNECT_MIN:200, HEARTBEAT_MS:5000}),
     metrics:{ sends:0, tools:0, avgMs:0, p95Ms:0, lastToolMs:0 },
     // micro-cache for bg status (avoid hammering bridge)
@@ -97,7 +97,6 @@
   }
   function waitForDOMChange(timeout=250){
     ensureMO();
-  try{ startStudioHealthPoll(diag); }catch{}
     return new Promise(res=>{
       const t=setTimeout(()=>{ const i=_moWaiters.indexOf(done); if(i!==-1) _moWaiters.splice(i,1); res(false); }, timeout);
       const done=()=>{ clearTimeout(t); res(true); };

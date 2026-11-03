@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript TURBO 10ms v3.5.1 super-fast, fact-checked
+// core/parser.js - ZeroScript TURBO 10ms v4.0.0 super-fast, fact-checked
 // Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware — 10ms TTL
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TURBO 10ms v3.5.1 — SUPER FAST 10ms
+// core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TURBO 10ms v3.5.1 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
-// TURBO 10ms v3.5.1 — FACT-CHECKED single-prompt truthful + /force
+// core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
+// TURBO 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -91,7 +91,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 10); // TURBO 10ms — was 600ms, now 10ms super fast poll (forceful max)
+    }, 800); // FIXED 800ms — 10ms was DDoSing bridge (100 req/s), now sane 0.8s poll
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -180,5 +180,5 @@ const ZSAgentStability = (() => {
     }
   } catch {}
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"3.5.1 TURBO 10ms" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.0.0 TELEMETRY 5ms" };
 })();
