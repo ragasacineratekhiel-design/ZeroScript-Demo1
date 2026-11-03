@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude.js — Anthropic Claude (claude.ai) ULTRA provider v3.2.0
+// providers/claude.js — Anthropic Claude (claude.ai) ULTRA provider v3.4.0
 // UPGRADED: fieldset composer 2026 (Claude redesign), ProseMirror inside fieldset, hedge 80ms, never drops.
 // Exports ZSProvider interface — copied 1:1 from deepseek/chatgpt quality, adapted for Claude's ProseMirror SPA.
 // Claude DOM notes (claude.ai 2025-2026, validated):
@@ -22,8 +22,8 @@ const ZSProvider = (() => {
     // Claude renders markdown inside assistant turn as .markdown / .prose / font-claude-response
     reply: "[data-testid='assistant-message'] .markdown, [data-testid='assistant-message'] [class*='markdown'], .font-claude-response, [data-is-user-message='false'] .prose, [data-is-user-message='false']",
     thinking: "[data-testid='thinking'], [class*='thinking'], details.thinking, [data-testid*='thought']",
-    // ULTRA editor selector: fieldset composer 2026 + ProseMirror + fallbacks
-    editor: "fieldset div[contenteditable='true'], fieldset [contenteditable='true'], div[contenteditable='true']",
+    // ULTRA 3.4 UNIVERSAL editor selector — fieldset composer 2026 + ProseMirror + generic bottom-scan fallback handles ANY redesign
+    editor: "fieldset div[contenteditable='true'], fieldset [contenteditable='true'], div[contenteditable='true'], div.ProseMirror[contenteditable='true'], textarea, [role='textbox']",
     sendBtn: "fieldset button[type='submit'], button[aria-label='Send message'], button[aria-label*='Send'], button[data-testid='send-button'], form button[type='submit']",
     stopBtn: "fieldset button[aria-label*='Stop'], button[aria-label*='Stop'], button[aria-label*='Cancel'], button[data-testid='stop-button']",
     codeWrap: "pre, code-block, div[class*='code-block']",
@@ -39,7 +39,7 @@ const ZSProvider = (() => {
     paused: /limit|quota|rate.?limit/i,
   };
 
-  // ULTRA timings for Claude ULTRA — tighter, never drops
+  // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
   const timings = {
     GEN_IDLE_MS: 1100, // was 1200 ULTRA
     REASON_IDLE_MS: 12000, // was 15000
@@ -115,39 +115,42 @@ const ZSProvider = (() => {
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
 
-  // MAX getEditor — copies deepseek stability MAX with Claude fallbacks
+  // MAX getEditor ULTRA 3.4 — universal bottom-scan (survives ANY 2026 redesign)
   function getEditor(){
-    // Primary: visible contenteditable ProseMirror
-    let cands = [...document.querySelectorAll(S.editor)].filter(e=> !e.closest("#zs-root"));
-    // Deep filter: visible + not zero-size + inside composer area
-    for(let i=cands.length-1;i>=0;i--){
-      const e=cands[i];
-      if(!e) continue;
-      const r=e.getBoundingClientRect();
-      const vis = e.offsetParent!==null || r.height>8;
-      if(vis && r.width>60) return e;
-    }
-    // Fallbacks: Claude-specific selectors
-    const alts = [
-      "div.ProseMirror[contenteditable='true']",
-      "div[contenteditable='true'][data-placeholder]",
-      "div[contenteditable][role='textbox']",
-      "div[data-placeholder*='Claude']",
-      "textarea",
-      "[role='textbox']"
+    const selectors = [
+      S.editor,
+      "fieldset div[contenteditable='true']", "fieldset [contenteditable='true']",
+      "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][data-placeholder]",
+      "div[contenteditable][role='textbox']", "div[data-placeholder*='Claude']",
+      "div[contenteditable='true']", "[contenteditable=true]", "[role='textbox']", "textarea", "[data-testid='composer-input']"
     ];
-    for(const sel of alts){
+    let best=null, bestY=-1;
+    for(const sel of selectors){
       try{
-        const e=document.querySelector(sel);
-        if(e && !e.closest("#zs-root") && e.getBoundingClientRect().width>0) return e;
+        const nodes=[...document.querySelectorAll(sel)].filter(e=> !e.closest("#zs-root"));
+        for(const e of nodes){
+          if(!e) continue;
+          try{
+            const r=e.getBoundingClientRect();
+            const vis = e.offsetParent!==null || r.height>6;
+            if(!vis || r.width<40 || r.height<6) continue;
+            const y = r.top + r.height; // bottom edge — composer is always lowest
+            if(y > bestY){ best=e; bestY=y; }
+          }catch{}
+        }
       }catch{}
     }
-    // Last resort: any bottom contenteditable
+    if(best) return best;
+    // last resort: any bottom contenteditable/textarea (shadow DOM aware)
     try{
-      const all=[...document.querySelectorAll("[contenteditable=true], textarea")].filter(e=>!e.closest("#zs-root"));
-      if(all.length) return all[all.length-1];
+      const all=[...document.querySelectorAll("[contenteditable=true], [contenteditable='true'], textarea, [role=textbox]")].filter(e=>!e.closest("#zs-root"));
+      let last=null, lastY=-1;
+      for(const e of all){
+        try{ const r=e.getBoundingClientRect(); if(r.width>40 && (r.top>lastY)){ last=e; lastY=r.top; } }catch{}
+      }
+      if(last) return last;
     }catch{}
-    return cands[0]||null;
+    return null;
   }
   const editorText = () => {
     const e=getEditor();
@@ -186,39 +189,78 @@ const ZSProvider = (() => {
     return n;
   };
 
-  // MAX barMount — copies DeepSeek design 1:1 on top of chatbar, full width
+  // MAX barMount ULTRA 3.4 — universal (never returns null if editor exists), survives redesigns
   function barMount(){
     const ed=getEditor();
     if(!ed) return null;
     // Strategy 1: form (Claude uses form for composer)
-    const form = ed.closest("form");
-    if(form && form !== document.body){
-      let before=form.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      return {parent: form, before, inside: true};
-    }
-    // Strategy 2: sticky bottom container (Claude's bottom-0 wrapper)
-    const sticky = ed.closest("div.sticky, div[class*='bottom-0'], div[class*='composer']");
-    if(sticky && sticky !== document.body){
-      let before=sticky.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      // sticky is outer container — insert inside it but before the input card
-      return {parent: sticky, before, inside: true};
-    }
-    // Strategy 3: input card (div with bg / rounded)
-    const card = ed.closest("div[class*='bg-'], div[class*='rounded']");
-    if(card && card.getBoundingClientRect().width > 100){
-      let before=card.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      return {parent: card, before, inside: true};
-    }
-    // Strategy 4: fallback to frame
-    const frame=composerFrame();
-    if(!frame) return null;
-    let before=frame.firstElementChild;
-    if(before && before.id==="zs-bar") before=before.nextElementSibling;
-    return {parent: frame, before, inside: true};
+    try{
+      const form = ed.closest("form");
+      if(form && form !== document.body && form.getBoundingClientRect().width>120){
+        let before=form.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: form, before, inside: true};
+      }
+    }catch{}
+    // Strategy 2: sticky bottom container (Claude bottom-0 wrapper)
+    try{
+      const sticky = ed.closest("div.sticky, div[class*='bottom-0'], div[class*='composer'], div[class*='fixed']");
+      if(sticky && sticky !== document.body && sticky.getBoundingClientRect().width>80){
+        let before=sticky.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: sticky, before, inside: true};
+      }
+    }catch{}
+    // Strategy 3: fieldset wrapper (Claude 2026 composer is inside fieldset)
+    try{
+      const fs = ed.closest("fieldset");
+      if(fs && fs !== document.body){
+        let before=fs.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        // fieldset is inline context — mount directly before it
+        const parent = fs.parentElement;
+        if(parent) return {parent, before: fs, inside: false};
+        return {parent: fs, before, inside: true};
+      }
+    }catch{}
+    // Strategy 4: input card (div with bg / rounded)
+    try{
+      const card = ed.closest("div[class*='bg-'], div[class*='rounded'], div[class*='border']");
+      if(card && card.getBoundingClientRect().width > 100){
+        let before=card.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: card, before, inside: true};
+      }
+    }catch{}
+    // Strategy 5: fallback to composer frame (robust)
+    try{
+      const frame=composerFrame();
+      if(frame && frame !== document.body){
+        let before=frame.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: frame, before, inside: true};
+      }
+    }catch{}
+    // Strategy 6: ultimate fallback — editor's parent (guarantees GUI even if layout unknown)
+    try{
+      const parent = ed.parentElement || ed.closest("div") || document.body;
+      if(parent){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+    }catch{}
+    return null;
   }
+  function overlayBlocking(){
+    try{
+      const dlg=document.querySelector("dialog[open], [role='dialog'][aria-modal='true'], div[class*='modal'][class*='open']");
+      if(dlg && dlg.offsetParent!==null) return true;
+    }catch{}
+    return false;
+  }
+  function captchaPresent(){ return false; }
+
   const coverTarget = () => {
     const ed=getEditor();
     if(!ed) return null;
@@ -637,6 +679,7 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
+    overlayBlocking, captchaPresent,
     init({diag:d}={}){ if(d) diag=d; try{document.documentElement.setAttribute("data-zs-claude-ver","2026-05-max")}catch{} },
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,

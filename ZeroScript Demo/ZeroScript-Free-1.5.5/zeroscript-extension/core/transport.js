@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX ULTRA transport v3.2.0
+// core/transport.js — ZeroScript MAX ULTRA TURBO transport v3.5.0 10×
 // Content-script thin client to background.js with ULTRA features:
 // coalescing, cache, retry, metrics, batch 24, hedge 80ms, dedup, auto-reconnect.
 // All GUIs/colors untouched — pure logic ULTRA.
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 500; // ULTRA 500ms — tighter for instant Studio attach (was 600)
+    const CACHE_MS = 250; // TURBO 250ms — 2× faster cache for instant Studio attach (10× Wall uses 80ms debounce)
     const _cache = new Map();
     const _inflight = new Map();
     let _metrics = { calls: 0, hits: 0, avgMs: 0 };
@@ -64,7 +64,7 @@
     function getMetrics(){ return {..._metrics}; }
     function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.2.0 ULTRA" };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.5.0 TURBO 10×" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}
