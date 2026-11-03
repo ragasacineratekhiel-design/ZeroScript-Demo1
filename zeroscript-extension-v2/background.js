@@ -20,7 +20,7 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.1.0";
+const EXT_VERSION = "4.1.1";
 const RECONNECT_MIN = 10;    // TURBO 10ms ultra (was 80)
 const RECONNECT_MAX = 800;     // TURBO 800 (was 2500) — faster cap
 const HEARTBEAT_MS = 800;    // TURBO 0.8s — super fast drop (was 2800)
@@ -454,6 +454,21 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         let r=await httpGet('/api/metrics',4000);
         if(!r.ok) r=await sendWS({type:'metrics'},4000).catch(()=>({ok:false}));
         sendResponse(r); break;
+      }
+      case "count_provider_tabs": {
+        try{
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          let arena=0; const byProvider={};
+          for(const t of tabs){
+            try{ const u=t.url||""; const host=(new URL(u)).hostname.replace(/^www\./,""); byProvider[host]=(byProvider[host]||0)+1; if(u.includes("arena.ai")) arena++; }catch{}
+          }
+          sendResponse({ok:true, total:tabs.length, arena, byProvider, tabs: tabs.map(x=>({id:x.id, url:x.url}))});
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "wake_provider_tabs": {
+        try{ const tabs = await chrome.tabs.query({url: PROVIDER_URLS}); for(const t of tabs){ try{ chrome.tabs.sendMessage(t.id, {type:"zs-plan-wake", plan: msg.plan}); }catch{} } sendResponse({ok:true, waked:tabs.length}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
       }
       case "reconnect":
         reconnectDelay=RECONNECT_MIN; httpHealthy=false; connect(); fetchToken(); sendResponse({ok:true}); break;
