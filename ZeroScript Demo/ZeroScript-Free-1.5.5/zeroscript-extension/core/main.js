@@ -1080,6 +1080,17 @@
     // write the JSON form without it - default to "Edit" so the call never
     // soft-fails with "datamodel_type is required".
     if (bareName === "execute_luau" && !args.datamodel_type) args.datamodel_type = "Edit";
+    // ── 4.0.0 5ms DRY-RUN SANDBOX — intercept BEFORE bridge (saves ~20s round-trip on runtime errors) ──
+    if (bareName === "execute_luau" && typeof window.ZSSandbox !== "undefined" && window.ZSSandbox.dryRunLuau) {
+      try{
+        const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
+        if(!dry.ok && dry.kind==="syntax"){
+          diag("sandbox.block", { name, error: dry.error });
+          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by 5ms dry-run sandbox BEFORE Studio — no Studio load spent)`;
+        }
+        // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
+      }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch{} }
+    }
     // The player-input tools only run against the Client datamodel (play mode) and
     // "Client" is the sole allowed value, so default it when the model omits it -
     // it can only be right. (It still needs the game RUNNING; that's documented.)
