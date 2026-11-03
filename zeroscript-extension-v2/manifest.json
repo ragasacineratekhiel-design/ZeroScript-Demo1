@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.1.0",
-  "description": "ZeroScript MAX 4.1.0 PLAN 10ms WALL \u2014 Switch Plan Direct/Agent/Plan/Checker \u2014 10ms orchestrated multi-AI + instant ready + internal ultra 10ms",
+  "version": "4.1.1",
+  "description": "ZeroScript MAX 4.1.1 PLAN 10ms WALL \u2014 smaller GUI + Direct model picker + Arena/3-tabs guard + external Ready + magic word",
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "tabs"
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -46,7 +47,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 4.1.0 PLAN 10ms",
+    "default_title": "ZeroScript MAX 4.1.1 PLAN 10ms",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",

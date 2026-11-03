@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // TELEMETRY 4.1.0 identity — ZeroScript MAX 4.1.0 PLAN + 10ms WALL + DRY-RUN + TRIM — UNIVERSAL AI + orchestrated multi-AI
+  // TELEMETRY 4.1.0 identity — ZeroScript MAX 4.1.1 PLAN + 10ms WALL + DRY-RUN + TRIM — UNIVERSAL AI + orchestrated multi-AI
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.1.0";
+  const APP_VERSION = "4.1.1";
   const SYS_MARKER = "⟦ZS-SYS⟧";
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI with 10ms wall ──
   const PLANS = {
@@ -162,16 +162,20 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    // Plan injection for orchestrated multi-AI 10ms wall
+    // Plan injection for orchestrated multi-AI 10ms wall + tab check + external vs internal
     let planInfo = "";
     try{
       const p = (typeof window!=="undefined" && window.__zsPlan) || DEFAULT_PLAN;
       const roles = (typeof window!=="undefined" && window.__zsPlanRoles) || {};
       const meta = PLANS[p] || PLANS.direct;
-      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}\nOrchestration: ${p==="direct" ? "You are solo — do everything directly (1 AI, 10ms wall)." : p==="agent" ? "3-AI team: Planner designs blueprint, Coder builds, Checker verifies. Communicate via 10ms wall (ZSPlanWall.send). Read wall via ZSPlanWall.getWallLog()." : p==="plan" ? "2-AI Plan→Coder: Planner spec → Coder implements. Use wall 10ms." : "2-AI Coder→Checker: Coder builds, Checker audits. Use wall 10ms."}\nWall latency: 10ms honest — BroadcastChannel + chrome.storage. Use wall for handoff.\n`;
+      const tabInfo = (typeof window!=="undefined" && window.__zsTabInfo) || null;
+      const wall = (typeof window!=="undefined" && window.ZSPlanWall) ? window.ZSPlanWall.getMagicForPrompt() : null;
+      const magic = wall ? wall.magic : (p==="direct" ? "im connected to other agent" : "im not connected to other agents no external commands");
+      const tabWarn = wall && wall.warn ? ` TAB WARN: ${wall.warn}` : (tabInfo && tabInfo.total ? ` Tabs: ${tabInfo.total} (arena ${tabInfo.arena||0})` : "");
+      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via 10ms wall: ZSPlanWall.send(myRole,nextRole,{spec|code|review}). Read wall via ZSPlanWall.getWallLog(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately. Use wall 10ms." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via wall 10ms."}\nWall latency: 10ms honest — BroadcastChannel + chrome.storage. Use wall for handoff.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
     }catch{}
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.1.0 PLAN 10ms WALL (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.1.1 PLAN 10ms WALL (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 ${planInfo}
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -217,11 +221,19 @@ RULES:
 - NEVER CLAIM BRIDGE/STUDIO OFFLINE WITHOUT TESTING THIS TURN. Offline earlier says nothing about now - outages momentary (1-2s reconnect). Whenever about to say offline, actually run command first, let fresh result decide. Only report offline if just ran came back error. Same when user says back: believe and retry immediately.
 - On property/attribute/value error (e.g. "X is not available", "unknown property"): if any way to list valid options (docs, inspect/list command, schema), use it to check correct value BEFORE retrying. Never guess blindly second time.
 
-━━━ READY PROTOCOL — INSTANT CONNECT — MAX 10ms WALL ━━━
-After list_commands returns, you MUST immediately say in ONE short line: “Ready — ZeroScript MAX 4.1.0 connected — X commands available: [list names] — ask me to build anything (start_stop_play/get_studio_state/inspect_instance are internal 10ms ultra-fast).” Then list the commands you just received verbatim (name + 1-line desc) so user sees whatever commands we made. Never skip ready — instant connect means ready within 10ms of list_commands. After ready, wait for user task.
+━━━ READY PROTOCOL — INSTANT CONNECT — EXTERNAL COMMANDS ONLY — MAX 10ms WALL ━━━
+After list_commands returns, you MUST immediately say magic line based on connection, then list EXTERNAL commands (not internal):
+- External = slash commands the USER can use: /code /force /prompt /truth /smart and whatever external slash we made. These are EXTERNAL, not internal tools.
+- Internal = bridge tools (start_stop_play etc) — NEVER list in ready; they are hidden internal, user doesn't see.
+- So ready must be: “Ready — ZeroScript MAX 4.1.1 connected — X external commands available: /code /force /prompt /truth /smart [plus any we made] — ask me to build anything!” Then list EXTERNAL commands verbatim (name + 1-line desc) so user sees whatever external commands we made. Never list internal. Never skip ready — instant 10ms.
+- CONNECTION MAGIC WORD: On start, check wall via ZSPlanWall connection state:
+  If multi-AI Agent mode AND all required tabs ARE open (3 tabs, or 1 Arena AI which counts as 3, or 1 gemini +2 deepseek, etc) AND ZSPlanWall is alive 10ms — you MUST say: “im connected to other agent” then list external commands.
+  If NOT connected (e.g. you are in Agent mode but only 1 Gemini tab open, not 3, no Arena) — you MUST say: “im not connected to other agents no external commands” and warn: need 3 tabs or 1 Arena AI tab or 1 gemini+2 deepseek etc (explain tab requirement), then still list external but note they won't orchestrate.
+  Direct mode (1 AI) always says “im connected to other agent” is not needed — just say Ready with external commands (Direct has 1 AI only, no wall needed).
+- Rule: external commands only in ready, internal never.
 
-━━━ INTERNAL COMMANDS — UPGRADED 10× — 10ms WALL — GUI PLUGIN ━━━
-These are INTERNAL (start_stop_play, get_studio_state, get_console_output, inspect_instance, script_read, script_search, search_game_tree, list_commands, list_mcp_servers). They are UPGRADED to 10× logic:
+━━━ INTERNAL COMMANDS — UPGRADED 10× — 10ms WALL — GUI PLUGIN — HIDDEN FROM READY ━━━
+These are INTERNAL (start_stop_play, get_studio_state, get_console_output, inspect_instance, script_read, script_search, search_game_tree, list_commands, list_mcp_servers). They are HIDDEN — never say in ready. User cannot type them, only you via tools. They are UPGRADED to 10× logic:
 - SPEED: internal cache 10ms + 5ms hedge (was 80ms) — instant. get_studio_state caches 10ms, inspect_instance caches 600ms but revalidates 10ms, start_stop_play hedges WS→HTTP in 5ms. Never slow.
 - INFO: each internal returns ENRICHED data — get_studio_state now includes place name, is_playing, datamodel, service list, play time, output tail; inspect_instance includes className, property types, attributes, children with icons, parent chain; script_read includes line numbers + complexity + TODO scan.
 - GUI PLUGIN: internal commands feed GUI designer — inspect_instance gives UDim2/Color3/Layout info so you can design pixel-perfect GUI: use scale (UDim2.fromScale), TextScaled, UICorner 8, dark glass 0.5 + purple/teal accent, TweenService, Sound. Every inspect_instance on StarterGui returns layout hints. Use them to make GUI 10× better — aligned, scaled, animated, mobile-safe (0.05 safe area).

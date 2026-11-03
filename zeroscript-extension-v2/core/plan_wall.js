@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.1.0 PLAN 10ms";
+  const VERSION = "4.1.1 PLAN 10ms SMALL+GUARD";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
@@ -166,7 +166,85 @@
     });
   }catch{}
 
-  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS };
+  // ── Connection & magic word — external commands handshake ──
+  const MAGIC_CONNECTED = "im connected to other agent";
+  const MAGIC_NOT = "im not connected to other agents no external commands";
+  let lastTabInfo = null; // {total, byProvider, arena}
+  let lastCheckAt = 0;
+  async function fetchTabInfo(){
+    // ask background for provider tab counts (10ms cache)
+    if(Date.now() - lastCheckAt < 500 && lastTabInfo) return lastTabInfo;
+    try{
+      const info = await new Promise(res=>{
+        try{ chrome.runtime.sendMessage({type:"count_provider_tabs"}, r=>res(r)); }catch{ res(null); }
+        setTimeout(()=>res(null), 600);
+      });
+      if(info && typeof info.total==="number"){ lastTabInfo=info; lastCheckAt=Date.now(); return info; }
+    }catch{}
+    // fallback: we are at least 1 (self)
+    return {total:1, arena:0, byProvider:{}, fallback:true};
+  }
+  async function getConnectionStatus(){
+    const plan = PLANS[currentPlan] || PLANS.direct;
+    const need = plan.ais;
+    if(need===1){
+      // Direct always connected (single AI, no wall needed)
+      return {connected:true, need, have:1, haveEffective:1, arena:0, reason:"direct single", magic:MAGIC_CONNECTED, external:true, warn:""};
+    }
+    const info = await fetchTabInfo();
+    const total = info.total || 1;
+    const arena = info.arena || 0;
+    // Arena counts as flexible: 1 Arena tab can cover need (it can host multiple models)
+    const haveEffective = arena >=1 ? Math.max(total, need) : total; // if any Arena, treat as enough
+    const connected = haveEffective >= need;
+    let warn="";
+    if(!connected){
+      // build helpful message: need 3 tabs or arena...
+      const examples = [
+        `${need} tabs total (e.g. 3× any AI)`,
+        `1× Arena AI (Arena supports ${need} models in 1 tab)`,
+        need===3 ? `e.g. 1× Gemini + 2× DeepSeek` : `e.g. 1× Gemini + 1× DeepSeek`,
+        `or ${need}× same AI in separate tabs`,
+      ];
+      warn = `Agent needs ${need} tabs but you have ${total} (${arena?arena+" Arena ":""}${JSON.stringify(info.byProvider||{})}). Open ${examples.join(" or ")} then Save Plan again.`;
+    }
+    return {
+      connected,
+      need,
+      have: total,
+      haveEffective,
+      arena,
+      info,
+      magic: connected? MAGIC_CONNECTED : MAGIC_NOT,
+      external: connected,
+      warn,
+    };
+  }
+  // when one AI starts in Agent mode, all start: broadcast via wall + chrome tabs
+  async function broadcastStartAll(){
+    const st = await getConnectionStatus();
+    const magic = st.magic;
+    send("__system","__all",{type:"agent_start", plan:currentPlan, magic, external:st.external, st, t:Date.now()}, "start");
+    // also ask background to wake other tabs
+    try{ chrome.runtime.sendMessage({type:"wake_provider_tabs", plan:currentPlan}); }catch{}
+    return st;
+  }
+  function getMagicForPrompt(){
+    // synchronous fast check via lastTabInfo cache (if available) else assume not checked yet
+    const plan = PLANS[currentPlan];
+    if(!plan || plan.ais===1) return {magic:MAGIC_CONNECTED, external:true, need:1, have:1, connected:true, warn:""};
+    // if we have recent check
+    if(lastTabInfo){
+      const need=plan.ais; const total=lastTabInfo.total||1; const arena=lastTabInfo.arena||0;
+      const haveEffective = arena>=1? Math.max(total,need): total;
+      const connected = haveEffective >= need;
+      return {magic: connected?MAGIC_CONNECTED:MAGIC_NOT, external:connected, need, have:total, arena, connected, warn: connected?"":`need ${need} tabs have ${total}`};
+    }
+    // default assume not yet checked — prompt will say checking, but pre-inject check
+    return {magic:MAGIC_NOT, external:false, need:plan.ais, have:1, connected:false, warn:"checking tabs..."};
+  }
+
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt };
 
   try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}
   if(typeof self!=="undefined") try{ self.ZSPlanWall = API; }catch{}

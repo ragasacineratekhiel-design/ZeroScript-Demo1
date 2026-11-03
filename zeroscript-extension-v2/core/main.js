@@ -1902,6 +1902,18 @@
     A.toolCallsSinceReminder = 0; // fresh reminder cadence for the new session
     ui.setStarting(true);
     ui.updateStartGate(); // refresh the bar into its "starting" state
+    // Agent orchestration: when one AI starts, all start via 10ms wall + magic word
+    try{
+      if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll){
+        window.ZSPlanWall.broadcastStartAll().then(st=>{
+          try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+          // inject magic word into system prompt re-read (next submit uses window.__zsPlan*)
+          // also send via wall so other tabs wake
+        });
+      }
+      // listen for wake from other tab
+      chrome.runtime.onMessage.addListener((m)=>{ if(m && m.type==="zs-plan-wake"){ try{ window.__zsPlanConnected=true; }catch{} } });
+    }catch{}
     P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
     try {
@@ -2732,19 +2744,47 @@
         const active=currentPlan===id?" zs-plan-active":"";
         html+=`<button class="zs-plan-opt${active}" data-plan="${id}"><span><strong>${def.icon} ${def.name}</strong> <span class="zs-plan-ais"><b>${def.ais} AI</b></span><br><span>${def.desc} — ${def.roles.join(" → ")}</span></span><span>${currentPlan===id?"✓":"→"}</span></button>`;
       }
-      // role selectors if multi-AI
+      // role selectors — Direct also shows model picker (1 AI), Agent/Plan/Checker show multiple
       const meta=PLANS_DEF[currentPlan];
-      if(meta && meta.ais>1){
+      if(meta){
         html+=`<div class="zs-plan-roles">`;
         for(const role of meta.roles){
           const cur=planRoles[role]||providers[0];
           html+=`<div class="zs-plan-role-row"><label>${role}</label><select data-role="${role}">`+providers.map(pr=>`<option value="${pr}" ${pr===cur?"selected":""}>${pr}</option>`).join("")+`</select></div>`;
         }
-        html+=`<div class="zs-plan-note" style="margin-top:6px">Pick which AI powers each role. Wall between AIs is 10ms (BroadcastChannel + storage) — honestly superfast.</div>`;
+        if(meta.ais===1){
+          html+=`<div class="zs-plan-note" style="margin-top:4px">Direct: 1 AI — pick model for this tab. Switch anytime.</div>`;
+        } else {
+          html+=`<div class="zs-plan-note" style="margin-top:4px">Pick AI per role. Wall 10ms. Need ${meta.ais} tabs or 1× Arena AI (Arena hosts multiple models). Example: Agent needs 3 tabs: 1× Gemini +2× DeepSeek or 3× Arena.</div>`;
+        }
+        // tab count warning placeholder — filled async
+        html+=`<div id="zs-plan-warn" class="zs-plan-warn" hidden></div>`;
         html+=`</div>`;
       }
       html+=`<button class="zs-plan-save">Save Plan</button>`;
       planMenuEl.innerHTML=html;
+      // async tab count check for multi-AI warning (10ms wall)
+      try{
+        if(window.ZSPlanWall && window.ZSPlanWall.getConnectionStatus){
+          window.ZSPlanWall.getConnectionStatus().then(st=>{
+            const warnEl = planMenuEl.querySelector("#zs-plan-warn");
+            if(!warnEl) return;
+            if(!st.connected){
+              warnEl.hidden=false;
+              warnEl.textContent = `⚠ ${st.warn} You need ${st.need} tabs — open ${st.need} tabs or 1 Arena AI (multi-model), e.g. 1 gemini +2 deepseek for Agent.`;
+            } else {
+              // for connected, show short confirm if multi-AI
+              if(st.need>1){
+                warnEl.hidden=false;
+                warnEl.style.background="rgba(16,185,129,0.12)"; warnEl.style.borderColor="rgba(16,185,129,0.28)"; warnEl.style.color="#a7f3d0";
+                warnEl.textContent = `✓ ${st.magic} — ${st.have} tabs ready (${st.arena?st.arena+" Arena ":""}), external ${st.external?"/code /force etc active":"blocked"}`;
+              }
+            }
+            // store for prompt injection
+            try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+          });
+        }
+      }catch{}
       // bind
       planMenuEl.querySelectorAll(".zs-plan-opt").forEach(b=>b.addEventListener("click",()=>{
         const pid=b.dataset.plan;
@@ -2768,8 +2808,8 @@
         updatePlanBtn();
         planMenuEl.hidden=true;
         toast(`Plan saved: ${PLANS_DEF[currentPlan].name} (${PLANS_DEF[currentPlan].ais} AI) — wall 10ms`);
-        // send ready hint via wall
-        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); }catch{}
+        // send ready hint via wall + magic word broadcast
+        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch{}
       });
     }
     function togglePlanMenu(){
