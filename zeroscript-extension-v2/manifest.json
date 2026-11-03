@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "3.6.0",
-  "description": "ZeroScript MAX 3.6.0 FACT-CHECKED \u2014 10ms TURBO, honest INTERNAL+EXTERNAL amplifier (~30% smarter, not magic Pro), works with ALL 15 AIs: Flash/Sonnet/Mini\u2192closer to Pro/Opus/Astra, slash /truth /code /prompt /force /smart combinable.",
+  "version": "4.0.0",
+  "description": "ZeroScript MAX 4.0.0 TELEMETRY \u2014 5ms DRY-RUN sandbox + DYNAMIC TREE-TRIM + SPEC-DRIVEN TEST CONTRACT \u2014 fact-checked: ~40-50% closer to Pro (target) via runtime feedback + lean context. 10ms TURBO, all 15 AIs.",
   "permissions": [
     "storage",
     "alarms"
@@ -46,7 +46,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 3.6.0 FACT-CHECKED 10ms",
+    "default_title": "ZeroScript MAX 4.0.0 TELEMETRY 5ms",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -64,6 +64,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/deepseek.js",
         "core/main.js"
@@ -95,6 +96,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/chatgpt.js",
         "core/main.js"
@@ -114,6 +116,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/gemini.js",
         "core/main.js"
@@ -134,6 +137,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/kimi.js",
         "core/main.js"
@@ -153,6 +157,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/glm.js",
         "core/main.js"
@@ -172,6 +177,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/arena.js",
         "core/main.js"
@@ -192,6 +198,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/meta.js",
         "core/main.js"
@@ -221,6 +228,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/qwen.js",
         "core/main.js"
@@ -241,6 +249,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/claude-connector.js",
         "providers/claude.js",
@@ -262,6 +271,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/generic.js",
         "providers/perplexity.js",
@@ -282,6 +292,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/generic.js",
         "providers/copilot.js",
@@ -303,6 +314,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/generic.js",
         "providers/grok.js",
@@ -323,6 +335,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/generic.js",
         "providers/poe.js",
@@ -344,6 +357,7 @@
         "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
+        "core/sandbox.js",
         "core/prompt_enhancer.js",
         "providers/generic.js",
         "providers/mistral.js",

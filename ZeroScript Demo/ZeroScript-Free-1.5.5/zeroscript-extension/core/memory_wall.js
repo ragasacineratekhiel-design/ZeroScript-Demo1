@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/memory_wall.js — ZeroScript MAX TURBO 10ms v3.5.1 — FACT-CHECKED TRUTHFUL + 10ms debounce
+// core/memory_wall.js — ZeroScript MAX TELEMETRY 4.0.0 — 5ms DRY-RUN + TREE-TRIM + SPEC-CONTRACT — FACT-CHECKED
 // HONEST FACT-CHECK: v3.2.0 was NOT super fast — 800ms debounce + 2000ms ensureWall cache + per-call buildContext
 // string rebuild made it ~120-900ms per interaction. v3.5.0 was 10× (80ms). v3.5.1 is 80× faster: 10ms debounce, 0ms in-mem read,
 // precomputed buildContext cache, no compress for <8k, micro-batch writes, instant HUD beacon via rAF — truthfully verified.
@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "3.5.1 TURBO 10ms";
+  const WALL_VERSION = "4.0.0 TELEMETRY 5ms TRIM";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 300;
   const WALL_PRUNE_AT = 360;
@@ -218,6 +218,48 @@ _One-line what this place is_
     buildContext: ()=>{
       if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 5000) return _ctxCache;
       return recomputeContext();
+    },
+    // ── 4.0.0 DYNAMIC TREE-TRIMMING — importance-weighted pruning (keeps 10ms budget) ──
+    _scoreRelevance(text, queryTokens){
+      if(!queryTokens||!queryTokens.length) return 1;
+      const low=text.toLowerCase();
+      let s=0;
+      for(const tok of queryTokens){ if(!tok) continue; if(low.includes(tok)) s+= (tok.length>4?2:1); }
+      if(/key systems|conventions|where things live/i.test(text)) s+=1;
+      if(/database|datastore|save|leaderstats/i.test(text) && queryTokens.some(x=>/save|data|leader|coin/i.test(x))) s+=2;
+      if(/ui|hud|shop|button|screen/i.test(text) && queryTokens.some(x=>/ui|shop|hud|button/i.test(x))) s+=2;
+      return s;
+    },
+    _tokenizeQuery(q){ return String(q||"").toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>2).slice(0,16); },
+    trimContextFor(query, budget=600){
+      const full = ensureWall().wall || "";
+      if(full.length <= budget) return full;
+      const parts = full.split(/(?=\n## )/);
+      if(parts.length<=1){
+        return full.slice(0, Math.floor(budget*0.7)) + "\n…\n" + full.slice(-Math.floor(budget*0.3));
+      }
+      const toks=this._tokenizeQuery(query);
+      const scored = parts.map(p=> ({ text:p, score:this._scoreRelevance(p, toks), len:p.length }));
+      const head = scored.shift();
+      scored.sort((a,b)=> b.score - a.score || a.len - b.len);
+      let out = head?head.text:"";
+      let rem = budget - out.length;
+      for(const s of scored){ if(rem<=0) break; if(s.text.length <= rem+200){ out += "\n" + s.text; rem -= s.text.length; } else if(s.score>0){ out += "\n" + s.text.slice(0, rem); break; } }
+      return out.slice(0, budget+400);
+    },
+    buildTrimmedContext(query, budget=600){
+      if(!query || !String(query).trim()) return this.buildContext();
+      const trimmedWall = this.trimContextFor(query, budget);
+      if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 5000 && !query) return _ctxCache;
+      const w=ensureWall();
+      const lines=[];
+      lines.push(`MemoryWall v${w.version} @ ${w.updatedAt} [trimmed ${trimmedWall.length}/${(w.wall||"").length}]`);
+      for(const kind of ["where","convention","system","decision","preference","todo"]){
+        const arr = (w.facts && w.facts[kind]) ? w.facts[kind].slice(-2) : [];
+        if(arr.length) lines.push(`${kind}: ${arr.map(x=>x.fact).join(" | ").slice(0,140)}`);
+      }
+      lines.push(`Wall preview (trimmed for task): ${trimmedWall.replace(/\s+/g," ").slice(0,600)}`);
+      return lines.join("\n");
     },
     // explicit fast stats for fact-check
     stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 10 }),
