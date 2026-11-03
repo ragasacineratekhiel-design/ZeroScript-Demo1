@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX TURBO 10ms v3.5.1 — FACT-CHECKED super fast
+// core/transport.js — ZeroScript MAX TURBO 10ms v4.0.0 — FACT-CHECKED super fast
 // Content-script thin client to background.js with TURBO 10ms: coalescing, cache, retry, metrics, batch 24, hedge 10ms, dedup, auto-reconnect.
 // All GUIs/colors untouched — pure logic TURBO 10ms.
 (() => {
@@ -63,7 +63,7 @@
     function getMetrics(){ return {..._metrics}; }
     function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.5.1 TURBO 10ms" };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"4.0.0 TELEMETRY 5ms" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

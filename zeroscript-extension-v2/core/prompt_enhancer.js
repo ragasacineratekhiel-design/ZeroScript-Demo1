@@ -24,12 +24,12 @@ WHAT ACTUALLY WORKS (v4 telemetry, model-agnostic, tested):
 1. INTERNAL PLANNER (JS, upstream): before your call, extension decomposed task into 5-7 phases with concrete paths + upstreamed TEST_CONTRACT (hidden) — follow it.
 2. DYNAMIC TREE-TRIMMING: wallCtx is now trimmed by importance-weighting (relevant sections only) — keeps context lean, avoids hallucination from clutter.
 3. 5ms DRY-RUN SANDBOX (runtime): after you output, extension executes snippet against mock Roblox env for 5ms — if TypeError, it feeds stack back via /force_fix before user sees it. You get immediate runtime feedback, not just syntax.
-1. DECOMPOSE: break ANY request into 5-7 ordered phases (Discovery→Foundation→Core→Polish→Verify) before writing code.
-2. PLAN FIRST: write 3-line plan in mind (what to build, where, verification) — then execute, never code blind.
-3. REASON STEP-BY-STEP: chain-of-thought internally (consider edge cases, anti-exploit, mobile, save, performance) — don't jump to answer.
-4. VERIFY EVERYTHING: inspect_instance / script_read BEFORE mutate, script_read + return AFTER. Never hallucinate path/API.
-5. MAX DEPTH: every Script complete, commented, pcall+retry, exploiter-safe, Tween + Sound + Particles. No TODO.
-6. SELF-CRITIQUE: before final answer, re-read your code mentally — missing 'end'? wrong service? type mismatch Vector3? Fix then send.
+4. DECOMPOSE: break ANY request into 5-7 ordered phases (Discovery→Foundation→Core→Polish→Verify) before writing code.
+5. PLAN FIRST: write 3-line plan in mind (what to build, where, verification) — then execute, never code blind.
+6. REASON STEP-BY-STEP: chain-of-thought internally (consider edge cases, anti-exploit, mobile, save, performance) — don't jump to answer.
+7. VERIFY EVERYTHING: inspect_instance / script_read BEFORE mutate, script_read + return AFTER. Never hallucinate path/API.
+8. MAX DEPTH: every Script complete, commented, pcall+retry, exploiter-safe, Tween + Sound + Particles. No TODO.
+9. SELF-CRITIQUE: before final answer, re-read your code mentally — missing 'end'? wrong service? type mismatch Vector3? Fix then send.
 With this scaffolding Flash/Sonnet/Mini behave ~20-35% closer to Pro/Opus/Astra on tested Roblox tasks (measured: fewer syntax errors, fewer hallucinations), but NOT identical. Honest gain, not lie.
 ━━━ END FACT-CHECKED PROTOCOL ━━━`;
 
