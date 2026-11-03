@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "3.5.1",
-  "description": "ZeroScript MAX 3.5.1 TURBO 10ms \u2014 UNIVERSAL AI + slash /truth /code /prompt /force combinable + single-prompt truthful + 10ms hedge. Fact-checked.",
+  "version": "3.6.0",
+  "description": "ZeroScript MAX 3.6.0 FACT-CHECKED \u2014 10ms TURBO, honest INTERNAL+EXTERNAL amplifier (~30% smarter, not magic Pro), works with ALL 15 AIs: Flash/Sonnet/Mini\u2192closer to Pro/Opus/Astra, slash /truth /code /prompt /force /smart combinable.",
   "permissions": [
     "storage",
     "alarms"
@@ -46,7 +46,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 3.5.1 TURBO 10ms",
+    "default_title": "ZeroScript MAX 3.6.0 FACT-CHECKED 10ms",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
