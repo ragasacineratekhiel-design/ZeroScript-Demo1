@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX ULTRA TURBO transport v3.5.0 10×
-// Content-script thin client to background.js with ULTRA features:
-// coalescing, cache, retry, metrics, batch 24, hedge 80ms, dedup, auto-reconnect.
-// All GUIs/colors untouched — pure logic ULTRA.
+// core/transport.js — ZeroScript MAX TURBO 10ms v3.5.1 — FACT-CHECKED super fast
+// Content-script thin client to background.js with TURBO 10ms: coalescing, cache, retry, metrics, batch 24, hedge 10ms, dedup, auto-reconnect.
+// All GUIs/colors untouched — pure logic TURBO 10ms.
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 250; // TURBO 250ms — 2× faster cache for instant Studio attach (10× Wall uses 80ms debounce)
+    const CACHE_MS = 80; // TURBO 10ms-inspired 80ms — super fast cache for instant Studio attach (was 250)
     const _cache = new Map();
     const _inflight = new Map();
     let _metrics = { calls: 0, hits: 0, avgMs: 0 };
@@ -38,8 +37,8 @@
             _metrics.calls++; _metrics.avgMs = Math.round((_metrics.avgMs*0.8)+(ms*0.2));
             return r;
           }
-          // ULTRA backoff: 50ms * attempt (faster than 80)
-          if(attempt<retry) await new Promise(r=>setTimeout(r, 50*(attempt+1)));
+          // 10ms TURBO backoff: 10ms * attempt (was 50)
+          if(attempt<retry) await new Promise(r=>setTimeout(r, 10*(attempt+1)));
           else return r;
         }
       })();
@@ -48,23 +47,23 @@
       return p;
     }
 
-    async function status(){ return _bg({type:"status"}, {cacheTtl:80}); } // ULTRA 80ms (was 120)
-    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:300}); } // ULTRA 300ms (was 400)
+    async function status(){ return _bg({type:"status"}, {cacheTtl:10}); } // TURBO 10ms (was 80)
+    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:80}); } // TURBO 80ms (was 300)
     async function callTool(name, args, timeout=120000){
       return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:2});
     }
     async function callBatch(calls){
       if(!calls || !calls.length) return {ok:false, error:"no calls"};
       if(calls.length===1) return callTool(calls[0].name, calls[0].arguments, calls[0].timeout);
-      // ULTRA batch: 24 tools, hedge 80ms via background
+      // TURBO 10ms batch: 24 tools, hedge 10ms via background
       return _bg({type:"call_batch", calls}, {retry:1});
     }
-    async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:400}); }
+    async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:80}); }
     async function ping(){ return _bg({type:"ping"}, {cacheTtl:0}); }
     function getMetrics(){ return {..._metrics}; }
     function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.5.0 TURBO 10×" };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, version:"3.5.1 TURBO 10ms" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

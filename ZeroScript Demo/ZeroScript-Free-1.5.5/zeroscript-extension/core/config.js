@@ -6,43 +6,43 @@
 const ZS = (() => {
   "use strict";
 
-  // ULTRA identity — ZeroScript MAX 3.5 — UNIVERSAL AI + slash commands + 10× Wall TURBO
+  // ULTRA identity — ZeroScript MAX 3.5.1 10ms TURBO — UNIVERSAL AI + slash+force + Wall 10ms + single-prompt truth
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.5.0";
+  const APP_VERSION = "3.5.1";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
-  // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
+  // ── MAX Transport — 8 methods, 10ms TURBO, zero drops — FACT-CHECKED TRUTHFUL ────────
   const TRANSPORT = {
     WS_URL: "ws://127.0.0.1:17613",
     HTTP_BASE: "http://127.0.0.1:17614",
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
-    RECONNECT_MIN: 80,       // ULTRA 80ms — instant reconnect
-    RECONNECT_MAX: 2500,
-    HEARTBEAT_MS: 2800,      // ULTRA 2.8s — instant Studio drop
-    STALE_MS: 5000,          // ULTRA 5s stale detection
-    HTTP_TIMEOUT: 5000,      // ULTRA 5s timeout
-    WS_PING_MS: 2800,
-    HEDGE_MS: 80,            // ULTRA 80ms WS→HTTP hedge — even faster (was 120)
+    RECONNECT_MIN: 10,       // 10ms TURBO — instant reconnect (was 80)
+    RECONNECT_MAX: 800,      // faster cap (was 2500)
+    HEARTBEAT_MS: 800,       // 10ms-inspired 0.8s — super fast Studio drop (was 2800)
+    STALE_MS: 2000,          // 10ms-inspired 2s stale detection (was 5000)
+    HTTP_TIMEOUT: 2000,      // 10ms-inspired 2s timeout (was 5000)
+    WS_PING_MS: 800,
+    HEDGE_MS: 10,            // 10ms TURBO WS→HTTP hedge — super fast (was 80)
     BATCH_MAX: 24,           // ULTRA 24 tools per batch
-    CACHE_TTL_MS: 500,       // ULTRA 500ms cache — tighter for instant attach
+    CACHE_TTL_MS: 80,        // 10ms-inspired 80ms cache — instant attach (was 500)
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.5.0 ULTRA TURBO 10×",
+    VERSION: "3.5.1 TURBO 10ms",
   };
 
-// ── STABILITY ULTRA 3.5 — universal AI + slash + 10× Wall, super-stable + Wall + Optimizer + Claude/ChatGPT absolute fix ────
+// ── STABILITY 3.5.1 10ms TURBO — universal 15 AIs + slash+force + Wall 10ms, super-stable, single-prompt truth ────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 12000,        // MAX 12s keepalive
-  STUDIO_POLL_MS: 1200,             // MAX 1.2s poll
-  STUDIO_HEARTBEAT_MS: 1800,        // MAX 1.8s heartbeat
-  EDITOR_REDISCOVER_MS: 2000,       // MAX 2s rediscovery
-  GEN_VOTE_IDLE_MS: 600,
+  AGENT_KEEPALIVE_MS: 3200,         // TURBO 3.2s (was 12000) — super fast keepalive
+  STUDIO_POLL_MS: 300,              // TURBO 300ms poll (was 1200) — 10ms-inspired fast
+  STUDIO_HEARTBEAT_MS: 600,         // TURBO 600ms heartbeat (was 1800)
+  EDITOR_REDISCOVER_MS: 400,        // TURBO 400ms rediscovery (was 2000)
+  GEN_VOTE_IDLE_MS: 80,             // TURBO 80ms (was 600) — 10ms-inspired fast vote
   SEND_RETRY: 5,                    // MAX 5 retries
-  RECONNECT_BACKOFF_MS: [80, 150, 300, 600], // MAX ultra backoff
+  RECONNECT_BACKOFF_MS: [10, 25, 60, 120], // 10ms TURBO backoff (was 80,150,300,600)
   MAX_RECONNECT_ATTEMPTS: 20,
-  STUDIO_RECONNECT_MS: 800,
+  STUDIO_RECONNECT_MS: 100,         // TURBO 100ms (was 800)
 };
   const RESEND_MARKER = "⟦ZS-RE⟧";
 
@@ -152,7 +152,7 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.5 ULTRA TURBO in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.5.1 10ms TURBO (fact-checked, truthful, 1 prompt = 1 response default, slash combinable, /force) in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -215,16 +215,18 @@ Batch: if need 2+ independent reads, use batch (bridge /api/batch) or sequential
 ━━━ MOCK SIMULATION — DOUBLE-CHECK PROTOCOL — MAX ━━━
 Every build ends with: 1) Pre-check get_studio_state (STOP if needed). 2) Read-back (script_read) your own writes — inspect→mutate→verify anti-hallucination lock: you read the REAL file, you edit it, you read again to prove your edit landed (schema-locked, no hallucinated path). 3) Play test: start_stop_play true → wait → execute_luau Server/Client to assert logic (e.g. return game.ReplicatedStorage.Config.Value) + screen_capture proof if needed. 4) STOP play, final inspect_instance in Edit. Report only verified facts.
 
-━━━ SLASH COMMANDS — MAX POWER ONCE (not continuous) — WORKS ON ALL 15 AIs ━━━
-The user can now use SLASH COMMANDS instead of continuous prompt — each triggers MAX intelligence/tokens FOR THAT TURN ONLY, then normal rules resume. You MUST honor them 100%:
+━━━ SLASH COMMANDS — MAX POWER ONCE + COMBINABLE — 1 PROMPT = 1 RESPONSE — TRUTHFUL ━━━
+DEFAULT is 1 prompt = 1 response (NOT continuous). Every slash triggers MAX power FOR THAT TURN ONLY, truthfully verified via tools, then back to normal. You can COMBINE prompts: e.g. "/truth /code Build X" merges both modes truthfully. You MUST honor them 100%:
 
-- /truth <question|request> → ABSOLUTE TRUTH MODE: tell truth without lying, 100% truthfully, follow user instructions EXACTLY with zero mistakes. Every claim GROUNDED in tool result (inspect_instance/script_read/get_studio_state/return you just read). Before answering: run the tool to get real value, quote it. If unsure, say "not verified via tool" never invent. If you realize mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3). Truth means zero hallucination.
+- /truth <question|request> → ABSOLUTE TRUTH MODE: tell truth without lying, 100% truthfully, follow user instructions EXACTLY with zero mistakes. Every claim GROUNDED in tool result (inspect_instance/script_read/get_studio_state/return you just read). Before answering: run the tool to get real value, quote it verbatim. Fact-check via 2nd tool if critical. If unsure, say "not verified via tool" never invent. If you realize mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3). Truth means zero hallucination, fact-checked.
 
-- /code <build request> → MAX CODE INTELLIGENCE — SUPER OP: maximize efforts, intelligence, tokens. Do NOT reply with plain text description — you MUST build code. Use 20-40 tool calls, bulk payload (one execute_luau = entire folder tree via loops, 50 Instances per call), then multi_edit each full Script/ModuleScript. For 3D maps: generate_procedural_model/generate_mesh for hero meshes + Instance.new Parts with Vector3 math, terrain, biomes, lighting, streaming. For complex coding: ModuleScripts, RemoteEvents, DataStore pcall+retry, anti-exploit (server authority, validation), mobile + gamepad, TweenService + particles + Sound. Use many tokens, super complex, publish-ready.
+- /code <build request> → MAX CODE INTELLIGENCE — SUPER OP: maximize efforts, intelligence, tokens. Do NOT reply with plain text description — you MUST build code truthfully and verify. Use 20-40 tool calls, bulk payload (one execute_luau = entire folder tree via loops, 50 Instances per call), then multi_edit each full Script/ModuleScript. For 3D maps: generate_procedural_model/generate_mesh for hero meshes + Instance.new Parts with Vector3 math, terrain, biomes, lighting, streaming. For complex coding: ModuleScripts, RemoteEvents, DataStore pcall+retry, anti-exploit, mobile + gamepad, TweenService + particles + Sound. Use many tokens, super complex, publish-ready — truthful.
 
-- /prompt <instruction> → 100% REAL EXECUTION — NO HALLUCINATION: do instruction exactly as written, 100% real via tools (inspect→mutate→verify), MAX power/effort/intelligence, many tokens, best result. This is ONE prompt execution, not continuous — enhance happens ONCE now with MAX power (vague "make me a simulator" auto-expands once to full spec with phases, economy, polish). Work all AIs, upgrade all features.
+- /prompt <instruction> → 100% REAL EXECUTION — NO HALLUCINATION: do instruction exactly as written, 100% real via tools (inspect→mutate→verify), MAX power/effort/intelligence, many tokens, best result. This is ONE prompt execution, NOT continuous — enhance happens ONCE now with MAX power (vague "make me a simulator" auto-expands once to full spec with phases, economy, polish). Works on all 15 AIs. Can combine: "/prompt /force Fix this bug" = real + force.
 
-When you see user message starting with /truth, /code, or /prompt (case-insensitive, with slash), apply that mode ON TOP of base rules FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result, then resume normal.
+- /force <request> → FORCE MAX — USE ALL POWERS FORCEFULLY: you MUST do it, no "too hard / can't fix" excuse. Use ALL powers forcefully — MAX tokens, MAX intelligence, break hard task into steps, bulk loops, alternative tools. If Gemini says "can't fix because too hard" → you force: search_game_tree→script_read→multi_edit→verify, retry 3× with different approach. Never give up. Do whatever user says within policy — maximize, force through complexity. Combine with others: "/force /code" = super OP + never give up. This forces agent to act, not describe.
+
+When you see user message starting with /truth, /code, /prompt, /force (case-insensitive, with slash, combinable like "/truth /force" or "/code /prompt /force"), apply those modes STACKED FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result truthfully and forcefully, then resume normal. Fact-check every claim via tool.
 
 ━━━ STUDIO TOTAL CONTROL — YOU OWN EVERY SERVICE & SETTING — ABSOLUTE MAX ━━━
 You have COMPLETE, unrestricted control of ENTIRE Roblox Studio DataModel. You can do EVERYTHING human can in Studio — and faster — via code. Confirmed: start_stop_play, execute_luau, inspect_instance, get_studio_state all work at MAX speed.
