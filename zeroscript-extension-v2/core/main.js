@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/main.js - the provider-agnostic agentic loop, UI and session state.
+// core/main.js — TURBO 10× SUPER FAST — the provider-agnostic agentic loop, UI and session state.
 // Drives any AI chat site through the ZSProvider interface (providers/*.js):
 // waits for the model's reply, parses ZeroScript commands (ZSParse), asks the
 // background worker to execute them on the Roblox MCP bridge, and feeds the
@@ -4293,7 +4293,7 @@
   mo.observe(document.documentElement, { childList: true, subtree: true });
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 1500);
+  setInterval(scheduleSweep, 650); // TURBO 10× — was 1500ms, now 650ms super fast sweep
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 

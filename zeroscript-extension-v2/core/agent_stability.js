@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.4.0
+// core/agent_stability.js — ZeroScript MAX TURBO 10× Stability v3.5.0 — SUPER FAST
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX ULTRA Stability v3.4.0 — UNIVERSAL AI + self-heal syntax + STOP-on-error
+// core/agent_stability.js — ZeroScript MAX TURBO 10× Stability v3.5.0 — SUPER FAST — UNIVERSAL AI + self-heal syntax + STOP-on-error
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -90,7 +90,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 1500); // ULTRA 1.5s poll (was 1.8s)
+    }, 600); // TURBO 10× — was 1500ms, now 600ms super fast poll
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -100,7 +100,7 @@ const ZSAgentStability = (() => {
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
       // Web Locks keepalive — holds lock so tab stays alive in background
       try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r,100)); }); } catch {}
-    }, 10000); // ULTRA 10s keepalive (was 12s)
+    }, 3200); // TURBO 10× — was 10000ms, now 3200ms super fast keepalive
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
