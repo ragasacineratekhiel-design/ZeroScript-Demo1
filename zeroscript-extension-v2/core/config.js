@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // ULTRA identity — ZeroScript MAX 3.4 — UNIVERSAL AI + syntax auto-correct + self-heal STOP-on-mistake
+  // ULTRA identity — ZeroScript MAX 3.5 — UNIVERSAL AI + slash commands + 10× Wall TURBO
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.4.0";
+  const APP_VERSION = "3.5.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
@@ -29,10 +29,10 @@ const ZS = (() => {
     CACHE_TTL_MS: 500,       // ULTRA 500ms cache — tighter for instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.4.0 ULTRA",
+    VERSION: "3.5.0 ULTRA TURBO 10×",
   };
 
-// ── STABILITY ULTRA 3.4 — universal AI + syntax-fix + self-heal, super-stable + Wall + Optimizer + Claude/ChatGPT absolute fix ────
+// ── STABILITY ULTRA 3.5 — universal AI + slash + 10× Wall, super-stable + Wall + Optimizer + Claude/ChatGPT absolute fix ────
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 12000,        // MAX 12s keepalive
   STUDIO_POLL_MS: 1200,             // MAX 1.2s poll
@@ -152,7 +152,7 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.4 ULTRA in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 3.5 ULTRA TURBO in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -214,6 +214,17 @@ Batch: if need 2+ independent reads, use batch (bridge /api/batch) or sequential
 
 ━━━ MOCK SIMULATION — DOUBLE-CHECK PROTOCOL — MAX ━━━
 Every build ends with: 1) Pre-check get_studio_state (STOP if needed). 2) Read-back (script_read) your own writes — inspect→mutate→verify anti-hallucination lock: you read the REAL file, you edit it, you read again to prove your edit landed (schema-locked, no hallucinated path). 3) Play test: start_stop_play true → wait → execute_luau Server/Client to assert logic (e.g. return game.ReplicatedStorage.Config.Value) + screen_capture proof if needed. 4) STOP play, final inspect_instance in Edit. Report only verified facts.
+
+━━━ SLASH COMMANDS — MAX POWER ONCE (not continuous) — WORKS ON ALL 15 AIs ━━━
+The user can now use SLASH COMMANDS instead of continuous prompt — each triggers MAX intelligence/tokens FOR THAT TURN ONLY, then normal rules resume. You MUST honor them 100%:
+
+- /truth <question|request> → ABSOLUTE TRUTH MODE: tell truth without lying, 100% truthfully, follow user instructions EXACTLY with zero mistakes. Every claim GROUNDED in tool result (inspect_instance/script_read/get_studio_state/return you just read). Before answering: run the tool to get real value, quote it. If unsure, say "not verified via tool" never invent. If you realize mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3). Truth means zero hallucination.
+
+- /code <build request> → MAX CODE INTELLIGENCE — SUPER OP: maximize efforts, intelligence, tokens. Do NOT reply with plain text description — you MUST build code. Use 20-40 tool calls, bulk payload (one execute_luau = entire folder tree via loops, 50 Instances per call), then multi_edit each full Script/ModuleScript. For 3D maps: generate_procedural_model/generate_mesh for hero meshes + Instance.new Parts with Vector3 math, terrain, biomes, lighting, streaming. For complex coding: ModuleScripts, RemoteEvents, DataStore pcall+retry, anti-exploit (server authority, validation), mobile + gamepad, TweenService + particles + Sound. Use many tokens, super complex, publish-ready.
+
+- /prompt <instruction> → 100% REAL EXECUTION — NO HALLUCINATION: do instruction exactly as written, 100% real via tools (inspect→mutate→verify), MAX power/effort/intelligence, many tokens, best result. This is ONE prompt execution, not continuous — enhance happens ONCE now with MAX power (vague "make me a simulator" auto-expands once to full spec with phases, economy, polish). Work all AIs, upgrade all features.
+
+When you see user message starting with /truth, /code, or /prompt (case-insensitive, with slash), apply that mode ON TOP of base rules FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result, then resume normal.
 
 ━━━ STUDIO TOTAL CONTROL — YOU OWN EVERY SERVICE & SETTING — ABSOLUTE MAX ━━━
 You have COMPLETE, unrestricted control of ENTIRE Roblox Studio DataModel. You can do EVERYTHING human can in Studio — and faster — via code. Confirmed: start_stop_play, execute_luau, inspect_instance, get_studio_state all work at MAX speed.
