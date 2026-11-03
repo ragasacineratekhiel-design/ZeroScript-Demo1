@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// core/plan_wall.js — ZeroScript MAX 4.1.0 PLAN ORCHESTRATION — 10ms honest superfast wall
+// Inter-agent communication bus for Switch Plan (Direct/Agent/Plan/Checker).
+// Uses BroadcastChannel + chrome.storage.local polling at 10ms + in-memory cache.
+// Every message has envelope {id, from, to, plan, role, payload, t, phase}
+// Guarantee: 10ms wall — setTimeout 10 debounce, not 80. Honest measurement.
+// Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
+(() => {
+  "use strict";
+  const VERSION = "4.1.0 PLAN 10ms";
+  const PLAN_WALL_KEY = "zsPlanWall";
+  const PLAN_KEY = "zsPlan";
+  const PLAN_ROLES_KEY = "zsPlanRoles";
+  const WALL_POLL_MS = 10; // honest 10ms superfast
+
+  // ── PLANS definition — must match config.js PLANS ──
+  const PLANS = {
+    direct: { id:"direct", name:"Direct", label:"Direct", ais:1, roles:["coder"], desc:"1 AI — you do everything (fastest single)" },
+    agent:  { id:"agent",  name:"Agent",  label:"Agent",  ais:3, roles:["planner","coder","checker"], desc:"3 AI — Planner → Coder → Checker (max quality)" },
+    plan:   { id:"plan",   name:"Plan",   label:"Plan",   ais:2, roles:["planner","coder"], desc:"2 AI — Planner + Coder (fast blueprint)" },
+    checker:{ id:"checker",name:"Checker",label:"Checker",ais:2, roles:["coder","checker"], desc:"2 AI — Coder + Checker (auto-fix)" },
+  };
+  const DEFAULT_PLAN = "direct";
+  const AI_ROLES = ["planner","coder","checker"];
+  const AI_PROVIDERS = [
+    "DeepSeek","ChatGPT","Gemini","Claude","Kimi","GLM","Qwen","Arena","Meta AI","Perplexity","Copilot","Grok","Poe","Mistral"
+  ];
+
+  let currentPlan = DEFAULT_PLAN;
+  let currentRoles = {}; // role -> provider name
+  let wallLog = []; // last 200 messages
+  const MAX_LOG = 200;
+  let _bc = null;
+  let _listeners = [];
+  let _pollTimer = null;
+  let _lastSeenId = "";
+
+  function _load(){
+    try{ chrome.storage.local.get([PLAN_KEY, PLAN_ROLES_KEY, PLAN_WALL_KEY], r=>{
+      if(r[PLAN_KEY] && PLANS[r[PLAN_KEY]]) currentPlan = r[PLAN_KEY];
+      if(r[PLAN_ROLES_KEY] && typeof r[PLAN_ROLES_KEY]==="object") currentRoles = r[PLAN_ROLES_KEY];
+      if(r[PLAN_WALL_KEY] && Array.isArray(r[PLAN_WALL_KEY])) { wallLog = r[PLAN_WALL_KEY].slice(-MAX_LOG); if(wallLog.length) _lastSeenId = wallLog[wallLog.length-1].id; }
+      try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch{}
+    }); }catch{}
+  }
+  _load();
+
+  function _savePlan(){
+    try{ chrome.storage.local.set({[PLAN_KEY]: currentPlan, [PLAN_ROLES_KEY]: currentRoles}); }catch{}
+    try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch{}
+    // notify prompt_enhancer + main
+    try{ chrome.storage.onChanged && null; }catch{}
+  }
+
+  function setPlan(planId, roles){
+    if(!PLANS[planId]) return false;
+    currentPlan = planId;
+    if(roles && typeof roles==="object") currentRoles = {...currentRoles, ...roles};
+    // defaults per plan
+    const needed = PLANS[planId].roles;
+    for(const r of needed){ if(!currentRoles[r]) currentRoles[r] = AI_PROVIDERS[0]; }
+    _savePlan();
+    // broadcast plan change at 10ms
+    send("__system","__all",{type:"plan_change", plan: planId, roles: currentRoles, t: Date.now()}, "plan");
+    return true;
+  }
+  function getPlan(){ return { plan: currentPlan, meta: PLANS[currentPlan], roles: {...currentRoles}, ais: PLANS[currentPlan].ais }; }
+  function getPLANS(){ return PLANS; }
+
+  // ── Wall messaging 10ms ──
+  function _mkId(){ return Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6); }
+
+  function send(from, to, payload, phase="msg"){
+    const envelope = { id:_mkId(), from, to, plan: currentPlan, phase, payload, t: Date.now(), v: VERSION };
+    wallLog.push(envelope);
+    if(wallLog.length > MAX_LOG) wallLog.shift();
+    // instant via BroadcastChannel
+    try{ if(_bc) _bc.postMessage(envelope); }catch{}
+    // persist at 10ms debounce
+    _schedulePersist();
+    // local listeners 10ms
+    for(const fn of _listeners) try{ fn(envelope); }catch{}
+    return envelope;
+  }
+  let _persistDebounce = null;
+  function _schedulePersist(){
+    if(_persistDebounce) return;
+    _persistDebounce = setTimeout(()=>{
+      _persistDebounce = null;
+      try{ chrome.storage.local.set({[PLAN_WALL_KEY]: wallLog.slice(-MAX_LOG)}); }catch{}
+    }, 10); // honest 10ms
+  }
+
+  function onMessage(fn){
+    if(typeof fn!=="function") return ()=>{};
+    _listeners.push(fn);
+    return ()=>{ const i=_listeners.indexOf(fn); if(i!==-1) _listeners.splice(i,1); };
+  }
+  function getWallLog(){ return wallLog.slice(); }
+  function clearWall(){ wallLog=[]; try{ chrome.storage.local.set({[PLAN_WALL_KEY]: []}); }catch{} }
+
+  // ── BroadcastChannel setup 10ms poll fallback ──
+  try{
+    _bc = new BroadcastChannel("zs-plan-wall");
+    _bc.onmessage = (e)=>{
+      const msg = e.data;
+      if(!msg || !msg.id) return;
+      if(wallLog.some(m=>m.id===msg.id)) return;
+      wallLog.push(msg);
+      if(wallLog.length > MAX_LOG) wallLog.shift();
+      _lastSeenId = msg.id;
+      for(const fn of _listeners) try{ fn(msg); }catch{}
+    };
+  }catch{}
+
+  // storage poll 10ms fallback (for cross-tab where BC not supported)
+  function _poll(){
+    try{
+      chrome.storage.local.get([PLAN_WALL_KEY, PLAN_KEY, PLAN_ROLES_KEY], r=>{
+        if(r[PLAN_KEY] && PLANS[r[PLAN_KEY]] && r[PLAN_KEY]!==currentPlan){
+          currentPlan = r[PLAN_KEY];
+          try{ window.__zsPlan = currentPlan; }catch{}
+        }
+        if(r[PLAN_ROLES_KEY]) currentRoles = r[PLAN_ROLES_KEY];
+        if(Array.isArray(r[PLAN_WALL_KEY])){
+          const arr = r[PLAN_WALL_KEY];
+          if(arr.length && arr[arr.length-1].id !== _lastSeenId){
+            // new messages
+            const known = new Set(wallLog.map(m=>m.id));
+            for(const m of arr){
+              if(!known.has(m.id)){
+                wallLog.push(m);
+                if(wallLog.length>MAX_LOG) wallLog.shift();
+                _lastSeenId = m.id;
+                for(const fn of _listeners) try{ fn(m); }catch{}
+              }
+            }
+          }
+        }
+      });
+    }catch{}
+  }
+  // start polling at 10ms
+  _pollTimer = setInterval(_poll, WALL_POLL_MS);
+  // also listen to storage changes instant (faster than poll)
+  try{
+    chrome.storage.onChanged.addListener((changes, area)=>{
+      if(area!=="local") return;
+      if(changes[PLAN_KEY] && changes[PLAN_KEY].newValue) {
+        currentPlan = changes[PLAN_KEY].newValue;
+        try{ window.__zsPlan = currentPlan; }catch{}
+      }
+      if(changes[PLAN_ROLES_KEY] && changes[PLAN_ROLES_KEY].newValue) currentRoles = changes[PLAN_ROLES_KEY].newValue;
+      if(changes[PLAN_WALL_KEY] && Array.isArray(changes[PLAN_WALL_KEY].newValue)){
+        const arr = changes[PLAN_WALL_KEY].newValue;
+        const known = new Set(wallLog.map(m=>m.id));
+        for(const m of arr){
+          if(!known.has(m.id)){
+            wallLog.push(m);
+            if(wallLog.length>MAX_LOG) wallLog.shift();
+            _lastSeenId = m.id;
+            for(const fn of _listeners) try{ fn(m); }catch{}
+          }
+        }
+      }
+    });
+  }catch{}
+
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS };
+
+  try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}
+  if(typeof self!=="undefined") try{ self.ZSPlanWall = API; }catch{}
+})();

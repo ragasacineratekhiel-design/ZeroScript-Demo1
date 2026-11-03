@@ -268,6 +268,49 @@ html.zs-light #zs-unstable {
 }
 #zs-discord:hover, #zs-support:hover { background: rgba(255, 255, 255, 0.11); color: #ededf0; }
 
+/* ── Switch Plan — same design as Switch Model, on LEFT of Stop ── */
+#zs-plan {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 9px;
+  background: rgba(99, 102, 241, 0.18); color: #c7d2fe;
+  border: 1px solid rgba(129, 140, 248, 0.30); border-radius: 8px;
+  font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: background 0.14s ease, filter 0.14s ease;
+}
+#zs-plan:hover { background: rgba(99, 102, 241, 0.30); color: #e0e7ff; }
+#zs-plan svg { opacity: 0.7; }
+#zs-plan[data-plan="direct"] { background: rgba(255,255,255,0.06); color: #d0d0d6; border-color: rgba(255,255,255,0.12); }
+#zs-plan[data-plan="direct"]:hover { background: rgba(255,255,255,0.11); }
+#zs-plan[data-plan="agent"] { background: linear-gradient(135deg, rgba(99,102,241,0.28), rgba(139,92,246,0.28)); border-color: rgba(129,140,248,0.4); }
+#zs-plan[data-plan="plan"] { background: rgba(16,185,129,0.18); color: #a7f3d0; border-color: rgba(16,185,129,0.32); }
+#zs-plan[data-plan="checker"] { background: rgba(245,158,11,0.18); color: #fde68a; border-color: rgba(245,158,11,0.32); }
+
+/* Plan popup — orchestrated AI selector (appears above bar) */
+#zs-plan-menu {
+  position: fixed; box-sizing: border-box; z-index: 2147483601;
+  width: 340px; max-height: 70vh; overflow-y: auto;
+  padding: 12px; background: #161618; color: #ececee;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0,0,0,0.55);
+  font-size: 12px; animation: zs-pop 0.16s ease-out;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.22) transparent;
+}
+#zs-plan-menu h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: #f4f4f6; }
+#zs-plan-menu .zs-plan-note { font-size: 11px; color: #9a9aa0; margin: 0 0 10px; line-height: 1.45; }
+.zs-plan-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 9px 10px; margin: 4px 0; border-radius: 9px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); color: #d8d8de; cursor: pointer; text-align: left; transition: background 0.12s, border-color 0.12s; }
+.zs-plan-opt:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+.zs-plan-opt.zs-plan-active { background: rgba(99,102,241,0.18); border-color: rgba(129,140,248,0.45); color: #e0e7ff; }
+.zs-plan-opt strong { font-size: 12.5px; }
+.zs-plan-opt span { font-size: 10.5px; color: #8a8a92; }
+.zs-plan-roles { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07); }
+.zs-plan-role-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.zs-plan-role-row label { flex: none; width: 70px; font-size: 11px; font-weight: 600; color: #a1a1aa; text-transform: capitalize; }
+.zs-plan-role-row select { flex: 1; height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); background: #1e1e22; color: #ececee; font-size: 12px; }
+.zs-plan-save { width: 100%; margin-top: 10px; padding: 9px; border-radius: 9px; border: 0; background: linear-gradient(135deg,#6366f1,#818cf8); color: #fff; font-weight: 700; cursor: pointer; }
+.zs-plan-save:hover { filter: brightness(1.08); }
+.zs-plan-ais { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; }
+.zs-plan-ais b { background: rgba(99,102,241,0.22); padding: 1px 5px; border-radius: 5px; font-size: 10px; }
+
 /* model switcher: names the current AI and opens the panel at Switch AI */
 #zs-switch {
   flex: none; display: flex; align-items: center; gap: 5px;

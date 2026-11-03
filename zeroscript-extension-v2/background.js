@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX Service Worker v4.0.0 TURBO 10ms — UNIVERSAL AI + slash+force + single-prompt truthful
-// UPGRADED TO 10ms TURBO: no GUI change, pure logic MAX 10ms. Hedge now 10ms, fact-checked truthful single-response.
+// background.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + instant ready + internal ultra
+// UPGRADED TO 10ms PLAN WALL: instant connect, internal commands hedge 5ms, enriched info, GUI plugin.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
 // Every sendMessage ALWAYS resolves — never hangs the agent loop.
@@ -20,7 +20,7 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.0.0";
+const EXT_VERSION = "4.1.0";
 const RECONNECT_MIN = 10;    // TURBO 10ms ultra (was 80)
 const RECONNECT_MAX = 800;     // TURBO 800 (was 2500) — faster cap
 const HEARTBEAT_MS = 800;    // TURBO 0.8s — super fast drop (was 2800)
