@@ -1,14 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/prompt_enhancer.js — ZeroScript MAX TELEMETRY 4.0.0 — 5ms DRY-RUN + TREE-TRIM + SPEC-CONTRACT + FACT-CHECKED
-// BAD→BEST in <0.5ms enhance + 5ms dry-run — precompiled regex, cached themes, trimmed wallCtx, spec contract upstream.
-// FACT-CHECK: prompts ALONE don't make Flash==Pro. REAL boost is INTERNAL+EXTERNAL+RUNTIME: planner + validator + memory + 5ms sandbox telemetry + honest amplifier.
-// SLASH COMMANDS: /truth /code /prompt /force /smart — combinable, once, MAX power, all 15 AIs.
-// DEFAULT: 1 prompt = 1 response — NOT continuous. Slash triggers once per turn, max power truthfully.
-// Runs 100% locally, no network.
+// core/prompt_enhancer.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
+// BAD→BEST in <0.5ms enhance + 5ms dry-run + 10ms plan wall — precompiled regex, trimmed wallCtx, spec contract upstream.
+// SWITCH PLAN: Direct/Agent/Plan/Checker orchestrated multi-AI with 10ms BroadcastChannel wall — honest superfast.
+// FACT-CHECK: prompts ALONE don't make Flash==Pro. REAL boost is INTERNAL+EXTERNAL+RUNTIME+PLAN: planner + validator + memory + sandbox + wall.
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.0.0 TELEMETRY 5ms DRY-RUN+TRIM+SPEC FACT-CHECKED";
+  const ENHANCER_VERSION = "4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated";
+
+  function getPlanOrchestration(raw){
+    try{
+      const plan = (typeof window!=="undefined" && window.__zsPlan) || (typeof window.ZS!=="undefined" && window.ZS.DEFAULT_PLAN) || "direct";
+      const roles = (typeof window!=="undefined" && window.__zsPlanRoles) || {};
+      const wall = (typeof window!=="undefined" && window.ZSPlanWall) || null;
+      const planDef = {direct:{ais:1,roles:["coder"],name:"Direct"},agent:{ais:3,roles:["planner","coder","checker"],name:"Agent"},plan:{ais:2,roles:["planner","coder"],name:"Plan"},checker:{ais:2,roles:["coder","checker"],name:"Checker"}}[plan] || {ais:1,roles:["coder"],name:"Direct"};
+      if(plan==="direct") return `\n\n[Switch Plan: Direct — 1 AI solo — you do everything — 10ms wall ready]\n`;
+      // multi-AI: inject handoff instruction + recent wall messages
+      let wallSnippet="";
+      try{
+        if(wall && wall.getWallLog){
+          const logs=wall.getWallLog().slice(-3);
+          if(logs.length) wallSnippet=`\nRecent wall (10ms):\n`+logs.map(m=>`[${m.from}→${m.to} ${m.phase} @${new Date(m.t).toISOString().slice(11,19)}] ${JSON.stringify(m.payload).slice(0,120)}`).join("\n");
+        }
+      }catch{}
+      const roleList=planDef.roles.join(" → ");
+      const assigned=Object.entries(roles).map(([k,v])=>`${k}:${v}`).join(", ") || "auto";
+      return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${planDef.roles.length===3 ? "Planner designs blueprint + file tree, Coder builds (Instance.new + multi_edit), Checker audits + fixes. Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review})." : planDef.roles[0]==="planner" ? "Planner → Coder: Planner outputs blueprint (phases + paths + economy), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff." : "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes fix list to wall 10ms."}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
+    }catch{ return ""; }
+  }
 
   // ── FACT-CHECKED INTELLIGENCE AMPLIFIER — v4 adds RUNTIME ──
   // TRUTH: No prompt can turn Flash weights into Pro weights. What WORKS (tested):
@@ -269,7 +288,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     // Normal prompt — trimmed + contract + runtime-aware boost
     const wallCtx2 = getWallCtx(raw);
     const contract2 = getTestContract(raw, wallCtx2, theme);
-    const lightPlus = PRO_BOOST_LIGHT + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[5ms dry-run will check your output before user sees it; trimmed context keeps you lean]";
+    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[5ms dry-run will check your output before user sees it; trimmed context keeps you lean; Switch Plan wall 10ms active]";
     return { enhanced: raw + lightPlus, changed:true, theme, spec: lightPlus, mode:"pro-boost-v4" };
   }
 

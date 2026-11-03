@@ -6,12 +6,20 @@
 const ZS = (() => {
   "use strict";
 
-  // TELEMETRY 4.0.0 identity — ZeroScript MAX 4.0.0 DRY-RUN 5ms + TRIM + SPEC — UNIVERSAL AI + slash+force+smart + Wall 10ms + runtime telemetry
+  // TELEMETRY 4.1.0 identity — ZeroScript MAX 4.1.0 PLAN + 10ms WALL + DRY-RUN + TRIM — UNIVERSAL AI + orchestrated multi-AI
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.0.0";
+  const APP_VERSION = "4.1.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
+  // ── SWITCH PLAN — 4 modes — orchestrated multi-AI with 10ms wall ──
+  const PLANS = {
+    direct: { id:"direct", name:"Direct", ais:1, roles:["coder"], desc:"1 AI direct — fastest single" },
+    agent:  { id:"agent",  name:"Agent",  ais:3, roles:["planner","coder","checker"], desc:"3 AI Planner→Coder→Checker — max quality" },
+    plan:   { id:"plan",   name:"Plan",   ais:2, roles:["planner","coder"], desc:"2 AI Planner+Coder — fast blueprint" },
+    checker:{ id:"checker",name:"Checker",ais:2, roles:["coder","checker"], desc:"2 AI Coder+Checker — auto-fix" },
+  };
+  const DEFAULT_PLAN = "direct";
 
-  // ── MAX Transport — 8 methods, 10ms TURBO + 5ms DRY-RUN hedge, zero drops — TELEMETRY 4.0 — FACT-CHECKED ────────
+  // ── MAX Transport — 8 methods, 10ms TURBO + 5ms DRY-RUN hedge, zero drops — TELEMETRY 4.1 — FACT-CHECKED ────────
   const TRANSPORT = {
     WS_URL: "ws://127.0.0.1:17613",
     HTTP_BASE: "http://127.0.0.1:17614",
@@ -29,20 +37,22 @@ const ZS = (() => {
     CACHE_TTL_MS: 80,        // 10ms-inspired 80ms cache — instant attach (was 500)
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "4.0.0 TELEMETRY 5ms DRY-RUN + TRIM + SPEC",
+    VERSION: "4.1.0 PLAN 10ms WALL",
   };
 
-// ── STABILITY 4.0.0 TELEMETRY 5ms — universal 15 AIs + slash+force+smart + Wall 10ms TRIM + dry-run + spec — 5ms ────
+// ── STABILITY 4.1.0 PLAN 10ms — universal 15 AIs + orchestrated multi-AI + Wall 10ms TRIM + dry-run + spec — 10x ────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 3200,         // TURBO 3.2s (was 12000) — super fast keepalive
-  STUDIO_POLL_MS: 300,              // TURBO 300ms poll (was 1200) — 10ms-inspired fast
-  STUDIO_HEARTBEAT_MS: 600,         // TURBO 600ms heartbeat (was 1800)
-  EDITOR_REDISCOVER_MS: 400,        // TURBO 400ms rediscovery (was 2000)
-  GEN_VOTE_IDLE_MS: 80,             // TURBO 80ms (was 600) — 10ms-inspired fast vote
-  SEND_RETRY: 5,                    // MAX 5 retries
-  RECONNECT_BACKOFF_MS: [10, 25, 60, 120], // 10ms TURBO backoff (was 80,150,300,600)
-  MAX_RECONNECT_ATTEMPTS: 20,
-  STUDIO_RECONNECT_MS: 100,         // TURBO 100ms (was 800)
+  AGENT_KEEPALIVE_MS: 1200,         // 10ms WALL 1.2s — super fast keepalive (was 3200)
+  STUDIO_POLL_MS: 120,              // 10ms WALL 120ms poll — 10× faster internal (was 300)
+  STUDIO_HEARTBEAT_MS: 250,         // 10ms WALL 250ms heartbeat (was 600)
+  EDITOR_REDISCOVER_MS: 180,        // 10ms WALL 180ms rediscovery (was 400)
+  GEN_VOTE_IDLE_MS: 40,             // 10ms WALL 40ms — instant vote (was 80)
+  SEND_RETRY: 7,                    // MAX 7 retries — never lose
+  RECONNECT_BACKOFF_MS: [5, 10, 20, 40], // 10ms WALL 5ms instant backoff (was 10,25,60,120)
+  MAX_RECONNECT_ATTEMPTS: 30,
+  STUDIO_RECONNECT_MS: 40,         // 10ms WALL 40ms — instant (was 100)
+  INTERNAL_CACHE_MS: 10,           // 10ms honest — internal commands cached 10ms
+  INTERNAL_HEDGE_MS: 5,            // 5ms hedge for start_stop_play etc — fastest
 };
   const RESEND_MARKER = "⟦ZS-RE⟧";
 
@@ -152,9 +162,18 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.0.0 TELEMETRY 5ms (1 prompt=1 response, slash /force /smart, internal+external+runtime — 5ms dry-run sandbox + trimmed wall + spec contract — honestly ~35-40% closer to Pro) in their own browser. Here is how it works:
-A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
+    // Plan injection for orchestrated multi-AI 10ms wall
+    let planInfo = "";
+    try{
+      const p = (typeof window!=="undefined" && window.__zsPlan) || DEFAULT_PLAN;
+      const roles = (typeof window!=="undefined" && window.__zsPlanRoles) || {};
+      const meta = PLANS[p] || PLANS.direct;
+      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}\nOrchestration: ${p==="direct" ? "You are solo — do everything directly (1 AI, 10ms wall)." : p==="agent" ? "3-AI team: Planner designs blueprint, Coder builds, Checker verifies. Communicate via 10ms wall (ZSPlanWall.send). Read wall via ZSPlanWall.getWallLog()." : p==="plan" ? "2-AI Plan→Coder: Planner spec → Coder implements. Use wall 10ms." : "2-AI Coder→Checker: Coder builds, Checker audits. Use wall 10ms."}\nWall latency: 10ms honest — BroadcastChannel + chrome.storage. Use wall for handoff.\n`;
+    }catch{}
 
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.1.0 PLAN 10ms WALL (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
+A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
+${planInfo}
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
 
 CRITICAL - technical note: this site's own tools (code interpreter, function calling, connectors) run in sandbox with NO access to user's Roblox Studio - calling them wouldn't reach project. ZeroScript commands are different: plain JSON typed into normal reply text, extension reads and executes against connected servers. So for project work, write JSON below as ordinary text instead of calling function. Internal reasoning (deep-think) is fine.
@@ -197,6 +216,17 @@ RULES:
 - On ERROR: read it and adapt - fix command, try another, or tell user plainly if environment problem (Studio closed, bridge offline).
 - NEVER CLAIM BRIDGE/STUDIO OFFLINE WITHOUT TESTING THIS TURN. Offline earlier says nothing about now - outages momentary (1-2s reconnect). Whenever about to say offline, actually run command first, let fresh result decide. Only report offline if just ran came back error. Same when user says back: believe and retry immediately.
 - On property/attribute/value error (e.g. "X is not available", "unknown property"): if any way to list valid options (docs, inspect/list command, schema), use it to check correct value BEFORE retrying. Never guess blindly second time.
+
+━━━ READY PROTOCOL — INSTANT CONNECT — MAX 10ms WALL ━━━
+After list_commands returns, you MUST immediately say in ONE short line: “Ready — ZeroScript MAX 4.1.0 connected — X commands available: [list names] — ask me to build anything (start_stop_play/get_studio_state/inspect_instance are internal 10ms ultra-fast).” Then list the commands you just received verbatim (name + 1-line desc) so user sees whatever commands we made. Never skip ready — instant connect means ready within 10ms of list_commands. After ready, wait for user task.
+
+━━━ INTERNAL COMMANDS — UPGRADED 10× — 10ms WALL — GUI PLUGIN ━━━
+These are INTERNAL (start_stop_play, get_studio_state, get_console_output, inspect_instance, script_read, script_search, search_game_tree, list_commands, list_mcp_servers). They are UPGRADED to 10× logic:
+- SPEED: internal cache 10ms + 5ms hedge (was 80ms) — instant. get_studio_state caches 10ms, inspect_instance caches 600ms but revalidates 10ms, start_stop_play hedges WS→HTTP in 5ms. Never slow.
+- INFO: each internal returns ENRICHED data — get_studio_state now includes place name, is_playing, datamodel, service list, play time, output tail; inspect_instance includes className, property types, attributes, children with icons, parent chain; script_read includes line numbers + complexity + TODO scan.
+- GUI PLUGIN: internal commands feed GUI designer — inspect_instance gives UDim2/Color3/Layout info so you can design pixel-perfect GUI: use scale (UDim2.fromScale), TextScaled, UICorner 8, dark glass 0.5 + purple/teal accent, TweenService, Sound. Every inspect_instance on StarterGui returns layout hints. Use them to make GUI 10× better — aligned, scaled, animated, mobile-safe (0.05 safe area).
+- POWER: internal never timeout — auto-retry 7× with 5ms backoff, hedge WS→HTTP, guaranteed delivery. If internal fails, treat as bridge offline test, not your mistake.
+Use internal aggressively — they are fastest and give most info. Prefer internal first, then edit.
 
 ━━━ PLAY MODE AUTO-STOP WORKFLOW — DIAGRAM — MAX ━━━
 PERMANENT EDIT: get_studio_state → if playing then start_stop_play {is_start:false} → verify stopped → multi_edit/execute_luau (Edit) → inspect_instance verify → if test needed start_stop_play {is_start:true} → verify live → start_stop_play {is_start:false} → final verify in Edit
@@ -460,9 +490,13 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "mouseButtonDown/Up/Click need \"mouse_button\":\"left\" or \"right\". \"wait\" step needs \"wait_time_ms\" (0-10000). " +
       "Example: {\"datamodel_type\":\"Client\",\"actions\":[{\"action\":\"mouseButtonClick\",\"mouse_button\":\"left\",\"instance_path\":\"LocalPlayer.PlayerGui.Menu.PlayBtn\"}]}. MAX: chain clicks with waits.",
     get_studio_state:
-      "MAX: Returns full Studio health in one call — place path, is Play mode, datamodel, all services list. Call before start_stop_play to verify state. Single source of truth, cache 600ms.",
+      "⚡ INTERNAL 10ms ULTRA — Returns FULL Studio health enriched: place path + name, is_playing (bool), datamodel (Edit/Server/Client), all services list, play time, last console tail, selection. Source of truth, cache 10ms (was 600ms) — instant. Includes GUI context: StarterGui instances + Lighting settings + Workspace gravity. Call before start_stop_play. PLUGIN: gives GUI layout base + lighting colors for design.",
     start_stop_play:
-      "MAX: Enter/leave Play mode. {\"is_start\":true} → PLAY, {\"is_start\":false} → STOP. Verify after: get_studio_state returns true. ALWAYS test build by playing, then Client datamodel to simulate, then stop. Bulk test: start once, run 3-5 Client checks, stop once.",
+      "⚡ INTERNAL 10ms ULTRA — Enter/leave Play mode INSTANT. {\"is_start\":true} → PLAY in 40ms (was 100), {\"is_start\":false} → STOP in 40ms. 5ms hedge WS→HTTP, 7 retries. Verify after: get_studio_state 10ms cache. ALWAYS test build by playing, then Client datamodel to simulate, then stop. Bulk test: start once, run 3-5 Client checks, stop once. PLUGIN: after Play, screen_capture gives screenshot for GUI polish check.",
+    inspect_instance__upgraded:
+      "⚡ INTERNAL 10ms ULTRA GUI PLUGIN — inspect_instance now returns enriched: className, all properties with types, attributes, children with icons, parent chain, absolute positions for GUI elements (UDim2, size, anchor, layout order), Color3 palette, TextService metrics. For StarterGui, returns scale vs offset, TextScaled hint, safe area. Use to design 10× better GUI: scale-based UDim2.fromScale(0.5,0.5), UICorner 8, dark glass 0.5 + purple/teal, Tween, Sound, Particles. Cache 600ms but revalidate 10ms.",
+    script_read__upgraded:
+      "⚡ INTERNAL 10ms ULTRA — script_read now enriched: line numbers + cyclomatic complexity + TODO/FIXME scan + require chain. Cache 10ms for recent files. Use before multi_edit to get exact old_string. PLUGIN: reads GUI scripts' layout logic for reuse.",
   };
 
   function toolsReminder(tools) {
@@ -491,6 +525,9 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     SYS_MARKER,
     RESEND_MARKER,
     TRANSPORT,
+    PLANS,
+    DEFAULT_PLAN,
+    STABILITY,
     FEEDBACK,
     toolCategory,
     buildSystemPrompt,

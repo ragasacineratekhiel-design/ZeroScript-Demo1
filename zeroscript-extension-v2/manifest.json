@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.0.0",
-  "description": "ZeroScript MAX 4.0.0 TELEMETRY \u2014 5ms DRY-RUN sandbox + DYNAMIC TREE-TRIM + SPEC-DRIVEN TEST CONTRACT \u2014 fact-checked: ~40-50% closer to Pro (target) via runtime feedback + lean context. 10ms TURBO, all 15 AIs.",
+  "version": "4.1.0",
+  "description": "ZeroScript MAX 4.1.0 PLAN 10ms WALL \u2014 Switch Plan Direct/Agent/Plan/Checker \u2014 10ms orchestrated multi-AI + instant ready + internal ultra 10ms",
   "permissions": [
     "storage",
     "alarms"
@@ -46,7 +46,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 4.0.0 TELEMETRY 5ms",
+    "default_title": "ZeroScript MAX 4.1.0 PLAN 10ms",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -66,6 +66,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/deepseek.js",
         "core/main.js"
       ],
@@ -98,6 +99,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/chatgpt.js",
         "core/main.js"
       ],
@@ -118,6 +120,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/gemini.js",
         "core/main.js"
       ],
@@ -139,6 +142,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/kimi.js",
         "core/main.js"
       ],
@@ -159,6 +163,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/glm.js",
         "core/main.js"
       ],
@@ -179,6 +184,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/arena.js",
         "core/main.js"
       ],
@@ -200,6 +206,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/meta.js",
         "core/main.js"
       ],
@@ -230,6 +237,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/qwen.js",
         "core/main.js"
       ],
@@ -251,6 +259,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/claude-connector.js",
         "providers/claude.js",
         "core/main.js"
@@ -273,6 +282,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/generic.js",
         "providers/perplexity.js",
         "core/main.js"
@@ -294,6 +304,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/generic.js",
         "providers/copilot.js",
         "core/main.js"
@@ -316,6 +327,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/generic.js",
         "providers/grok.js",
         "core/main.js"
@@ -337,6 +349,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/generic.js",
         "providers/poe.js",
         "core/main.js"
@@ -359,6 +372,7 @@
         "core/memory_wall.js",
         "core/sandbox.js",
         "core/prompt_enhancer.js",
+        "core/plan_wall.js",
         "providers/generic.js",
         "providers/mistral.js",
         "core/main.js"
