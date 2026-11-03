@@ -13,7 +13,7 @@ const LEGACY_WARNING = "⚠ Remove legacy extension `zeroscript-extension` — k
 
 function safeVer() {
   try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
-  return "v3.4.0";
+  return "v3.5.0";
 }
 try { document.getElementById("ver").textContent = safeVer(); } catch {}
 
