@@ -551,6 +551,7 @@ const ZSProvider = (() => {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
     const mds = [...item.querySelectorAll(S.reply)];
+
     return {
       present: true,
       reply: mds.map((m) => textWithout(m, ".zs-chip")).join("\n").trim(),
@@ -1002,6 +1003,15 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "ChatGPT composer not found — open a new chat";
+      if (location.pathname.startsWith("/g/")) return "This is a GPT — ZeroScript needs a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "chatgpt",
     displayName: "ChatGPT",
@@ -1055,7 +1065,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, openNewChat, conversationKey,
     installSendHooks, findToolBlockSpot,

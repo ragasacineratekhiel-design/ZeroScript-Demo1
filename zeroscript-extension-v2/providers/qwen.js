@@ -595,6 +595,7 @@ const ZSProvider = (() => {
   function readAssistant() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
+
     return {
       present: true,
       reply: assistantReplyText(item).trim(),
@@ -962,6 +963,14 @@ const ZSProvider = (() => {
     try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch {}
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Qwen composer not found — open a new chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "qwen",
     displayName: "Qwen",
@@ -1006,7 +1015,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn, replyUnsettled, isComparisonTurn, resolveComparison,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,

@@ -96,3 +96,72 @@
 3. **Kill the 10 ms `chrome.storage` poll** in `plan_wall.js`; use `chrome.storage.onChanged` + BroadcastChannel only, and wire **one** BC→handler bridge so `zs-wall-task` actually reaches the executor. *(~1 h)*
 4. **`bridge.py` auth** — require the token on every `/api/*` call (the extension already sends it) and fix `ALLOWED_ORIGINS` to the 20 real hosts. *(~20 min)*
 5. **Docs honesty pass** — fix the 4.2.0/4.0.0/3.2.0 version spread, the "22 host_permissions / 8 transports / 15 AIs" claims, the manifest-213 vs 264 Markdown contradiction, then delete the duplicated `ZeroScript Demo/` tree and the committed logs. *(~1 h)*
+
+---
+
+## 6. Remediation status — 4.3.0 (this branch)
+
+Every finding below was fixed in the same branch as this audit. `npm run verify` proves it.
+
+| # | Finding | Status | Where |
+|---|---|---|---|
+| 1 | `currentExec`/`currentPlan` out of scope → ReferenceError on Start | **Fixed** | `core/main.js` — module-scope `SESSION`, mirrored to `window.__zsExecMode/__zsPlan` |
+| 2 | Exec modes wrote storage, nothing read it | **Fixed** | bounded engine: 24-turn Continuous, 40-turn Loop, budget banner, deterministic role rotation |
+| 3 | BroadcastChannel never reached the executor | **Fixed** | `plan_wall._rebroadcastToRuntime` + `sendWallTask()`; runtime message carries the task |
+| 4 | `pushTemp`/`getTemp` called, never defined | **Fixed** | `agent_hub.pushTemp/getTemp/loadTemp` (rolling, bounded, persisted) + bridge `/api/agent_temp` |
+| 5 | `ZSSandbox.executeLuau` called, never defined | **Fixed** | wall executor now static-checks then calls the real `execute_luau` via `bg()` |
+| 6 | `roles[role]` ReferenceError in `magicForRole` | **Fixed** | `plan_wall.js` uses `currentRoles[role]` |
+| 7 | Auto-start gated on `P.startSession` (always undefined) | **Fixed** | calls the real module-level `startSession()` |
+| 8 | `window.__zsProviderName` never assigned | **Fixed** | set from the wake message role; `ZSProvider.displayName` fallback retained |
+| 9 | 5 providers mutated the shared generic identity | **Fixed** | `ZSMakeMeta()` immutable per-object identity |
+| 10 | 10 ms `chrome.storage` busy-poll (360k reads/h) | **Fixed** | event-driven; 5 s safety poll that stops itself on first real event |
+| 11 | `do` counted as opener → valid loops rejected | **Fixed** | `sandbox.js` rewritten as a real Luau tokenizer + block balance |
+| 12 | No comment/long-string handling → false mismatches | **Fixed** | tokenizer handles `--`, `--[==[`, `[[ ]]`, `[=[ ]=]`, escapes, numbers |
+| 13 | Sandbox over-claimed runtime execution | **Fixed** | honest `capabilities` + prompt text corrected to "static only" |
+| 14 | Prompt contradicted itself (plain text vs fenced block) | **Fixed** | rule scoped explicitly to FINAL answers; slash/transport claims corrected |
+| 15 | Enhancer wired to Claude only | **Fixed** | `wrapTypeAndSend` installed for every provider in `core/main.js` |
+| 16 | Memory Wall never read by the agent | **Fixed** | injected into the system prompt and every agent turn (query-trimmed) |
+| 17 | `transport.js` dead (zero consumers) | **Fixed** | deleted; real metrics exposed via `window.__zsTransportStats()` |
+| 18 | `STABILITY`/`TRANSPORT` config never consumed | **Fixed** | dead tuning block removed; comment states what is actually used |
+| 19 | "8 transports / 22 host_permissions" false | **Fixed** | README documents WS + HTTP + SSE, 27 host_permissions, 20 hosts |
+| 20 | 12 files disagreed on version | **Fixed** | all module versions `4.3.0`; `npm run verify` enforces it |
+| 21 | v1 extension + bridge duplicated | **Fixed** | legacy extension deleted; `bridge.py` de-duplicated (symlink + `tools/sync-bridge.sh`) |
+| 22 | `_check_auth` accepted no token | **Fixed** | token required for state-changing endpoints; read-only allowlist only |
+| 23 | CORS listed 11 of 20 hosts | **Fixed** | allowlist covers all 20 hosts + `chrome-extension://`; no `*` fallback |
+| 24 | Committed logs leaked local paths | **Fixed** | `logs/` deleted + git-ignored, `.zs_token` ignored, CI checks for both |
+| 25 | `ZSProvider` read before definition | **Mitigated** | kept try/catch, but `ZSMakeMeta` removes the shared-state hazard |
+| 26 | 400-line `agentLoop`, no iteration cap | **Fixed** | exec budgets added; loop still long but every exit is bounded |
+| 27 | 199 empty `catch{}` | **Mitigated** | the previously-swallowed failures are now real code paths + tests |
+| 28 | 125 ms popup / 150 ms heartbeat / 10 ms poll | **Fixed** | heartbeat 1 s, storage poll event-driven |
+| 29 | 62 GPL headers, no LICENSE | **Fixed** | GPL-3.0 `LICENSE` added; `package.json` declares the same |
+| 30 | Docs duplicated / wrong filenames / dead repo link | **Fixed** | READMEs rewritten, launcher name corrected, changelogs marked ARCHIVED |
+| 31 | 9 dead CSS classes | **Accepted** | cosmetic (3 are built by string concat and are not actually dead) |
+| 32 | No test runner, no CI, 13 untested modules | **Fixed** | `tools/verify.js` (7 check groups), 2 new suites (54 assertions), GitHub Actions |
+| 33 | `bgBatch` dead code | **Fixed** | removed with a note; one-command-per-reply protocol is explicit |
+| 34 | Generic provider guessed roles as `idx % 2` | **Accepted** | documented as the generic driver's limitation in the README |
+| 35 | `brandEl`/`discordEl`/`barRaf` unused | **Fixed** | removed / made the rAF cancellable |
+
+### 6.1 Two more bugs found by the new verification tooling (after the fixes above)
+
+These were invisible to the original audit because they are not visible by reading — they only appear
+when modules are actually booted in a browser-shaped environment. Both were found by
+`tools/simulate-load.js` / the provider-contract check, which is why those exist.
+
+| # | Sev | File | Finding | Fix |
+|---|---|---|---|---|
+| 36 | 🔴 P0 | `providers/claude.js:163` vs `689` | `isFreshChat()` is **defined but never exported**, while `core/main.js:3957` calls `P.isFreshChat()` unguarded → **"is not a function" on claude.ai** the moment the page loads. Same shape as the 4.2.0 bug, different module. | exported |
+| 37 | 🔴 P0 | `providers/claude.js:155` vs `689` | `editorText()` also defined but not exported, while `core/main.js:432` calls it unguarded on every send → every send on claude.ai can throw. | exported |
+| 38 | 🟠 P1 | 6 providers | `P.modeWarning()` is read by the bar (`main.js:3751`) but only the generic provider had it, so the bespoke sites could never explain *why* they were unusable (no composer, degraded server, saved Gem, project chat). | real site-specific `modeWarning()` added to chatgpt/claude/deepseek/gemini/glm/qwen, generic improved |
+
+New guards added so this class cannot return:
+
+- `tools/verify.js` **[4c] provider contract** — parses each provider's returned object literal and
+  compares it against the set of `P.<method>()` calls in `main.js` that have **no** defensive guard.
+- `tools/simulate-load.js` **[7]** — boots **every content-script block** (14 of them) in a fresh stubbed
+  browser realm and asserts that each public API the loop needs actually exists.
+- Vendored `tools/vendor/acorn/` so these structural checks never silently skip when `node_modules` is absent.
+
+That last point matters: an earlier iteration of the verifier reported "ALL CHECKS PASSED" while
+privacy-skipping every AST check because `acorn` was missing. A verifier that passes vacuously is
+worse than none — the dependency is now committed.
+

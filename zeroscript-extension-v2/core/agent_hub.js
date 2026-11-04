@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_hub.js — ZeroScript MAX 4.2.0 EXTENSION-IN-EXTENSION — agent temporary storage via bridge
+// core/agent_hub.js — ZeroScript MAX 4.3.0 EXTENSION-IN-EXTENSION — agent temporary storage via bridge
 // Purpose: agents know what they are doing — AI builds code, bridge stores as temporary, other AI reads
 // Planner is usually sender. Uses fastest communicator servers (WS 10ms hedge, HTTP 5ms, BC instant, storage 10ms)
 // Stores {key, value, from, t, ttl} in background memory + chrome.storage cache, readable by all tabs in 10ms
 (() => {
   "use strict";
-  const VERSION = "4.2.0 HUB 5ms";
+  const VERSION = "4.3.0";
   const HUB_PREFIX = "zsAgentHub_";
   const BC_NAME = "zs-agent-hub";
 
   let _bc = null;
   try { _bc = new BroadcastChannel(BC_NAME); } catch {}
   const _cache = new Map();
+  const _pending = new Map();
   let _listeners = [];
 
   // write to temp storage via bridge (background memory) + broadcast
@@ -61,6 +62,34 @@
     return [..._cache.keys()].map(k=>k.replace(HUB_PREFIX,""));
   }
 
+  // ── ROLLING TEMP BUFFER (audit #4) ─────────────────────────────────────
+  // main.js calls pushTemp()/getTemp() for the wall audit trail; those methods
+  // did not exist, so every write was silently swallowed by a try/catch.
+  const TEMP_KEY = "zsAgentTempLog";
+  const TEMP_MAX = 60;
+  let _temp = [];
+  function pushTemp(entry){
+    try{
+      const e = { ...(entry || {}), t: (entry && entry.ts) || Date.now(), from: (entry && entry.from) || "agent" };
+      _temp.push(e);
+      if(_temp.length > TEMP_MAX) _temp = _temp.slice(-TEMP_MAX);
+      try{ const k = HUB_PREFIX + TEMP_KEY; chrome.storage.local.set({ [k]: _temp }); }catch{}
+      for(const fn of _listeners) try{ fn(e); }catch{}
+      return e;
+    }catch{ return null; }
+  }
+  function getTemp(n = TEMP_MAX){
+    return _temp.slice(-Math.max(1, Math.min(TEMP_MAX, n)));
+  }
+  async function loadTemp(){
+    try{
+      const k = HUB_PREFIX + TEMP_KEY;
+      const rr = await new Promise(res => { try{ chrome.storage.local.get(k, v => res(v || {})); }catch{ res({}); } });
+      if(Array.isArray(rr[k])) _temp = rr[k].slice(-TEMP_MAX);
+    }catch{}
+    return _temp;
+  }
+
   function onWrite(fn){
     if(typeof fn!=="function") return ()=>{};
     _listeners.push(fn);
@@ -95,11 +124,20 @@
     hedgeMs: 5,
     pollMs: 5,
     batchMax: 32,
-    version: "4.2.0 MAX",
+    version: "4.3.0",
   };
 
-  const API = { VERSION, write, read, listKeys, onWrite, COMMUNICATOR, HUB_PREFIX };
+  // HONEST LATENCY (audit #20): these are REAL paths, not marketing numbers.
+  // In-memory Map hit = sub-ms; BroadcastChannel = same-event-loop (~0-2ms cross
+  // tab); chrome.storage = ~1-5ms; bridge HTTP temp = ~5-40ms on localhost.
+  const API = {
+    VERSION, write, read, listKeys, onWrite,
+    pushTemp, getTemp, loadTemp, TEMP_MAX,
+    pending: () => _pending.size,
+    COMMUNICATOR, HUB_PREFIX,
+  };
 
+  try{ loadTemp(); }catch{}
   try{ window.ZSAgentHub = API; window.__zsAgentHub = API; }catch{}
   if(typeof self!=="undefined") try{ self.ZSAgentHub = API; }catch{}
 })();

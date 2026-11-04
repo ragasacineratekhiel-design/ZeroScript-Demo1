@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.2.0",
-  "description": "ZeroScript MAX 4.2.0 EXT-IN-EXT \u2014 extension-in-extension hub + Single/Continuous/Loop + 5ms ultra communicator",
+  "name": "ZeroScript MAX × Roblox Studio Agent",
+  "version": "4.3.0",
+  "description": "ZeroScript MAX 4.3.0 — verified agent loop, static Luau analyser, event-driven wall, honest telemetry",
   "permissions": [
     "storage",
     "alarms",
@@ -47,7 +47,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 4.2.0 EXT-IN-EXT",
+    "default_title": "ZeroScript MAX 4.3.0",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -62,7 +62,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -96,7 +95,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -118,7 +116,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -141,7 +138,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -163,7 +159,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -185,7 +180,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -208,7 +202,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -240,7 +233,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -263,7 +255,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -287,7 +278,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -310,7 +300,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -334,7 +323,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -357,7 +345,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",
@@ -381,7 +368,6 @@
       "js": [
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
         "core/memory_wall.js",
         "core/sandbox.js",

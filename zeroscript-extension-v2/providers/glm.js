@@ -289,6 +289,7 @@ const ZSProvider = (() => {
       const it = lastAssistant();
       if (!it) return { th: 0, rp: 0 };
       const think = it.querySelector(S.thinking);
+
       return {
         th: think ? (think.textContent || "").trim().length : 0,
         rp: textWithout(it).length,
@@ -552,6 +553,14 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "GLM composer not found — open a new chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "glm",
     displayName: "GLM",
@@ -604,7 +613,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,

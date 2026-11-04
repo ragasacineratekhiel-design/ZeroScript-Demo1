@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms
+// core/agent_stability.js — ZeroScript MAX 4.3.0
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
-// MAX 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
+// core/agent_stability.js — ZeroScript MAX 4.3.0 — universal editor/generation hardening
+// honest: real-world polls, no fake millisecond claims
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -180,5 +180,5 @@ const ZSAgentStability = (() => {
     }
   } catch {}
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.0.0 TELEMETRY 5ms" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.3.0" };
 })();

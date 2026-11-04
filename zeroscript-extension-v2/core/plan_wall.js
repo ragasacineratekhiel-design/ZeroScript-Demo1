@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/plan_wall.js — ZeroScript MAX 4.2.0 EXT-IN-EXT — 10ms wall + 5ms hub — extension-in-extension hub
+// core/plan_wall.js — ZeroScript MAX 4.3.0 EXT-IN-EXT — 10ms wall + 5ms hub — extension-in-extension hub
 // Inter-agent communication bus for Switch Plan (Direct/Agent/Plan/Checker).
 // Uses BroadcastChannel + chrome.storage.local polling at 10ms + in-memory cache.
 // Every message has envelope {id, from, to, plan, role, payload, t, phase}
@@ -7,11 +7,11 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.2.0 EXT-IN-EXT 5ms ULTRA + 10ms WALL";
+  const VERSION = "4.3.0";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
-  const WALL_POLL_MS = 10; // honest 10ms superfast
+  const WALL_POLL_MS = 5000; // safety net only — delivery is event-driven (audit #10)
 
   // ── PLANS definition — must match config.js PLANS ──
   const PLANS = {
@@ -103,6 +103,7 @@
   try{
     _bc = new BroadcastChannel("zs-plan-wall");
     _bc.onmessage = (e)=>{
+      _stopSafetyPoll();
       const msg = e.data;
       if(!msg || !msg.id) return;
       if(wallLog.some(m=>m.id===msg.id)) return;
@@ -110,10 +111,43 @@
       if(wallLog.length > MAX_LOG) wallLog.shift();
       _lastSeenId = msg.id;
       for(const fn of _listeners) try{ fn(msg); }catch{}
+      _rebroadcastToRuntime(msg);
     };
   }catch{}
 
-  // storage poll 10ms fallback (for cross-tab where BC not supported)
+  // ── HONEST FIX (audit #3) — the missing link ──────────────────────────────
+  // BroadcastChannel delivery only reaches code that listens on the SAME BC.
+  // main.js installs its wall-task handler on chrome.runtime.onMessage, so no
+  // planner→coder handoff could ever fire. Every wall envelope that carries a
+  // task payload is now re-published as a runtime message to this tab, which is
+  // what main.js's zs-wall-task/exec handler expects.
+  function _rebroadcastToRuntime(env){
+    try{
+      const pl = env && env.payload;
+      if(!pl || (pl.type !== "wall_exec" && pl.type !== "loop_text" && pl.type !== "agent_start")) return;
+      chrome.runtime.sendMessage({
+        type: pl.type === "agent_start" ? "zs-plan-wake" : "zs-wall-task",
+        task: { from: env.from, to: env.to, code: pl.code, text: pl.text, type: pl.type, role: pl.role },
+        plan: env.plan,
+      }, () => { void chrome.runtime.lastError; });
+    }catch{}
+  }
+  // Public: send a task straight to another tab's executor (deterministic path,
+  // does not rely on BC listeners existing on the far side).
+  function sendWallTask(from, to, task){
+    const env = send(from || "planner", to || "__all", { type: "wall_exec", ...(task || {}) }, "exec");
+    _rebroadcastToRuntime(env);
+    return env;
+  }
+
+  // ── HONEST FIX (audit #10): the old code ran
+  //     setInterval(_poll, 10)  →  chrome.storage.local.get() 3 keys, forever, per tab
+  // which is ~360,000 storage reads/hour/tab, while Chrome throttles hidden-tab
+  // timers to >=1s anyway. The wall is now fully EVENT-DRIVEN:
+  //   • BroadcastChannel  → same-event-loop delivery across tabs (real 0-2ms)
+  //   • chrome.storage.onChanged → cross-tab when BC is unavailable
+  // The slow poll below is kept ONLY as a last-resort safety net, at 5s, and it
+  // stops itself the moment a BC message or a storage event arrives.
   function _poll(){
     try{
       chrome.storage.local.get([PLAN_WALL_KEY, PLAN_KEY, PLAN_ROLES_KEY], r=>{
@@ -140,12 +174,16 @@
       });
     }catch{}
   }
-  // start polling at 10ms
-  _pollTimer = setInterval(_poll, WALL_POLL_MS);
+  // last-resort safety net only — NOT the delivery path (see honest note above)
+  const SAFETY_POLL_MS = 5000;
+  function _startSafetyPoll(){ if(_pollTimer) return; _pollTimer = setInterval(_poll, SAFETY_POLL_MS); }
+  function _stopSafetyPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer = null; } }
+  _startSafetyPoll();
   // also listen to storage changes instant (faster than poll)
   try{
     chrome.storage.onChanged.addListener((changes, area)=>{
       if(area!=="local") return;
+      _stopSafetyPoll();
       if(changes[PLAN_KEY] && changes[PLAN_KEY].newValue) {
         currentPlan = changes[PLAN_KEY].newValue;
         try{ window.__zsPlan = currentPlan; }catch{}
@@ -173,7 +211,7 @@
   const MAGIC_NOT = "im not connected to other agents no external commands";
   // Per-role with provider name — honest real magic words
   function magicForRole(role, provider){
-    const p = (provider || roles[role] || currentRoles[role] || "other agent").toLowerCase();
+    const p = String(provider || currentRoles[role] || "other agent").toLowerCase();
     // Honest: planner->planner, coder->coder, checker->checker
     if(role==="planner") return `im connected to ${p} and im the planner heres your listed commands`;
     if(role==="coder") return `im connected to ${p} and im the coder heres your listed commands`;
@@ -182,7 +220,7 @@
   }
   // Switched variant as user requested: planner switched with coder (planner says coder, coder says planner)
   function magicForRoleSwitched(role, provider){
-    const p = (provider || roles[role] || currentRoles[role] || "other agent").toLowerCase();
+    const p = String(provider || currentRoles[role] || "other agent").toLowerCase();
     if(role==="planner") return `im connected to ${p} and im the coder heres your listed commands`; // switched
     if(role==="coder") return `im connected to ${p} and im the planner heres your listed commands`; // switched
     if(role==="checker") return `im connected to ${p} and im the checker heres your listed commands`;
@@ -281,9 +319,10 @@
   }
 
   // Extended API with per-role magic (brutally honest upgrade)
-  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole };
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
+    sendWallTask, wallMode: () => (_bc ? "broadcast-channel+storage-events" : "storage-events"), SAFETY_POLL_MS: 5000 };
 
-  // ── 4.2.0 EXT-IN-EXT hub bridge — planner sends via wall + hub temp storage ──
+  // ── hub bridge — a wall message is mirrored into agent-temp storage ──
   // When a wall message is sent, also write to ZSAgentHub for bridge temp storage (planner usually sender).
   // And when hub receives zsPlan/*, mirror to wall listeners — so extension-in-extension works even if BC missed.
   try{

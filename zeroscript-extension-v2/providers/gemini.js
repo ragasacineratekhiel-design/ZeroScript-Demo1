@@ -290,6 +290,7 @@ const ZSProvider = (() => {
       if (!it) return { th: 0, rp: 0 };
       const think = it.querySelector(S.thinking);
       const md = it.querySelector(S.reply);
+
       return {
         th: think ? (think.textContent || "").trim().length : 0,
         rp: md ? (md.textContent || "").length : 0,
@@ -654,6 +655,15 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Gemini input not found — open a new chat";
+      if (location.pathname.includes("/gem/")) return "This is a saved Gem — ZeroScript needs a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "gemini",
     displayName: "Gemini",
@@ -703,7 +713,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,

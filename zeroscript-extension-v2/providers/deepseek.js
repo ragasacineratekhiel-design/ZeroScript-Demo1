@@ -352,6 +352,7 @@ const ZSProvider = (() => {
     const search = findToggleBy(RE.searchMode);
     const vision = findVisionRadio();
     const instant = findInstantRadio();
+
     return {
       expertFound: !!expert,
       expertOn: radioOn(expert),
@@ -951,6 +952,16 @@ const ZSProvider = (() => {
     return ref ? { parent, ref } : null;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "DeepSeek composer not found — open a new chat";
+      if (document.body.innerText.slice(0, 4000).match(/DeepThink is unavailable|server is busy/i))
+        return "DeepSeek reports a degraded server — retry in a moment";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "deepseek",
     displayName: "DeepSeek",
@@ -984,7 +995,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating, genDebug,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,

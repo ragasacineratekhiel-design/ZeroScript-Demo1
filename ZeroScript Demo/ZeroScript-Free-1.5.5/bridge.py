@@ -195,6 +195,38 @@ class RateLimiter:
             return False
 _rate_limiter=RateLimiter()
 
+# ── agent hub temp store (bounded, TTL) ───────────────────────────────
+_AGENT_TEMP = {}
+_AGENT_TEMP_LOCK = threading.Lock()
+_AGENT_TEMP_MAX = 256
+
+def _agent_temp_set(key, value, src="agent", ttl=120.0):
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        if len(_AGENT_TEMP) >= _AGENT_TEMP_MAX:
+            # drop the oldest entry first — bounded memory, never unbounded growth
+            oldest = min(_AGENT_TEMP.items(), key=lambda kv: kv[1].get("ts", 0))[0]
+            _AGENT_TEMP.pop(oldest, None)
+        _AGENT_TEMP[key] = {"value": value, "from": src, "ts": now, "exp": now + max(1.0, ttl)}
+    return True
+
+def _agent_temp_get(key):
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        rec = _AGENT_TEMP.get(key)
+        if not rec: return None
+        if rec.get("exp", 0) < now:
+            _AGENT_TEMP.pop(key, None)
+            return None
+        return rec
+
+def _agent_temp_keys():
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        for k in [k for k, v in _AGENT_TEMP.items() if v.get("exp", 0) < now]:
+            _AGENT_TEMP.pop(k, None)
+        return list(_AGENT_TEMP.keys())
+
 # ── LRU cache for idempotent queries ──────────────────────────────────
 class TTLCache:
     def __init__(self, ttl=1.2, maxsize=512):  # v2.2: tighter TTL, larger cache for ultra-fast
@@ -820,25 +852,79 @@ async def broadcast_status():
         except: pass
 
 # ── HTTP handler (all methods) ─────────────────────────────────────────
-ALLOWED_ORIGINS=["https://chat.deepseek.com","https://chatgpt.com","https://chat.openai.com","https://gemini.google.com","https://www.kimi.ai","https://kimi.ai","https://chat.z.ai","https://chat.qwen.ai","https://arena.ai","https://www.meta.ai","https://meta.ai"]
+# HONEST FIX (audit #23): this list had 11 entries while the extension ships
+# content scripts for 20 hosts, so claude.ai / grok.com / x.ai / poe.com /
+# copilot.microsoft.com / chat.mistral.ai / perplexity.ai all received
+# "Access-Control-Allow-Origin: *" — i.e. any origin was trusted on those sites.
+ALLOWED_ORIGINS=[
+    "https://chat.deepseek.com","https://deepseek.com","https://chatgpt.com","https://chat.openai.com",
+    "https://gemini.google.com","https://claude.ai","https://www.kimi.ai","https://kimi.ai",
+    "https://chat.z.ai","https://chat.qwen.ai","https://arena.ai","https://www.meta.ai","https://meta.ai",
+    "https://www.perplexity.ai","https://perplexity.ai","https://copilot.microsoft.com",
+    "https://grok.com","https://x.ai","https://poe.com","https://chat.mistral.ai",
+    # the extension's own pages / devtools and the local origin used by the popup
+    "chrome-extension://","http://127.0.0.1","http://localhost","null",
+]
 
 def _cors_headers(handler, origin="*"):
-    handler.send_header("Access-Control-Allow-Origin", origin if origin in ALLOWED_ORIGINS else "*")
+    # exact match, or a chrome-extension:// origin (extension id is unknown at build time).
+    # Anything else gets NO allow-origin header at all — the browser then blocks the
+    # response instead of us handing out "*" to every origin on the internet.
+    allow = None
+    if origin in ALLOWED_ORIGINS: allow = origin
+    elif isinstance(origin,str) and origin.startswith("chrome-extension://") and "chrome-extension://" in ALLOWED_ORIGINS: allow = origin
+    if allow: handler.send_header("Access-Control-Allow-Origin", allow)
     handler.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers","Content-Type, Authorization, X-ZS-Token, X-Requested-With")
     handler.send_header("Access-Control-Expose-Headers","Content-Type")
 
 def _check_auth(handler):
+    """SECURITY (honest fix, audit #22).
+
+    The old version returned True when NO token was supplied, with the comment
+    "local bridge allows unauth for backwards compat". That made the token
+    decorative: any local process - or a web page abusing DNS rebinding - could
+    POST /api/call and run arbitrary Luau in the user's Roblox Studio.
+
+    Now: the token is REQUIRED for every state-changing endpoint. It is accepted
+    from the X-ZS-Token header, the Authorization header, or a query parameter
+    (query param is needed by the SSE/EventSource path, which cannot set headers).
+    A short allowlist of read-only endpoints stays open so `/health` and
+    `/api/status` can be used by installers and the popup before a token is known.
+    Set ZS_NO_AUTH=1 to restore the old behaviour for local development.
+    """
     if NO_AUTH: return True
-    # allow token via header or query param
-    tok=handler.headers.get("X-ZS-Token") or handler.headers.get("Authorization","").replace("Bearer ","").strip()
+    tok = handler.headers.get("X-ZS-Token") or handler.headers.get("Authorization","").replace("Bearer ","").strip()
     if not tok:
-        qs=parse_qs(urlparse(handler.path).query)
-        tok=(qs.get("token") or qs.get("t") or [""])[0]
-    if not tok: return True  # local bridge allows unauth for backwards compat, but logs
-    return tok==BRIDGE_TOKEN
+        try:
+            qs = parse_qs(urlparse(handler.path).query)
+            tok = (qs.get("token") or qs.get("t") or [""])[0]
+        except Exception:
+            tok = ""
+    if not tok:
+        # optional trusted local caller: a browser extension that cannot know the
+        # token yet still gets read-only access, never tool execution.
+        if _is_read_only(handler): return True
+        log("[auth] REJECTED unauthenticated request to " + str(getattr(handler, "path", "?")), "yl")
+        return False
+    try:
+        return secrets.compare_digest(str(tok), str(BRIDGE_TOKEN))
+    except Exception:
+        return False
+
+READ_ONLY_PATHS = ("/", "/health", "/api/health", "/api/status", "/status", "/api/metrics", "/metrics")
+def _is_read_only(handler):
+    try:
+        path = urlparse(handler.path).path
+    except Exception:
+        return False
+    if getattr(handler, "_zs_method", "GET") not in ("GET", "HEAD", "OPTIONS"):
+        return False
+    return path in READ_ONLY_PATHS
 
 class ZSHttpHandler(BaseHTTPRequestHandler):
+    _zs_method = "GET"
+    def _zs_set_method(self, m): self._zs_method = m
     def log_message(self, format, *args):  # suppress default stderr noise, use our log
         try: log(f"[http] {self.address_string()} {format%args}","dim",terminal=False)
         except: pass
@@ -858,6 +944,7 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(code); _cors_headers(self,origin); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
     def do_GET(self):
+        self._zs_set_method("GET")
         metrics.http_requests+=1
         if not _rate_limiter.allow(): self._send_json({"ok":False,"error":"rate limited"},429); return
         origin=self.headers.get("Origin","*")
@@ -883,6 +970,14 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 if qs.get("refresh")==["1"]: tools=mgr.list_tools(refresh=True)
                 self._send_json({"ok":True,"tools":tools,"servers":mgr.health()},origin=origin)
             except Exception as e: self._send_json({"ok":False,"error":str(e)},500,origin)
+            return
+        if path in ("/api/agent_temp","/agent_temp"):
+            qs=parse_qs(parsed.query); k=(qs.get("key") or [""])[0]
+            if k:
+                rec=_agent_temp_get(k)
+                self._send_json({"ok":bool(rec), **({"key":k,"value":rec["value"],"from":rec["from"],"ts":rec["ts"]} if rec else {"value":None})},origin=origin)
+            else:
+                self._send_json({"ok":True,"keys":_agent_temp_keys()},origin=origin)
             return
         if path in ("/api/studio/tree","/studio/tree"):
             try:
@@ -954,6 +1049,7 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         self._send_json({"ok":False,"error":"not found"},404,origin)
 
     def do_POST(self):
+        self._zs_set_method("POST")
         metrics.http_requests+=1
         if not _rate_limiter.allow(): self._send_json({"ok":False,"error":"rate limited"},429); return
         origin=self.headers.get("Origin","*")
@@ -983,6 +1079,18 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 if len(results)>=12: break
                 results.append({"name":n, **safe_call(n,a,t)})
             self._send_json({"ok":True,"results":results},origin=origin); return
+        # ── AGENT HUB temp storage (audit #4) ────────────────────────────────
+        # The 4.2.0 extension has been calling /api/agent_temp for the
+        # extension-in-extension handoff, but the bridge never implemented it, so
+        # every write 404'd into an empty catch block. Implemented here with a
+        # bounded TTL store; the extension also keeps a chrome.storage mirror, so
+        # this is the cross-process fast path, not the only one.
+        if path in ("/api/agent_temp","/agent_temp"):
+            k=str(data.get("key") or "")[:200]
+            if not k: self._send_json({"ok":False,"error":"missing key"},400,origin); return
+            ttl=float(data.get("ttl",120000))/1000.0
+            _agent_temp_set(k, data.get("value"), data.get("from","agent"), ttl)
+            self._send_json({"ok":True,"key":k},origin=origin); return
         if path in ("/api/studio/exec","/studio/exec"):
             code=data.get("code") or data.get("luau") or ""
             dm=data.get("datamodel_type") or data.get("datamodel") or "Edit"

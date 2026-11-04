@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/prompt_enhancer.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
+// core/prompt_enhancer.js — ZeroScript MAX 4.3.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
 // BAD→BEST in <0.5ms enhance + 5ms dry-run + 10ms plan wall — precompiled regex, trimmed wallCtx, spec contract upstream.
 // SWITCH PLAN: Direct/Agent/Plan/Checker orchestrated multi-AI with 10ms BroadcastChannel wall — honest superfast.
 // FACT-CHECK: prompts ALONE don't make Flash==Pro. REAL boost is INTERNAL+EXTERNAL+RUNTIME+PLAN: planner + validator + memory + sandbox + wall.
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated";
+  const ENHANCER_VERSION = "4.3.0";
 
   function getPlanOrchestration(raw){
     try{

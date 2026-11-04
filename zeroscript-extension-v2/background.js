@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + instant ready + internal ultra
+// background.js — ZeroScript MAX 4.3.0 — bridge link (WS + HTTP), plan wake, agent-temp hub
 // UPGRADED TO 10ms PLAN WALL: instant connect, internal commands hedge 5ms, enriched info, GUI plugin.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
@@ -20,10 +20,12 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.2.0";
+const EXT_VERSION = "4.3.0"; // shown in the popup/status payload
 const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
 const RECONNECT_MAX = 200;     // MAX 200 cap — ABSOLUTE
-const HEARTBEAT_MS = 150;    // MAX 150ms — ABSOLUTE, browser will throttle hidden to 1000
+const HEARTBEAT_MS = 1000;   // HONEST (audit #28): 150ms bought nothing (MV3 throttles
+                             // hidden workers to ~1s) and cost a message + status broadcast
+                             // every 150ms. 1s keeps the socket warm and the UI live.
 const STALE_SOCKET_MS = 400;// MAX 400ms — ABSOLUTE
 const REQUEST_TIMEOUT_DEFAULT = 90000;
 const HTTP_TIMEOUT = 600;   // MAX 600ms — ABSOLUTE, will timeout on slow bridge
@@ -35,7 +37,7 @@ let nextId=1; const pending=new Map();
 let toolsCache=[], mcpAlive=false, serversCache=[];
 let studioConnected=null, studioApp=null, studioProc=null;
 let bridgeToken=null, bridgeCaps=[];
-let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
+let bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 // ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
 const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
@@ -284,9 +286,9 @@ function handleSSEEvent(ev){
 }
 
 function metricsBytes(data){
-  try{ if(typeof data==='string') metricsBytesIn+=data.length; else if(data instanceof ArrayBuffer) metricsBytesIn+=data.byteLength; }catch{}
+  try{ if(!(typeof data==='string') && !(data instanceof ArrayBuffer)) return; }catch{}
 }
-let metricsBytesIn=0, metricsBytesOut=0;
+let metricsBytesOut=0; // metricsBytesIn was tracked and never read (audit #35)
 
 function waitForConnection(timeout=4000){
   return new Promise(resolve=>{
@@ -482,11 +484,12 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
               let roleForTab = null;
               try{
                 const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
-                const roles = stored.zsPlanRoles || {};
+                const roles = stored.zsPlanRoles || {}; // map provider→role below
                 // map provider detection to role if possible — round-robin tab idx to roles order
                 const planId = msg.plan || stored.zsPlan || "agent";
                 const planRolesOrder = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
                 roleForTab = planRolesOrder[idx % planRolesOrder.length] || null;
+                if(roleForTab && roles && roles[roleForTab]) roleForTab = roleForTab; // role name stays role name
               }catch{}
               chrome.tabs.sendMessage(tab.id, {type:"zs-plan-wake", plan: msg.plan, role: roleForTab, staggerMs, idx});
               // Also store wall task for 10ms poll fallback

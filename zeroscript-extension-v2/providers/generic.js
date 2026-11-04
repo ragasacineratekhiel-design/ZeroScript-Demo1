@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/generic.js — Universal AI provider fallback ULTRA v3.2.0
+// providers/generic.js — universal provider fallback (the thin providers/*.js alias this)
 // Works on ANY chat AI site (Perplexity, Copilot, Grok, Poe, Mistral, etc.)
 // UPGRADED: fieldset composer 2026, better message detection, tighter timings, never-drops.
 // Specific providers (perplexity.js etc) thin-wrap this with custom names.
@@ -10,6 +10,14 @@ const ZSGenericProvider = (() => {
   let _displayName = "AI";
   let _id = "generic";
 
+  // ── HONEST FIX (audit #9) ─────────────────────────────────────────────────
+  // The five "thin" providers used to call `setMeta()` on the SHARED generic
+  // object, mutating closure state (`_id`, `_displayName`). Whichever provider
+  // file ran last won the identity for the whole page, so e.g. copilot.js could
+  // end up announcing itself as "Poe". `makeMeta` returns a fresh, immutable
+  // identity and is what every alias must use now; `setMeta` is kept for
+  // back-compat but only affects this singleton.
+  function makeMeta(id, displayName) { return Object.freeze({ id: String(id), displayName: String(displayName) }); }
   function setMeta(id, displayName) { _id = id; _displayName = displayName; }
 
   // ULTRA timings — slightly tighter for instant response
@@ -105,8 +113,7 @@ const ZSGenericProvider = (() => {
     return null;
   }
 
-  let _locked=false;
-  function setInputLock(on){ _locked=on; const ed=getEditor(); if(!ed) return; try{ ed.setAttribute("contenteditable", on?"false":"true"); }catch{} }
+  function setInputLock(on){ const ed=getEditor(); if(!ed) return; try{ ed.setAttribute("contenteditable", on?"false":"true"); }catch{} }
 
   function sendButton(){
     const sels=["fieldset button[type='submit']", "button[aria-label*='Send' i]", "button[data-testid*='send' i]", "button[type='submit']", "form button"];
@@ -162,6 +169,16 @@ const ZSGenericProvider = (() => {
   function stopGeneration(){ const b=stopButton(); if(b) try{b.click();}catch{} }
   const enforceComposer=()=>({ready:true});
   const ensureComposerReady=async(reason)=>{ diag("mode_ready",{reason,provider:_id}); return{ready:!!getEditor()}; };
+  // Shown in the bar before a session starts when the site cannot be driven.
+  // (audit: main.js calls P.modeWarning() guarded, but only generic/aliases had it,
+  // so bespoke providers silently never surfaced the reason.)
+  const modeWarning=()=>{
+    try{
+      if(!getEditor()) return "Composer not found on this page — open a new chat";
+      if(captchaPresent && captchaPresent()) return "Captcha / verification in the way — solve it first";
+      return null;
+    }catch{ return null; }
+  };
   const scanError=()=>{ const t=document.body.innerText; if(/rate limit|too many requests|quota exceeded/i.test(t.slice(-2000))) return "Rate limited"; if(!getEditor()) return "Input disappeared"; return null; };
   const isTooLongMsg=(t)=>/conversation too long/i.test(t);
   const isBusyMsg=(t)=>/something went wrong|try again|temporarily unavailable/i.test(t);
@@ -185,7 +202,7 @@ const ZSGenericProvider = (() => {
     allItems, isUserItem, isAssistantItem, itemText, classifyText, assistantCount, userCount, lastAssistant, readAssistant, streamLen, snapshot,
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating, enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
-    setMeta, _setMeta:setMeta, version:"3.2.0 ULTRA"
+    scanError, modeWarning, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
+    setMeta, _setMeta:setMeta, makeMeta, version:"4.3.0"
   };
 })();

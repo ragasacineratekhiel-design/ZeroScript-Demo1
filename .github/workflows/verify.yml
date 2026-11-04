@@ -1,0 +1,44 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install verification deps
+        run: npm install --no-audit --no-fund
+
+      - name: Bridge syntax (canonical copy + symlink)
+        run: |
+          bash tools/sync-bridge.sh
+          python3 - <<'PY'
+          import ast, sys, pathlib
+          canon = pathlib.Path("ZeroScript Demo/ZeroScript-Free-1.5.5/bridge.py")
+          link  = pathlib.Path("ZeroScript Demo/bridge.py")
+          for p in (canon, link):
+              ast.parse(p.read_text(encoding="utf-8"))
+              print("parsed", p)
+          if canon.read_text(encoding="utf-8") != link.read_text(encoding="utf-8"):
+              sys.exit("bridge copies have drifted — run tools/sync-bridge.sh")
+          PY
+
+      - name: Verification suite
+        run: npm run verify
+
+      - name: No secrets or logs committed
+        run: |
+          if git ls-files | grep -E '(^|/)\.zs_token$|(^|/)logs/.*\.log$'; then
+            echo "::error::token or log file is tracked; it must stay git-ignored"
+            exit 1
+          fi
+          echo "clean"

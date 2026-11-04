@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude-connector.js — ZeroScript MAX ULTRA Custom Claude Connector v3.2.0
+// providers/claude-connector.js — Claude-specific handshake + wall/enhancer bootstrap
 // UPGRADED: fieldset-aware, hedge 80ms, tighter retry, never drops.
 // Dedicated custom connector for claude.ai — standalone handshake that binds Claude's ProseMirror composer to Roblox Studio bridge.
 // Why separate from providers/claude.js? User requested explicit file named for Claude custom connector.
@@ -9,7 +9,7 @@
 const ZSClaudeConnector = (() => {
   "use strict";
 
-  const CONNECTOR_VERSION = "3.2.0 ULTRA";
+  const CONNECTOR_VERSION = "4.3.0";
   const CONNECTOR_ID = "claude-custom-connector";
 
   // ── Claude-specific handshake state ────────────────────────────────

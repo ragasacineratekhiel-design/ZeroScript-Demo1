@@ -669,6 +669,16 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
 - VERIFY LOOP: After every mutation, return the new state. If error, read it, fix ONE param, retry once. Never invent API.
 - OP METHODS ONLY: No one-liners, no print(), no guessing. Use ###LUA### blocks, pcall, type guards, debounce.`;
 
+
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Claude composer not found — open a new chat";
+      if (location.pathname.includes("/projects/")) return "Project chats restrict tools — use a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "claude",
     displayName: "Claude",
@@ -685,7 +695,8 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
+    isFreshChat, chatIsEmpty, editorText,
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
     promptExtra: PROMPT_EXTRA,

@@ -9,7 +9,6 @@ const SUPPORTED_HOSTS = [
   "grok.com", "x.ai", "poe.com", "chat.mistral.ai",
 ];
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
-const LEGACY_WARNING = "⚠ Remove legacy extension `zeroscript-extension` — keep only `zeroscript-extension-v2` (chrome://extensions → Remove old card).";
 
 function safeVer() {
   try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
