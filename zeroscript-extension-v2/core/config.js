@@ -8,7 +8,7 @@ const ZS = (() => {
 
   // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.3.0";
+  const APP_VERSION = "4.4.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI with 10ms wall ──
   const PLANS = {

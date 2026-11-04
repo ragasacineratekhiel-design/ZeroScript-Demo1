@@ -20,7 +20,7 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.3.0"; // shown in the popup/status payload
+const EXT_VERSION = "4.4.0"; // shown in the popup/status payload
 const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
 const RECONNECT_MAX = 200;     // MAX 200 cap — ABSOLUTE
 const HEARTBEAT_MS = 1000;   // HONEST (audit #28): 150ms bought nothing (MV3 throttles
@@ -423,6 +423,24 @@ function notePageFault(site, message, level){
   pageFaults.push({site:String(site||"?"), message:String(message||"").slice(0,200), level:level||"error", at:Date.now()});
   while(pageFaults.length > 40) pageFaults.shift();
 }
+// hostname → provider id. Mirrors core/peer_wall.js HOST_MAP; background.js
+// cannot read a content script's globals, so the table is duplicated on purpose
+// (tools/verify.js asserts the two stay in sync).
+function providerIdForHost(url){
+  try{
+    const host = (new URL(url)).hostname.toLowerCase().replace(/^www\./,"");
+    const M = [
+      ["deepseek.com","deepseek"],["chatgpt.com","chatgpt"],["openai.com","chatgpt"],
+      ["gemini.google.com","gemini"],["claude.ai","claude"],["kimi.ai","kimi"],
+      ["chat.z.ai","glm"],["z.ai","glm"],["qwen.ai","qwen"],["arena.ai","arena"],
+      ["meta.ai","meta"],["perplexity.ai","perplexity"],["copilot.microsoft.com","copilot"],
+      ["grok.com","grok"],["x.ai","grok"],["poe.com","poe"],["mistral.ai","mistral"],
+    ];
+    for(const [needle,id] of M){ if(host===needle || host.endsWith("."+needle)) return id; }
+  }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
+  return "unknown";
+}
+
 function statusObj(){ return {type:"zs-status", connected:connected||httpHealthy, mcpAlive, studio:studioConnected, studioApp, studioProc, tools:toolsCache.length, servers:serversCache, transport: fastestTransport, caps: bridgeCaps,
   faults: pageFaults.length, faultSites: [...new Set(pageFaults.map(f=>f.site))].slice(-6),
   safe: (() => { try { return globalThis.ZSSafe?.stats?.() || null; } catch { return null; } })() }; }
@@ -507,6 +525,66 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         if(!r.ok) r=await sendWS({type:'metrics'},4000).catch(()=>({ok:false}));
         sendResponse(r); break;
       }
+      // ── CROSS-AI PEER ROUTING ─────────────────────────────────────────
+      // The missing link. Before this, a wall message was posted on a
+      // BroadcastChannel and written to storage; no tab ever converted one into
+      // an AI turn, and role→AI assignment was by TAB INDEX, so the user's
+      // planner=ChatGPT / coder=Claude choice was ignored. Here the background
+      // resolves provider → tab ids and delivers the envelope INTO the peer's
+      // page, which is what lets one AI's words reach another AI's prompt.
+      case "peer_route": {
+        try{
+          const env = msg.envelope || {};
+          const to = String(env.toProvider || "").toLowerCase();
+          const want = providerIdForHost; // helper below
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          const targets = [];
+          for(const t of tabs){
+            const pid = want(t.url || "");
+            if(to === "__any" || pid === to) targets.push({id:t.id, pid, url:t.url});
+          }
+          // Distinctness gate: never deliver back into the sender's own provider.
+          const filtered = targets.filter(t => {
+            const from = String(env.fromProvider || "").toLowerCase();
+            if(!from || from === "unknown") return true;
+            return t.pid !== from;
+          });
+          let delivered = 0;
+          for(const t of filtered){
+            try{
+              await chrome.tabs.sendMessage(t.id, {type:"zs-peer-inbound", envelope: env});
+              delivered++;
+            }catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+          }
+          if(!delivered && !targets.length){
+            // honest failure: the peer tab is not open. Surface it, do not pretend.
+            sendResponse({ok:false, error:`no open tab for provider "${to}" — open ${to} first`, delivered:0});
+          } else {
+            sendResponse({ok:true, delivered, targets: filtered.map(t=>t.pid)});
+          }
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "peer_ack": {
+        // A peer confirmed it received an envelope. Nothing to route; log it so
+        // "undelivered" statistics are trustworthy.
+        try { notePageFault("peer.ack", `${msg.fromProvider}→${msg.toProvider} ${msg.id}`, "info"); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+        sendResponse({ok:true});
+        break;
+      }
+      case "peer_whoami": {
+        try{
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          const map = {};
+          for(const t of tabs){
+            const pid = providerIdForHost(t.url || "");
+            (map[pid] = map[pid] || []).push(t.id);
+          }
+          const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
+          sendResponse({ok:true, plan: stored.zsPlan || null, roles: stored.zsPlanRoles || null, openProviders: map});
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
       case "count_provider_tabs": {
         try{
           const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
@@ -530,12 +608,27 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
               let roleForTab = null;
               try{
                 const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
-                const roles = stored.zsPlanRoles || {}; // map provider→role below
-                // map provider detection to role if possible — round-robin tab idx to roles order
+                const roles = stored.zsPlanRoles || {};   // { role: providerName }
                 const planId = msg.plan || stored.zsPlan || "agent";
-                const planRolesOrder = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
-                roleForTab = planRolesOrder[idx % planRolesOrder.length] || null;
-                if(roleForTab && roles && roles[roleForTab]) roleForTab = roleForTab; // role name stays role name
+                const order = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
+                // HONEST FIX: this used to be `order[idx % order.length]`, i.e.
+                // roles were handed out by TAB INDEX and the user's mapping was
+                // ignored — so "planner=ChatGPT, coder=Claude" could silently
+                // become anything. Now the tab's OWN provider decides its role.
+                const myProvider = providerIdForHost(tab.url || "");
+                for(const r of order){
+                  const assigned = String(roles[r] || "").toLowerCase();
+                  // role names in storage may be provider display names ("ChatGPT")
+                  if(assigned && myProvider !== "unknown" &&
+                     (assigned === myProvider || assigned.includes(myProvider))) { roleForTab = r; break; }
+                }
+                // Fallback ONLY if the user never assigned this provider: keep it
+                // deterministic and never duplicate a role already taken.
+                if(!roleForTab){
+                  const taken = new Set(Object.keys(roles).filter(r => roles[r]));
+                  for(const r of order){ if(!roles[r]) { roleForTab = r; break; } }
+                  void taken;
+                }
               }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
               chrome.tabs.sendMessage(tab.id, {type:"zs-plan-wake", plan: msg.plan, role: roleForTab, staggerMs, idx});
               // Also store wall task for 10ms poll fallback

@@ -235,3 +235,54 @@ Diagnostic site names were also made useful (`agent_stability.P` → `agent_stab
 `tools/fix-empty-catch.js --rename` without touching the hand-written repairs.
 
 **Verification: 19 checks, 6 test suites, 154 assertions, all green.** CI runs it.
+
+
+---
+
+## 8. Cross-AI communication — what it actually did (follow-up pass)
+
+**Finding 39 (🔴 P0, the big one):** the extension's headline claim — "2–3 AI work together" —
+was **not true**. I traced every path end to end.
+
+| What the UI claimed | What the code did |
+|---|---|
+| "2 AI — Planner + Coder" | `send()` posted a `BroadcastChannel` envelope and pushed it to a local log. **No tab ever turned that envelope into an AI turn.** |
+| "the coder executes the planner's spec" | The only cross-tab effect was `handleWallTask()` → `execute_luau`, which ran **silently**. The receiving AI never saw the sending AI's words. That is a remote-control channel, not a conversation. |
+| "assign an AI to each role" | `wake_provider_tabs` computed `roleForTab = planRolesOrder[idx % n]` — roles came from **tab index**. The user's role→AI mapping was ignored. |
+| "a different model reviews the work" | Nothing prevented two roles pointing at the **same** provider, so the "review" step was a model grading itself. |
+
+So: the user ran two tabs, both auto-started, both talked to Roblox Studio, and the two AIs never
+exchanged a single word. The permission list, the wall log and the plan UI all looked correct,
+which is exactly why this survived three versions.
+
+### Fix: `core/peer_wall.js` (60 assertions)
+
+| Guarantee | Implementation |
+|---|---|
+| Identity | provider derived from `location.hostname` (17 patterns); the same table is duplicated in `background.js` and `test-peer-wall.js` asserts the two cannot drift |
+| **Distinctness** | `send()` returns `{ok:false, refused:"same-provider"}` instead of delivering; `auditPlan()` reports duplicate roles and "every role is the same AI" in the plan menu and the plan button (`Agent ⚠`) |
+| Delivery | BroadcastChannel **and** background routing (`peer_route` resolves provider → tab ids, refuses to deliver back into the sender's provider), plus an ack over `peer_ack` |
+| **Conversation** | `main.js` `peerContext()` drains the mailbox at the top of every `submitAndGetBase()` and prepends a labelled block: *"message from CLAUDE as coder … you are working with OTHER AIs that are NOT you … do not claim to be them"* |
+| Real handoff | Loop mode: if the turn's role is assigned to a **different** provider, the turn is sent to that tab and this tab **waits for its reply** (`waitForPeerReply`) instead of impersonating all three roles |
+| Honesty | `stats().undelivered` counts envelopes no peer acknowledged; `reportStatus` records refusals and routing failures through `core/safe.js` |
+
+### Verified with two real realms, not one
+
+`test-peer-wall.js` loads the module twice in separate `vm` contexts with real hostnames
+(`chatgpt.com`, `claude.ai`) and asserts the actual claim:
+
+- a message from ChatGPT is accepted by Claude and **rejected** by a third provider;
+- Claude's next prompt contains ChatGPT's words, labelled `CHATGPT`, with the anti-impersonation rule;
+- ChatGPT's own mailbox stays **empty** (it did not talk to itself);
+- a send to its own provider is **refused**;
+- the two realms resolve to **different roles** from the same user mapping.
+
+That last group is why the first draft of this test passed vacuously: with a plain `require()`
+there is no `location`, so every module was `"unknown"`, and `sameProvider("unknown", …)` is
+always false — the distinctness gate could never fire. A test that cannot fail is worthless.
+
+### Still true after the fix (documented, not hidden)
+
+- two *different* provider tabs must be open; same-model plans are refused by design;
+- Arena is one hostname, so several Arena models are **one** provider here;
+- peer text crosses models, memory walls do not — each tab keeps its own.

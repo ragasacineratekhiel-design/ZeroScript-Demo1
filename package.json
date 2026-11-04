@@ -1,8 +1,8 @@
 {
   "name": "zeroscript-max",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "private": true,
-  "description": "ZeroScript MAX — browser extension + local bridge that lets any AI chat drive Roblox Studio",
+  "description": "ZeroScript MAX \u2014 browser extension + local bridge that lets any AI chat drive Roblox Studio",
   "license": "GPL-3.0-or-later",
   "type": "commonjs",
   "scripts": {

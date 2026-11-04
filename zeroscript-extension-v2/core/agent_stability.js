@@ -180,5 +180,5 @@ const ZSAgentStability = (() => {
     }
   } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.tryPatch", _e); }
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.3.0" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.4.0" };
 })();

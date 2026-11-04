@@ -203,6 +203,6 @@ const ZSGenericProvider = (() => {
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating, enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
     scanError, modeWarning, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
-    setMeta, _setMeta:setMeta, makeMeta, version:"4.3.0"
+    setMeta, _setMeta:setMeta, makeMeta, version:"4.4.0"
   };
 })();

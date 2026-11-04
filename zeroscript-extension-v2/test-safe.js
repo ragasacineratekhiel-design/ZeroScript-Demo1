@@ -125,7 +125,9 @@ check("describe() never leaks a stack frame", !/at \w+ \(/.test(S.describe(new E
     const s = S.stats();
     return typeof s.faults === "number" && Array.isArray(s.recent) && Array.isArray(s.worst);
   })());
-  check("version agrees with the manifest", require("./core/safe.js").version === "4.3.0");
+  // read the manifest instead of hardcoding: a hardcoded string silently rots
+  const mfVer = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "manifest.json"), "utf8")).version;
+  check("version agrees with the manifest", require("./core/safe.js").version === mfVer, `${require("./core/safe.js").version} != ${mfVer}`);
 
   console.warn = realWarn;
   const total = pass + failed;

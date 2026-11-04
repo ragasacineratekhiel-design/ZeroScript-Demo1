@@ -357,12 +357,61 @@
   // virtualize the message list, where the count stays flat as a new
   // turn appears and old ones detach. Captured at every send site (tool feedback,
   // user message, bootstrap). Providers without lastAssistantId fall back to count.
+  // Wait for a specific peer's reply, resolved through the peer channel.
+  // Returns the message or null on timeout. Never throws.
+  async function waitForPeerReply(provider, timeoutMs) {
+    const PW = typeof window !== "undefined" ? window.ZSPeerWall : null;
+    if (!PW || !PW.onInbound) return null;
+    return await new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; try { off(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.finish", _e); } clearTimeout(t); resolve(v); };
+      const off = PW.onInbound((m) => {
+        if (m && String(m.fromProvider) === String(provider)) finish(m);
+      }) || (() => {});
+      const t = setTimeout(() => finish(null), Math.max(1000, timeoutMs || 45000));
+    });
+  }
+
   function captureSendToken() {
     A.sendToken = P.lastAssistantId ? P.lastAssistantId() : undefined;
   }
 
+  // ── peer context: fold inbound peer messages into the next prompt ──────
+  // Declared BEFORE submitAndGetBase because it is called from there: a
+  // const arrow is not hoisted, and using it earlier is the exact 4.2.0
+  // ReferenceError class this file has been bitten by twice.
+    // Called on EVERY turn. Returns "" when nothing arrived, so a single-AI run
+    // is completely unaffected. When a peer HAS spoken, this is what makes the
+    // other model's reasoning part of this model's context instead of noise.
+    const peerContext = () => {
+      try {
+        const PW = window.ZSPeerWall;
+        if (!PW || !PW.takeInbound) return "";
+        const msgs = PW.takeInbound(5);
+        if (!msgs || !msgs.length) return "";
+        diag("peer.context", { n: msgs.length, from: msgs.map((m) => m.fromProvider) });
+        try { window.ZSAgentHub && window.ZSAgentHub.pushTemp &&
+          window.ZSAgentHub.pushTemp({ type: "peer_context", n: msgs.length, from: msgs.map(m => m.fromProvider), ts: Date.now() }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); }
+        return PW.formatForPrompt(msgs);
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); return ""; }
+    };
+
+    try {
+      if (window.ZSPeerWall && window.ZSPeerWall.self && window.ZSPeerWall.self !== "unknown") {
+        window.__zsProviderName = window.__zsProviderName || window.ZSPeerWall.self;
+        window.__zsPeerId = window.ZSPeerWall.self;
+      }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); }
+
   async function submitAndGetBase(text, images) {
     captureSendToken();
+    // Peer messages that arrived since the last turn are prepended here, so the
+    // OTHER AI's words are in this AI's context for exactly one turn. Empty
+    // string when no peer spoke, so a solo run is byte-identical to before.
+    {
+      const peer = (typeof peerContext === "function") ? peerContext() : "";
+      if (peer) text = peer + "\n\n" + text;
+    }
     diag("send", { text: String(text).slice(0, 60), busy: P.isBusyNow() });
     A.injecting = true;
     ui.inputCover(true);
@@ -1425,6 +1474,7 @@
     // Exec-mode budget (HONEST: bounded, so a stuck model can never spin forever).
     const EXEC_MAX_TURNS = { single: 1, continuous: 24, loop: 40 };
     let execTurns = 0;
+
     const loopRolePrompt = (role, turn, maxTurns) => {
       const head = `[ZeroScript loop ${turn}/${maxTurns} — you are the ${role.toUpperCase()}]`;
       if (role === "planner") return `${head} Produce the NEXT piece of the blueprint only: file tree, exact ` +
@@ -1591,6 +1641,42 @@
           const planRoles = (ZS.PLANS && ZS.PLANS[planNow()] && ZS.PLANS[planNow()].roles) || ["planner", "coder", "checker"];
           const role = planRoles[(execTurns - 1) % planRoles.length];
           diag("exec.loop.turn", { turn: execTurns, maxTurns, role });
+          // ── distribute the turn to the REAL peer AI ────────────────────
+          // Loop mode runs planner→coder→checker inside ONE tab, which means one
+          // model plays all three roles — the exact thing the peer channel
+          // exists to prevent. When the active plan assigns this role to a
+          // DIFFERENT provider, the turn is handed to that tab and we wait for
+          // its answer instead of impersonating it.
+          try {
+            const PW = window.ZSPeerWall;
+            const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[planNow()]) || null;
+            const roleNames = (def && def.roles) || ["planner", "coder", "checker"];
+            const assigned = String((planRoles[role] || "")).toLowerCase();
+            if (PW && assigned && assigned !== "unknown" && !PW.sameProvider(assigned, PW.self)) {
+              const sent = PW.sendToRole(planRoles, role, "task", {
+                turn: execTurns, maxTurns, plan: planNow(),
+                text: `[turn ${execTurns}/${maxTurns}] You are the ${role.toUpperCase()}. ` +
+                      `Continue the build from the shared state and reply with your result.`,
+              });
+              if (sent && sent.ok) {
+                diag("exec.peer.handoff", { role, to: assigned, turn: execTurns });
+                ui.banner("info", `Turn ${execTurns}: handed to ${assigned} (${role})`,
+                  `The ${role} role belongs to a different AI — waiting for its reply instead of playing it here.`);
+                // The peer answers through the peer channel, which becomes our
+                // next context. We do not submit a prompt locally for this role.
+                const got = await waitForPeerReply(assigned, 45000);
+                if (got) {
+                  base = await submitAndGetBase(`[ZeroScript loop ${execTurns}/${maxTurns} — ${role.toUpperCase()} replied via ${assigned}]
+
+` +
+                    String(got.payload && (got.payload.text || got.payload.output) || "").slice(0, 6000));
+                  continue;
+                }
+                diag("exec.peer.timeout", { role, to: assigned });
+                ui.banner("warn", `No reply from ${assigned}`, `Is its tab open? Falling back to this AI for the ${role} turn.`);
+              }
+            }
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
           try {
             window.ZSAgentHub && window.ZSAgentHub.write("zsLoopState",
               { mode, role, turn: execTurns, maxTurns, plan: planNow(), text: String(res.text||"").slice(0,8000), ts: Date.now() }, 120000);
@@ -1598,7 +1684,7 @@
               role, "__all", { type: "loop_text", role, turn: execTurns, text: String(res.text||"") }, "loop");
             window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
               `loop ${role} turn ${execTurns}`, "agent_loop");
-          } catch (_e) { globalThis.ZSSafe?.seen?.("main.planRoles", _e); }
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
           base = await submitAndGetBase(loopRolePrompt(role, execTurns, maxTurns));
           continue;
         }
@@ -1710,7 +1796,7 @@
           if (A.pendingStop && isProgress) {
             // still send the tool feedback so conversation stays consistent, then honor
             let _toSend = feedback; _toSend = withSysResend(_toSend); const _images = A.pendingImages; A.pendingImages=null; diag("images.consumed",{count:_images? _images.length:0});
-            try{ base = await submitAndGetBase(_toSend, _images); }catch (_e) { globalThis.ZSSafe?.seen?.("main.planRoles", _e); }
+            try{ base = await submitAndGetBase(_toSend, _images); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
             honorPendingStopIfNeeded("progressBoundary"); break;
           }
           // Re-inject the command list every REMIND_TOOLS_EVERY successful calls.
@@ -2216,13 +2302,40 @@
             return true;
           }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
         }
+        // ── CROSS-AI PEER INBOUND ──────────────────────────────────────
+        // A DIFFERENT AI sent us a message. This is the part that was missing:
+        // the old wall only executed code silently, so no AI ever READ another
+        // AI. Here we accept the envelope into ZSPeerWall's mailbox, and the
+        // next prompt on this tab carries the peer's actual words (see
+        // peerContext() below, called from submitAndGetBase).
+        if(m.type==="zs-peer-inbound"){
+          try{
+            const env = m.envelope;
+            const r = window.ZSPeerWall && window.ZSPeerWall.receive
+              ? window.ZSPeerWall.receive(env, "runtime")
+              : { ok:false, reason:"peer-wall-missing" };
+            if(r && r.ok){
+              // show it in the log so the user can SEE two AIs talking
+              try{
+                const who = (env.fromProvider || "peer").toUpperCase();
+                const text = String((env.payload && (env.payload.text || env.payload.output || env.payload.code)) || "").slice(0, 160);
+                diag("peer.inbound", { from: env.fromProvider, kind: env.kind, chars: text.length });
+                console.log(`[ZeroScript] peer message from ${who}: ${text}`);
+              }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
+            } else {
+              diag("peer.inbound.rejected", { reason: r && r.reason, from: env && env.fromProvider });
+            }
+            if(sendResp) sendResp({ok: !!(r && r.ok)});
+            return true;
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
+        }
         // Real AI↔AI wall handoff: when planner posts spec, coder executes it
         if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
           try{
             handleWallTask(m);
             if(sendResp) sendResp({ok:true});
             return true;
-          }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
         }
       });
       // Real wall task handler — coder actually executes planner spec via execute_luau
@@ -3133,9 +3246,31 @@
       const names={direct:"Direct",agent:"Agent",plan:"Plan",checker:"Checker"};
       const name = names[currentPlan] || "Direct";
       const el = planBtn.querySelector("#zs-plan-name");
-      if(el) el.textContent = name;
+      // Show the truth, not the wish: if every role points at the same AI (or an
+      // unassigned provider sits on this tab) the label says so, because the
+      // "2 AI" badge is worthless if both are the same model.
+      let label = name;
+      try {
+        const PW = window.ZSPeerWall;
+        const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[currentPlan]) || null;
+        const roleNames = (def && def.roles) || ["planner"];
+        if (PW && PW.auditPlan) {
+          const a = PW.auditPlan(PW.self, planRoles, roleNames);
+          if (!a.ok) label = name + " ⚠";
+          else label = name + " · " + a.distinctProviders + " AI";
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
+      if(el) el.textContent = label;
+      try { planBtn.title = (function(){
+        const PW = window.ZSPeerWall;
+        if (!PW || !PW.auditPlan) return "";
+        const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[currentPlan]) || null;
+        const a = PW.auditPlan(PW.self, planRoles, (def && def.roles) || ["planner"]);
+        return a.ok ? `Roles: ${((def && def.roles) || []).map(r => r + "=" + (planRoles[r] || "?")).join(", ")}`
+                    : "⚠ " + a.problems.join("; ");
+      })(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.def", _e); }
       planBtn.dataset.plan = currentPlan;
-      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("main.updatePlanBtn", _e); }
+      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("main.def", _e); }
       // also sync to prompt enhancer via global
     }
     function buildPlanMenu(){
@@ -3167,6 +3302,10 @@
         }
         // tab count warning placeholder — filled async
         html+=`<div id="zs-plan-warn" class="zs-plan-warn" hidden></div>`;
+        // distinctness warning (a model cannot review itself)
+        html+=`<div class="zs-plan-audit" style="margin-top:6px;color:#f59e0b;font-size:10px;line-height:1.35" hidden></div>`;
+        // honest statement of what the peer channel actually does
+        html+=`<div class="zs-plan-note" style="margin-top:6px;opacity:.65">Peer channel: each AI receives the others' messages in its own context (peer_wall.js). Same-AI plans are refused at delivery.</div>`;
         html+=`</div>`;
       }
       html+=`<button class="zs-plan-save">Save Plan</button>`;
@@ -3194,6 +3333,22 @@
         }
       }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
       // bind
+      // A visible, non-blocking warning when the chosen roles are not distinct.
+      // Placing this next to the role selectors is the only place the user can
+      // act on it before starting a run.
+      try {
+        const PW = window.ZSPeerWall;
+        const def = PLANS_DEF[currentPlan];
+        const roleNames = (def && def.roles) || ["planner"];
+        const a = PW && PW.auditPlan ? PW.auditPlan(PW.self, planRoles, roleNames) : null;
+        const warnEl = planMenuEl.querySelector(".zs-plan-audit");
+        if (warnEl && a) {
+          warnEl.hidden = a.ok;
+          warnEl.textContent = a.ok
+            ? ""
+            : "⚠ " + a.problems.join(" • ") + " — pick a different AI for each role";
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       planMenuEl.querySelectorAll(".zs-plan-opt").forEach(b=>b.addEventListener("click",()=>{
         const pid=b.dataset.plan;
         const def=PLANS_DEF[pid];
@@ -3201,11 +3356,11 @@
         for(const r of def.roles) if(!nextRoles[r]) nextRoles[r]=providers[0];
         currentPlan=pid; planRoles=nextRoles;
         setPlanState(pid, nextRoles);
-        try{ window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(pid, nextRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
+        try{ window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(pid, nextRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
         updatePlanBtn();
         buildPlanMenu();
         // re-inject system prompt via notifying prompt enhancer
-        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
+        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       }));
       planMenuEl.querySelectorAll("select[data-role]").forEach(sel=>sel.addEventListener("change",()=>{
         planRoles={...planRoles, [sel.dataset.role]:sel.value};
@@ -3214,12 +3369,12 @@
       const save=planMenuEl.querySelector(".zs-plan-save");
       if(save) save.addEventListener("click",()=>{
         setPlanState(currentPlan, planRoles);
-        try{ window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
+        try{ window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
         updatePlanBtn();
         planMenuEl.hidden=true;
         toast(`Plan saved: ${PLANS_DEF[currentPlan].name} (${PLANS_DEF[currentPlan].ais} AI) — wall 10ms`);
         // send ready hint via wall + magic word broadcast
-        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
+        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       });
     }
     function togglePlanMenu(){

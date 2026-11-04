@@ -90,7 +90,8 @@ check("buildTrimmedContext is relevance-aware", /ShopService|Wall preview/.test(
 // ── stats() is what the diagnostics read ─────────────────────────────────
 const st = W.stats();
 check("stats reports wallLen", typeof st.wallLen === "number" && st.wallLen > 20);
-check("stats reports the version", typeof st.version === "string" && st.version.startsWith("4.3.0"));
+const MF_VER = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "manifest.json"), "utf8")).version;
+check("stats reports the manifest version", typeof st.version === "string" && st.version === MF_VER, st.version);
 
 // ── adoptStudioText only adopts a richer wall ─────────────────────────────
 W.setWallText("# w\n## A\n1");

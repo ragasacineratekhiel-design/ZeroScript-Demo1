@@ -9,7 +9,7 @@
 const ZSClaudeConnector = (() => {
   "use strict";
 
-  const CONNECTOR_VERSION = "4.3.0";
+  const CONNECTOR_VERSION = "4.4.0";
   const CONNECTOR_ID = "claude-custom-connector";
 
   // ── Claude-specific handshake state ────────────────────────────────

@@ -533,6 +533,36 @@ function checkProviderContract() {
 //   (a) zero empty catch blocks remain;
 //   (b) every ZSSafe reference is optional-chained off globalThis, because a
 //       bare `ZSSafe.seen()` would turn 392 silent catches into 392 throws.
+// ── 4e. cross-AI wiring ───────────────────────────────────────────────────
+// The "2–3 AI work together" claim was false for three versions because nothing
+// connected the wall to an AI prompt. These four links must all exist or the
+// feature is a label again.
+function checkPeerWiring() {
+  console.log("\n[4e] cross-AI wiring");
+  const EXT = path.join(ROOT, "zeroscript-extension-v2");
+  const read = (rel) => fs.readFileSync(path.join(EXT, rel), "utf8");
+  const main = read("core/main.js");
+  const bg = read("background.js");
+  const pw = read("core/peer_wall.js");
+
+  const links = [
+    ["peer_wall defines the peer channel", /ZSPeerWall\s*=/.test(pw)],
+    ["main.js receives peer envelopes", /zs-peer-inbound/.test(main) && /ZSPeerWall\.receive|ZSPeerWall && /.test(main)],
+    ["main.js folds peer text into the prompt", /peerContext\(\)/.test(main) && /formatForPrompt/.test(main)],
+    ["peer context is actually used when sending", /const peer = .*peerContext/.test(main)],
+    ["background routes envelopes by provider", /case "peer_route"/.test(bg)],
+    ["background refuses to route back to the sender", /fromProvider/.test(bg) && /t\.pid !== from/.test(bg)],
+    ["loop mode can hand a turn to a peer", /waitForPeerReply/.test(main) && /exec\.peer\.handoff/.test(main)],
+    ["role assignment uses the provider, not tab order", /providerIdForHost\(tab\.url/.test(bg)],
+    ["the plan audit is reachable from the UI", /auditPlan/.test(main)],
+  ];
+  let bad = 0;
+  for (const [name, ok] of links) {
+    if (!ok) { fail("peer", "missing link: " + name); bad++; }
+  }
+  if (!bad) ok("peer", `${links.length}/${links.length} cross-AI links present (identity → routing → prompt → handoff)`);
+}
+
 function checkSilentFailures() {
   console.log("\n[4d] silent-failure hygiene");
   const files = [];
@@ -626,7 +656,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);
@@ -656,6 +686,7 @@ selfTestScopeChecker();
 checkApiMembers();
 checkProviderContract();
 checkSilentFailures();
+checkPeerWiring();
 checkVersions(mf);
 if (!process.argv.includes("--checks-only")) runTests();
 

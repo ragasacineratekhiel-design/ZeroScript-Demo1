@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.3.0";
+  const VERSION = "4.4.0";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";

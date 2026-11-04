@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "description": "ZeroScript MAX 4.3.0 \u2014 verified agent loop, static Luau analyser, event-driven wall, honest telemetry",
   "permissions": [
     "storage",
@@ -68,6 +68,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/deepseek.js",
         "core/main.js"
@@ -103,6 +104,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/chatgpt.js",
         "core/main.js"
@@ -125,6 +127,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/gemini.js",
         "core/main.js"
@@ -148,6 +151,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/kimi.js",
         "core/main.js"
@@ -170,6 +174,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/glm.js",
         "core/main.js"
@@ -192,6 +197,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/arena.js",
         "core/main.js"
@@ -215,6 +221,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/meta.js",
         "core/main.js"
@@ -248,6 +255,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/qwen.js",
         "core/main.js"
@@ -271,6 +279,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/claude-connector.js",
         "providers/claude.js",
@@ -295,6 +304,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/generic.js",
         "providers/perplexity.js",
@@ -318,6 +328,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/generic.js",
         "providers/copilot.js",
@@ -342,6 +353,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/generic.js",
         "providers/grok.js",
@@ -365,6 +377,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/generic.js",
         "providers/poe.js",
@@ -389,6 +402,7 @@
         "core/sandbox.js",
         "core/prompt_enhancer.js",
         "core/plan_wall.js",
+        "core/peer_wall.js",
         "core/agent_hub.js",
         "providers/generic.js",
         "providers/mistral.js",
