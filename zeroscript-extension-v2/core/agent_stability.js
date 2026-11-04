@@ -5,14 +5,14 @@
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
-// TURBO 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
+// MAX 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 3500 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
+      if (lastGood && now - lastGoodAt < 2000 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
       let ed = null;
       try { ed = getEditorFn(); } catch {}
       if (ed && document.contains(ed) && ed.offsetParent!==null) { lastGood = ed; lastGoodAt = now; return ed; }
@@ -44,7 +44,7 @@ const ZSAgentStability = (() => {
     };
   }
   function makeGenerationHelper(isGeneratingFn, opts = {}) {
-    const { idleMs = 80, streamCheck = null } = opts; // TURBO 10ms 80ms tighter (was 800)
+    const { idleMs = 80, streamCheck = null } = opts; // MAX 10ms 80ms tighter (was 800)
     let lastGenTrueAt = 0, lastLen = 0;
     return function hardenedIsGenerating() {
       let gen = false;
@@ -66,10 +66,10 @@ const ZSAgentStability = (() => {
     for (let i = 0; i < maxRetries; i++) {
       try {
         await typeAndSendFn(text, images);
-        await new Promise(r => setTimeout(r, 10)); // TURBO 10ms verify (was 180)
+        await new Promise(r => setTimeout(r, 5)); // MAX 10ms verify (was 180)
         return true;
       } catch (e) { lastErr = e; }
-      await new Promise(r => setTimeout(r, 10 * (i+1))); // TURBO 10ms backoff (was 100)
+      await new Promise(r => setTimeout(r, 10 * (i+1))); // MAX 10ms backoff (was 100)
       if (i === maxRetries - 2 && text && text.length < 50000) {
         try { await navigator.clipboard.writeText(text); document.execCommand("paste"); } catch {}
       }
@@ -91,7 +91,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 800); // FIXED 800ms — 10ms was DDoSing bridge (100 req/s), now sane 0.8s poll
+    }, 400); // MAX 400ms — 2× faster than 3.5, still safe (10ms DDOS fixed)
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -100,8 +100,8 @@ const ZSAgentStability = (() => {
       try { if (getEditor && document.hasFocus()) { /* keep alive */ } } catch {}
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
       // Web Locks keepalive — holds lock so tab stays alive in background
-      try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r,100)); }); } catch {}
-    }, 800); // TURBO 10ms-inspired 800ms keepalive (was 3200)
+      try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r, 25)); }); } catch {}
+    }, 400); // MAX 400ms keepalive — 2× faster, holds lock tightly
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -139,7 +139,7 @@ const ZSAgentStability = (() => {
       }
       const origGen = P.isGenerating.bind(P);
       const streamCheck = P.streamLen ? (()=>{ try { const la=P.lastAssistant(); return la? P.streamLen(la):0; } catch { return 0; } }) : null;
-      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 80, streamCheck }); // TURBO 10ms 80 (was 800)
+      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 80, streamCheck }); // MAX 10ms 80 (was 800)
 
       if (!P._zsStabilityPatched) {
         P._zsStabilityPatched = true;
@@ -160,12 +160,12 @@ const ZSAgentStability = (() => {
       return true;
     } catch(e){ try{ console.log("[zs-ultra] patch failed", e);}catch{} return false; }
   }
-  try { setTimeout(tryPatch, 40); } catch {}
-  try { setTimeout(tryPatch, 250); } catch {}
-  try { setTimeout(tryPatch, 700); } catch {}
+  try { setTimeout(tryPatch, 10); } catch {}
+  try { setTimeout(tryPatch, 20); } catch {} // MAX
+  try { setTimeout(tryPatch, 30); } catch {} // MAX
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 160);
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 10); // MAX
   } catch {}
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;
@@ -173,7 +173,7 @@ const ZSAgentStability = (() => {
       let watched = window.ZSProvider;
       Object.defineProperty(window, "ZSProvider", {
         get(){ return watched; },
-        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 25); return true; },
+        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 5); return true; },
         configurable: true
       });
       if (_ZS) watched=_ZS;

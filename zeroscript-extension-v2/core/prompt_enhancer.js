@@ -296,7 +296,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     const wallCtx = getWallCtx(raw);
     const contract = getTestContract(raw, wallCtx, theme);
     const placeInfo = opts.placeInfo || "";
-    return `━━━ ZeroScript MAX AUTO-SPEC — ${theme.name} (${theme.hook}) — 10ms TURBO TRUTHFUL ━━━
+    return `━━━ ZeroScript MAX AUTO-SPEC — ${theme.name} (${theme.hook}) — 10ms MAX TRUTHFUL ━━━
 Original user prompt: "${raw.slice(0,180)}"
 Detected theme: ${theme.name} — Systems: ${theme.systems.join(", ")}
 

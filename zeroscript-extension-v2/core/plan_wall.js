@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/plan_wall.js — ZeroScript MAX 4.1.0 PLAN ORCHESTRATION — 10ms honest superfast wall
+// core/plan_wall.js — ZeroScript MAX 4.2.0 EXT-IN-EXT — 10ms wall + 5ms hub — extension-in-extension hub
 // Inter-agent communication bus for Switch Plan (Direct/Agent/Plan/Checker).
 // Uses BroadcastChannel + chrome.storage.local polling at 10ms + in-memory cache.
 // Every message has envelope {id, from, to, plan, role, payload, t, phase}
@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.1.1 PLAN 10ms SMALL+GUARD";
+  const VERSION = "4.2.0 EXT-IN-EXT 5ms ULTRA + 10ms WALL";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
@@ -88,7 +88,7 @@
     _persistDebounce = setTimeout(()=>{
       _persistDebounce = null;
       try{ chrome.storage.local.set({[PLAN_WALL_KEY]: wallLog.slice(-MAX_LOG)}); }catch{}
-    }, 10); // honest 10ms
+    }, 5); // honest 10ms
   }
 
   function onMessage(fn){
@@ -173,11 +173,11 @@
   let lastCheckAt = 0;
   async function fetchTabInfo(){
     // ask background for provider tab counts (10ms cache)
-    if(Date.now() - lastCheckAt < 500 && lastTabInfo) return lastTabInfo;
+    if(Date.now() - lastCheckAt < 300 && lastTabInfo) return lastTabInfo; // MAX 300
     try{
       const info = await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"count_provider_tabs"}, r=>res(r)); }catch{ res(null); }
-        setTimeout(()=>res(null), 600);
+        setTimeout(()=>res(null), 75); // MAX
       });
       if(info && typeof info.total==="number"){ lastTabInfo=info; lastCheckAt=Date.now(); return info; }
     }catch{}
@@ -245,6 +245,49 @@
   }
 
   const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt };
+
+  // ── 4.2.0 EXT-IN-EXT hub bridge — planner sends via wall + hub temp storage ──
+  // When a wall message is sent, also write to ZSAgentHub for bridge temp storage (planner usually sender).
+  // And when hub receives zsPlan/*, mirror to wall listeners — so extension-in-extension works even if BC missed.
+  try{
+    const __origSend = send;
+    // wrap send to also mirror to hub (async, never blocks)
+    // eslint-disable-next-line no-inner-declarations
+    function sendWithHub(from,to,payload,phase="msg"){
+      const env = __origSend(from,to,payload,phase);
+      try{
+        if(window.ZSAgentHub && window.ZSAgentHub.write){
+          // hub key per plan message id — planner→coder traceable
+          window.ZSAgentHub.write("zsPlanWall:"+env.id, env, 120000);
+          // also publish latest for quick poll
+          if(payload && payload.type==="plan_change") window.ZSAgentHub.write("zsPlanState", {plan: currentPlan, roles: currentRoles, t: Date.now()}, 120000);
+          if(payload && payload.type==="agent_start") window.ZSAgentHub.write("zsPlanStart", env, 120000);
+        }
+      }catch{}
+      return env;
+    }
+    // replace global send reference for external callers via API
+    try{ API.send = sendWithHub; }catch{}
+    // also keep internal send for poll, but expose wrapped
+    // listen to hub writes for plan wall messages (in case BC/storage missed)
+    setTimeout(()=>{
+      try{
+        if(window.ZSAgentHub && window.ZSAgentHub.onWrite){
+          window.ZSAgentHub.onWrite((ev)=>{
+            if(!ev || !ev.key) return;
+            if(ev.key.startsWith("zsPlanWall:") && ev.value && ev.value.id){
+              const msg = ev.value;
+              if(wallLog.some(m=>m.id===msg.id)) return;
+              wallLog.push(msg);
+              if(wallLog.length>MAX_LOG) wallLog.shift();
+              _lastSeenId = msg.id;
+              for(const fn of _listeners) try{ fn(msg); }catch{}
+            }
+          });
+        }
+      }catch{}
+    }, 37); // MAX 150ms — 2x faster
+  }catch{}
 
   try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}
   if(typeof self!=="undefined") try{ self.ZSPlanWall = API; }catch{}

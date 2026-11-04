@@ -20,14 +20,14 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.1.1";
-const RECONNECT_MIN = 10;    // TURBO 10ms ultra (was 80)
-const RECONNECT_MAX = 800;     // TURBO 800 (was 2500) — faster cap
-const HEARTBEAT_MS = 800;    // TURBO 0.8s — super fast drop (was 2800)
-const STALE_SOCKET_MS = 2000;// TURBO 2s — fast half-open catch (was 5000)
-const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 2000;   // TURBO 2s tight (was 5000)
-const HEDGE_MS = 10;         // TURBO 10ms hedge — super fast (was 80) matches config TRANSPORT
+const EXT_VERSION = "4.2.0";
+const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
+const RECONNECT_MAX = 200;     // MAX 200 cap — ABSOLUTE
+const HEARTBEAT_MS = 150;    // MAX 150ms — ABSOLUTE, browser will throttle hidden to 1000
+const STALE_SOCKET_MS = 400;// MAX 400ms — ABSOLUTE
+const REQUEST_TIMEOUT_DEFAULT = 90000;
+const HTTP_TIMEOUT = 600;   // MAX 600ms — ABSOLUTE, will timeout on slow bridge
+const HEDGE_MS = 5;         // MAX 5ms hedge — perfected matches config
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -37,6 +37,10 @@ let studioConnected=null, studioApp=null, studioProc=null;
 let bridgeToken=null, bridgeCaps=[];
 let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
+// ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
+const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
+setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 1000); // MAX 1s — ABSOLUTE
+
 let fastestTransport='ws'; // learned
 let httpHealthy=false;
 
@@ -87,9 +91,9 @@ try{
     }
   };
   // announce leadership attempt
-  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 100);
+  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 50); // MAX 50ms
   // periodic leader ping
-  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 800); // TURBO 800 (was 3000)
+  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 400); // MAX 400ms
   // default: we try to be leader; if another tab already is, we'll be told
   isLeader=true;
 }catch(e){ bc=null; isLeader=true; }
@@ -223,7 +227,7 @@ function scheduleReconnect(){
   clearTimeout(reconnectTimer);
   // jitter: +- 20%
   const jitter=reconnectDelay*0.2*(Math.random()*2-1);
-  reconnectTimer=setTimeout(connect, Math.max(10, reconnectDelay+jitter)); // TURBO 10 (was 50)
+  reconnectTimer=setTimeout(connect, Math.max(5, reconnectDelay+jitter)); // MAX 5ms (was 50)
   reconnectDelay=Math.min(reconnectDelay*1.5, RECONNECT_MAX);
 }
 function startHeartbeat(){
@@ -293,7 +297,7 @@ function waitForConnection(timeout=4000){
     const iv=setInterval(()=>{
       if(connected && ws && ws.readyState===WebSocket.OPEN){ clearInterval(iv); resolve(true); }
       else if(Date.now()-t0>timeout){ clearInterval(iv); resolve(false); }
-    }, 10); // TURBO 10ms poll (was 40) — super fast wake
+    }, 5); // MAX 5ms poll — perfected
   });
 }
 
@@ -470,12 +474,28 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         try{ const tabs = await chrome.tabs.query({url: PROVIDER_URLS}); for(const t of tabs){ try{ chrome.tabs.sendMessage(t.id, {type:"zs-plan-wake", plan: msg.plan}); }catch{} } sendResponse({ok:true, waked:tabs.length}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
+      case "agent_temp_write": {
+        try{ const k=String(msg.key||""); const exp=Date.now()+(msg.ttl||120000); agentTemp.set(k,{value:msg.value, from:msg.from||"planner", t:Date.now(), ttl:msg.ttl||120000, exp}); // also propagate to bridge HTTP if available (fire-and-forget)
+        try{ fetch(`${HTTP_BASE}/api/agent_temp`,{method:"POST", headers:{"Content-Type":"application/json", ...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, body:JSON.stringify({key:k, value:msg.value, from:msg.from}), cache:"no-store"}).catch(()=>{}); }catch{}
+        sendResponse({ok:true, key:k}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "agent_temp_read": {
+        try{ const k=String(msg.key||""); let v=agentTemp.get(k); if(v && v.exp && Date.now()>v.exp){ agentTemp.delete(k); v=null; } if(v) sendResponse({ok:true, payload:v}); else { // try HTTP fallback
+        try{ const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"}); if(rr.ok){ const jj=await rr.json(); if(jj && jj.value!==undefined) { agentTemp.set(k,jj); sendResponse({ok:true, payload:jj}); break; } } }catch{}
+        sendResponse({ok:false, error:"not found"}); } }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "agent_temp_list": {
+        try{ const keys=[...agentTemp.keys()]; sendResponse({ok:true, keys}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
       case "reconnect":
         reconnectDelay=RECONNECT_MIN; httpHealthy=false; connect(); fetchToken(); sendResponse({ok:true}); break;
       case "ping":
         // ultra-fast health ping
         if(connected) sendResponse({ok:true, transport:'ws'});
-        else { const r=await httpGet('/health',2000); sendResponse(r.ok? {ok:true, transport:'http'}:{ok:false}); }
+        else { const r=await httpGet('/health',1200); sendResponse(r.ok? {ok:true, transport:'http'}:{ok:false}); }
         break;
       default: sendResponse({ok:false, error:'unknown message'});
     }
@@ -486,12 +506,12 @@ chrome.runtime.onStartup.addListener(()=>{ fetchToken(); connect(); });
 chrome.runtime.onInstalled.addListener(()=>{ fetchToken(); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
-  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.05}); // TURBO 10ms-inspired 3s (was 15s)
+  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.5}); // BRUTAL HONEST: chrome.alarms clamps to 1m minimum — 0.02 ignored, using 30s + setInterval fallback
   chrome.alarms.onAlarm.addListener(()=>{ if(!connected && isLeader) connect(); });
 }catch{}
 // initial
 connect();
 // pre-warm HTTP
-httpGet('/api/status',3000).then(r=>{
+httpGet('/api/status',2000).then(r=>{
   if(r.ok){ mcpAlive=!!r.mcp_alive; if(Array.isArray(r.tools)) toolsCache=r.tools; if(Array.isArray(r.servers)) serversCache=r.servers; studioConnected=r.studio; httpHealthy=true; broadcastStatus(); }
 });

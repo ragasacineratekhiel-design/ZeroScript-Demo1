@@ -9,6 +9,6 @@ const ZSProvider = (() => {
   Object.defineProperty(P, 'displayName', { get: () => "Grok" });
   P.promptExtra = "- GROK: Be witty but precise. For Studio control (Play/Stop, Workspace, Lighting) use start_stop_play and execute_luau — never hand-wave.";
   P.version = "3.2.0 ULTRA";
-  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a,200); setTimeout(_a,800); setTimeout(_a,2000); }catch{}
+  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a, 50); setTimeout(_a, 200); setTimeout(_a, 500); }catch{}
   return P;
 })();

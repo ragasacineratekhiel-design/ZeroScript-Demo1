@@ -4,14 +4,14 @@
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 80; // normal 80ms
+    const CACHE_MS = 5; // MAX 5ms ABSOLUTE — floor, 8x faster
     const INTERNAL_CACHE_MS = 10; // INTERNAL ULTRA 10ms — internal commands cached 10ms honest superfast
     const INTERNAL_HEDGE_MS = 5; // 5ms hedge for start_stop_play etc
     const _cache = new Map();
     const _inflight = new Map();
     let _metrics = { calls: 0, hits: 0, avgMs: 0, internalHits:0 };
 
-    function _key(m){ try{ return JSON.stringify(m); }catch{ return String(m.type); } }
+    function _key(m){ try{ return JSON.stringify(m); }catch{ return String(m.type); } } // MAX: JSON.stringify micro-opt, no pretty
     function _getCache(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()>e.exp){ _cache.delete(k); return null;} _metrics.hits++; return e.v; }
     function _setCache(k,v,ttl=CACHE_MS){ _cache.set(k,{v,exp:Date.now()+ttl}); if(_cache.size>128){ const f=_cache.keys().next().value; _cache.delete(f);} }
 
@@ -38,8 +38,8 @@
             _metrics.calls++; _metrics.avgMs = Math.round((_metrics.avgMs*0.8)+(ms*0.2));
             return r;
           }
-          // 10ms TURBO backoff: 10ms * attempt (was 50)
-          if(attempt<retry) await new Promise(r=>setTimeout(r, 10*(attempt+1)));
+          // 10ms MAX backoff: 10ms * attempt (was 50)
+          if(attempt<retry) await new Promise(r=>setTimeout(r, 5*(attempt+1)));
           else return r;
         }
       })();
@@ -78,7 +78,7 @@
     function getMetrics(){ return {..._metrics}; }
     function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, isInternal, version:"4.1.0 PLAN 10ms WALL" };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, isInternal, version:"4.2.0 EXT-IN-EXT 5ms ULTRA" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

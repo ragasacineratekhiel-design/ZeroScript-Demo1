@@ -89,12 +89,12 @@ const ZSProvider = (() => {
   // Kimi streams with a hard stop-class signal for the WHOLE generation, so
   // completion windows can be tight like Gemini.
   const timings = {
-    GEN_IDLE_MS: 1500,
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 45000,
+    GEN_IDLE_MS: 800,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 25000,
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 9000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
@@ -298,7 +298,7 @@ const ZSProvider = (() => {
         _phObs = new MutationObserver(applyLockedPlaceholder);
         try { _phObs.observe(cont, { childList: true, subtree: true }); } catch {}
       }
-      if (!_phTimer) _phTimer = setInterval(applyLockedPlaceholder, 400);
+      if (!_phTimer) _phTimer = setInterval(applyLockedPlaceholder, 100);
     } else {
       if (_phObs) { try { _phObs.disconnect(); } catch {} _phObs = null; }
       if (_phTimer) { clearInterval(_phTimer); _phTimer = null; }
@@ -393,7 +393,7 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(30);
     }
     return false;
   }
@@ -817,12 +817,12 @@ const ZSProvider = (() => {
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
   } catch {}
 } catch {}
 

@@ -89,7 +89,7 @@
   // keeps the attribute warm so the very first read of a finished block is
   // already current.
   const tick = () => { try { syncAll(); } catch {} };
-  setInterval(tick, 1000);
+  setInterval(tick, 250);
   tick();
 
 // ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
@@ -97,12 +97,12 @@
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
   } catch {}
 } catch {}
 

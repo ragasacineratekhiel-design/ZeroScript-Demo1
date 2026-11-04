@@ -9,6 +9,6 @@ const ZSProvider = (() => {
   Object.defineProperty(P, 'displayName', { get: () => "Copilot" });
   P.promptExtra = "- COPILOT: Prefer precise tool use. For Roblox Studio game settings (Lighting, Workspace etc) use execute_luau with game:GetService — don't describe steps.";
   P.version = "3.2.0 ULTRA";
-  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a,200); setTimeout(_a,800); setTimeout(_a,2000); }catch{}
+  try{ const _a=()=>{try{if(typeof ZSAgentStability!=="undefined"&&ZSAgentStability.tryPatch) ZSAgentStability.tryPatch();}catch{}}; _a(); setTimeout(_a, 50); setTimeout(_a, 200); setTimeout(_a, 500); }catch{}
   return P;
 })();

@@ -87,11 +87,11 @@ const ZSProvider = (() => {
   // Exposed so the core's response watcher uses the provider's tuning.
   const timings = {
     GEN_IDLE_MS: 800,        // answer phase: text unchanged this long ⇒ idle
-    REASON_IDLE_MS: 12000,   // reasoning stalls of several seconds are NORMAL
-    WARMUP_MS: 45000,        // empty turn container may precede the first token
+    REASON_IDLE_MS: 6000,   // reasoning stalls of several seconds are NORMAL
+    WARMUP_MS: 25000,        // empty turn container may precede the first token
     REASON_NOREPLY_MS: 90000, // reasoning written but no answer yet: keep waiting
     STABLE_MS: 9000,         // generating-flag stuck ON but text frozen → done
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Turn classification (multi-signal, virtualization-safe) ──────────────
@@ -427,7 +427,7 @@ const ZSProvider = (() => {
       const anyModel = state.expertOn || state.visionOn || state.instantOn ||
         (!state.expertFound && !state.visionFound && !state.instantFound);
       if (anyModel && state.searchOff && (state.deepThinkOn || !state.deepThinkFound)) break;
-      await sleep(120);
+      await sleep(30);
     }
     state = composerModeState();
     // Unified model (2026-09): no model tabs exist, so there is nothing to pick -
@@ -619,7 +619,7 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(30);
     }
     return false;
   }
@@ -995,12 +995,12 @@ const ZSProvider = (() => {
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
   } catch {}
 } catch {}
 

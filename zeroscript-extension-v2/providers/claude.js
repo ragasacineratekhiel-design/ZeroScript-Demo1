@@ -42,11 +42,11 @@ const ZSProvider = (() => {
   // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
   const timings = {
     GEN_IDLE_MS: 1100, // was 1200 ULTRA
-    REASON_IDLE_MS: 12000, // was 15000
+    REASON_IDLE_MS: 6000, // was 15000
     WARMUP_MS: 32000, // was 35000
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 7000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   function isUserItem(item){
@@ -356,7 +356,7 @@ const ZSProvider = (() => {
     while(Date.now()-t0<totalMs){
       if(sendButton()) return true;
       if(unwedgeStop() && await waitFor(()=>!!sendButton(),1500)) return true;
-      await sleep(250);
+      await sleep(62);
     }
     return !!sendButton();
   }
@@ -392,7 +392,7 @@ const ZSProvider = (() => {
   }
   async function waitFor(pred, timeout){
     const t0=Date.now();
-    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(120); }
+    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(30); }
     return false;
   }
 
@@ -450,7 +450,7 @@ const ZSProvider = (() => {
     // Method 4: direct DOM + input event (last resort)
     if(!ok){
       try{
-        ed.innerHTML=""; 
+        ed.innerHTML="";
         const tn=document.createTextNode(text);
         ed.appendChild(tn);
         ed.dispatchEvent(new InputEvent("input",{bubbles:true}));
@@ -460,7 +460,7 @@ const ZSProvider = (() => {
         ok=true;
       }catch{}
     }
-    await sleep(120);
+    await sleep(30);
     return ok;
   }
 
@@ -472,13 +472,13 @@ const ZSProvider = (() => {
     if(relock) ed.setAttribute("contenteditable","true");
     try{
       // Ensure composer is ready
-      ed.focus(); await sleep(80);
+      ed.focus(); await sleep(20);
       await setEditorText(ed, text);
-      await sleep(100);
+      await sleep(25);
       // Verify text landed
       if(!editorText().includes(text.slice(0,12))){
         // Retry once with slower method
-        await sleep(200);
+        await sleep(50);
         await setEditorText(ed, text);
       }
       if(images && images.length){
@@ -498,7 +498,7 @@ const ZSProvider = (() => {
         if(btn.disabled){ diag("send.disabled",{}); return; }
         btn.click();
         // Also dispatch Enter as backup for Claude's ProseMirror
-        await sleep(80);
+        await sleep(20);
         if(editorText().trim()!==""){
           const o={key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true,cancelable:true};
           ed.dispatchEvent(new KeyboardEvent("keydown",o));
@@ -522,7 +522,7 @@ const ZSProvider = (() => {
     // Claude has no mode selector — just ensure editor exists
     let tries=0;
     while(tries<8 && !getEditor()){
-      await sleep(150); tries++;
+      await sleep(37); tries++;
     }
     return{ready: !!getEditor()};
   }
