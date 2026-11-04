@@ -173,11 +173,11 @@
   let lastCheckAt = 0;
   async function fetchTabInfo(){
     // ask background for provider tab counts (10ms cache)
-    if(Date.now() - lastCheckAt < 500 && lastTabInfo) return lastTabInfo;
+    if(Date.now() - lastCheckAt < 300 && lastTabInfo) return lastTabInfo; // MAX 300
     try{
       const info = await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"count_provider_tabs"}, r=>res(r)); }catch{ res(null); }
-        setTimeout(()=>res(null), 600);
+        setTimeout(()=>res(null), 300); // MAX
       });
       if(info && typeof info.total==="number"){ lastTabInfo=info; lastCheckAt=Date.now(); return info; }
     }catch{}
@@ -286,7 +286,7 @@
           });
         }
       }catch{}
-    }, 500);
+    }, 300); // MAX 300 — faster hub bridge
   }catch{}
 
   try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}

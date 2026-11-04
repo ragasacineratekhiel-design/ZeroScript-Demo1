@@ -65,7 +65,7 @@
   // the user sees the freeze = the smoking gun; correlate its timestamp with the
   // surrounding diag events (esp. code.snapAll / dom.read.slow) to see WHAT ran.
   {
-    const EXPECT = 250, STALL = 800; // only log gaps beyond this many ms
+    const EXPECT = 150, STALL = 400; // MAX 400ms log — 2× faster detection
     let _lastTick = Date.now();
     setInterval(() => {
       const now = Date.now();
@@ -322,7 +322,7 @@
       // and would otherwise flash the raw output for the 200/700ms until a sweep
       // nudge catches it). See preHideWholeItems.
       A.injectPreUser = preUser;
-      A.injectHideUntil = Date.now() + 2500;
+      A.injectHideUntil = Date.now() + 1500; // MAX
       // "Landed" = a new turn appeared in the DOM. In long chats, list
       // virtualisation can keep counts flat even when our message landed - the
       // textarea-cleared signal below is the primary fast gate.
@@ -348,13 +348,13 @@
         // thumbnail flash for image feedbacks until a sweep chip lands. Safe: the
         // input is covered and the loop owns this send, so no user turn can slip
         // into the window, and the pre-hide is one-shot (consumes the first turn).
-        A.injectHideUntil = Date.now() + 2500;
+        A.injectHideUntil = Date.now() + 1500; // MAX
         // The site clears the textarea as soon as the send is accepted - faster
         // and more reliable than waiting for a DOM turn count change.
         await waitFor(() => {
           if (P.editorText().trim() === "") messageSent = true;
           return messageSent || landed();
-        }, 3500);
+        }, 2000); // MAX halved
         tries++;
       }
       if (messageSent) diag("send.cleared", { tries });
@@ -436,17 +436,17 @@
     let unsettledSince = 0; // command-shaped reply whose read is not yet stable
     const WARMUP_MS = T.WARMUP_MS;
     const REASON_NOREPLY_MS = T.REASON_NOREPLY_MS;
-    const NO_TURN_GRACE_MS = 30000;
+    const NO_TURN_GRACE_MS = 20000; // MAX 20s — faster empty detection
     // Upper bound on holding off a parse verdict while a provider reports its
     // read is unsettled (Qwen A/B dual turn still landing). A genuinely stuck
     // read still resolves after this and is parsed as-is.
-    const UNSETTLED_GRACE_MS = 8000;
+    const UNSETTLED_GRACE_MS = 5000; // MAX 5s — faster settle
     // Once the generating flag has been OFF this long, the model has clearly
     // stopped streaming - so an "open tool block" reading is a DOM-churn/parse
     // artifact, not live output, and must not keep the watcher waiting. Provider
     // -neutral: while a model is genuinely streaming, gen stays true and this is
     // never reached.
-    const GEN_STOP_GRACE_MS = 2500;
+    const GEN_STOP_GRACE_MS = 1500; // MAX 1.5s — faster stop detect
 
     while (Date.now() - lastActiveAt < TIMEOUT) {
       if (A.stop) return { kind: "stopped" };
@@ -523,7 +523,7 @@
           // diag: WHICH empty-branch fired matters - a dead post-regenerate turn
           // on Qwen kept ending "empty" with a complete command in the net tap,
           // and without the branch name the cause was unfindable from the log.
-          if (Date.now() - preStartSilent > 60000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; }
+          if (Date.now() - preStartSilent > 30000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; } // MAX 30s
           await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms
           continue;
         }
@@ -626,7 +626,7 @@
       // finalize it as empty/truncated/text (a premature retry interrupts it).
       if (!sawContent) {
         if (!warmSince) warmSince = Date.now();
-        if (Date.now() - warmSince < WARMUP_MS) { await sleep(10); continue; } // TURBO
+        if (Date.now() - warmSince < WARMUP_MS) { await sleep(5); continue; } // MAX 5ms
         diag("empty.why", { branch: "warmup", rep: (d.reply||"").length, lastGood: lastGoodReply.length });
         return { kind: "empty" };
       }
@@ -636,7 +636,7 @@
       // exempt so a real stop still ends.
       if (d.thinking && d.thinking.length && !(d.reply && d.reply.length) && !P.turnHalted(d.item)) {
         if (!reasonSince) reasonSince = Date.now();
-        if (Date.now() - reasonSince < REASON_NOREPLY_MS) { await sleep(10); continue; } // TURBO
+        if (Date.now() - reasonSince < REASON_NOREPLY_MS) { await sleep(5); continue; } // MAX 5ms
       } else {
         reasonSince = 0;
       }
@@ -822,7 +822,7 @@
 
   // ── ULTRA bg wrapper: dedupe, cache, retry, metrics ───────────────────
   const _bgInflight=new Map(); // msg.type+name -> promise (coalesce identical calls within 100ms)
-  const _bgCache=new Map(); // cache for idempotent status queries (500ms)
+  const _bgCache=new Map(); // cache 250ms — 2× faster
   function bgKey(m){ try{ return m.type+":"+(m.name||m.server_id||"")+":"+JSON.stringify(m.arguments||""); }catch{ return m.type; } }
   function bg(msg) {
     // short cache for status/list_tools so rapid UI polls don't flood bridge
@@ -858,7 +858,7 @@
     });
     _bgInflight.set(k,p);
     // auto-evict coalesce after 120ms (so distinct quick calls don't wrongly share)
-    setTimeout(()=> _bgInflight.delete(k), 10); // TURBO 10ms (was 120)
+    setTimeout(()=> _bgInflight.delete(k), 5); // MAX 5ms — perfected
     // cache eviction for status already via TTL above
     return p;
   }
@@ -926,7 +926,7 @@
   // How long a fetched catalogue stays good enough to reuse without a round trip.
   // ULTRA: shorter TTL (8s vs 30s) so Studio MCP attach is seen ~4× faster,
   // but still coalesced via bg cache so repeated calls don't flood.
-  const TOOLS_TTL_MS = 8000;
+  const TOOLS_TTL_MS = 4000; // MAX 4s — fresher, still cached
 
   // Refresh the tool catalogue - but never pay for it twice in a row.
   //
@@ -1102,7 +1102,7 @@
     // Hard watchdog: even if the background worker never answers, the loop
     // gets a definitive result and continues.
     const hardCap = new Promise((res) =>
-      setTimeout(() => res({ ok: false, kind: "timeout", error: "no response from the extension worker" }), timeout + 30000));
+      setTimeout(() => res({ ok: false, kind: "timeout", error: "no response from the extension worker" }), timeout + 15000)); // MAX halved
     // Stop watcher: a blocking tool (e.g. wait_job_finished) would otherwise keep
     // the loop awaiting the bridge for up to minutes, leaving the input locked and
     // the Stop button stuck. When the user halts (A.stop), abandon the wait within
@@ -1516,7 +1516,7 @@
             decorate.toolBox(res.item, call.tool, "err", "stopped", true, "", category);
             break;
           }
-          const isProgress = !feedback.startsWith("ERROR") && /^(execute_luau|multi_edit|edit_luau|create_script|create_luau|place_model|insert_script)/.test(call.tool);
+          const isProgress = !feedback.startsWith("ERROR") && !feedbackIsError(feedback) && ZS.toolCategory(call.tool) !== "read" && call.tool !== "list_commands" && call.tool !== "list_tools";
           if (isProgress) { A.hadProgressSinceStart = true; A.lastToolProgressAt = Date.now(); }
           // If user requested deferred stop (Continuous/Loop), honor only after a successful progress tool
           if (A.pendingStop && isProgress) {

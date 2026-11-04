@@ -1,8 +1,8 @@
-# ZeroScript MAX × Roblox Studio Agent — All AI + Claude (v3.5.0 TURBO 10×)
+# ZeroScript MAX × Roblox Studio Agent — All AI + Claude (v4.2.0 EXT-IN-EXT 5ms ULTRA)
 
-> **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select **`zeroscript-extension-v2/`** in this repo. You should see card title **ZeroScript MAX × Roblox Studio Agent 3.5.0**.
+> **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select **`zeroscript-extension-v2/`** in this repo. You should see card title **ZeroScript MAX × Roblox Studio Agent 4.2.0**.
 
-This repo serves **ZeroScript MAX TURBO 10×** (15 AI sites, 10× Wall, slash /truth /code /prompt). `main` is MAX 3.5.0 — hard-refresh if you saw older.
+This repo serves **ZeroScript MAX TURBO 10×** (15 AI sites, 10× Wall, slash /truth /code /prompt). `main` is MAX 4.2.0 — hard-refresh if you saw older.
 
 - **Folder to load:** `zeroscript-extension-v2/` (ONLY folder — legacy removed)
 - **Supports:** chat.deepseek.com, chatgpt.com, gemini.google.com, **claude.ai**, kimi.ai, chat.z.ai, chat.qwen.ai, arena.ai, meta.ai, perplexity.ai, copilot.microsoft.com, grok.com, poe.com, chat.mistral.ai — **all 15 fully wired with GUI on chatbar**

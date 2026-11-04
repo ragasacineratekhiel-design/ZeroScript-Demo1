@@ -21,13 +21,13 @@ const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
 const EXT_VERSION = "4.2.0";
-const RECONNECT_MIN = 5;    // TURBO 10ms ultra (was 80)
-const RECONNECT_MAX = 400;     // TURBO 800 (was 2500) — faster cap
-const HEARTBEAT_MS = 400;    // TURBO 0.8s — super fast drop (was 2800)
-const STALE_SOCKET_MS = 1000;// TURBO 2s — fast half-open catch (was 5000)
-const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 1200;   // TURBO 2s tight (was 5000)
-const HEDGE_MS = 5;         // TURBO 10ms hedge — super fast (was 80) matches config TRANSPORT
+const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
+const RECONNECT_MAX = 300;     // MAX 300 cap — 2× faster than 4.1, still safe
+const HEARTBEAT_MS = 250;    // MAX 250ms — fastest drop, 1.6× faster
+const STALE_SOCKET_MS = 600;// MAX 600ms — instant half-open catch
+const REQUEST_TIMEOUT_DEFAULT = 90000;
+const HTTP_TIMEOUT = 800;   // MAX 800ms tight — fastest reliable
+const HEDGE_MS = 5;         // MAX 5ms hedge — perfected matches config
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -227,7 +227,7 @@ function scheduleReconnect(){
   clearTimeout(reconnectTimer);
   // jitter: +- 20%
   const jitter=reconnectDelay*0.2*(Math.random()*2-1);
-  reconnectTimer=setTimeout(connect, Math.max(10, reconnectDelay+jitter)); // TURBO 10 (was 50)
+  reconnectTimer=setTimeout(connect, Math.max(5, reconnectDelay+jitter)); // MAX 5ms (was 50)
   reconnectDelay=Math.min(reconnectDelay*1.5, RECONNECT_MAX);
 }
 function startHeartbeat(){
@@ -297,7 +297,7 @@ function waitForConnection(timeout=4000){
     const iv=setInterval(()=>{
       if(connected && ws && ws.readyState===WebSocket.OPEN){ clearInterval(iv); resolve(true); }
       else if(Date.now()-t0>timeout){ clearInterval(iv); resolve(false); }
-    }, 10); // TURBO 10ms poll (was 40) — super fast wake
+    }, 5); // MAX 5ms poll — perfected
   });
 }
 
@@ -495,7 +495,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       case "ping":
         // ultra-fast health ping
         if(connected) sendResponse({ok:true, transport:'ws'});
-        else { const r=await httpGet('/health',2000); sendResponse(r.ok? {ok:true, transport:'http'}:{ok:false}); }
+        else { const r=await httpGet('/health',1200); sendResponse(r.ok? {ok:true, transport:'http'}:{ok:false}); }
         break;
       default: sendResponse({ok:false, error:'unknown message'});
     }
@@ -506,12 +506,12 @@ chrome.runtime.onStartup.addListener(()=>{ fetchToken(); connect(); });
 chrome.runtime.onInstalled.addListener(()=>{ fetchToken(); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
-  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.05}); // TURBO 10ms-inspired 3s (was 15s)
+  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.02}); // MAX 1.2s keepalive — fastest MV3 wake
   chrome.alarms.onAlarm.addListener(()=>{ if(!connected && isLeader) connect(); });
 }catch{}
 // initial
 connect();
 // pre-warm HTTP
-httpGet('/api/status',3000).then(r=>{
+httpGet('/api/status',2000).then(r=>{
   if(r.ok){ mcpAlive=!!r.mcp_alive; if(Array.isArray(r.tools)) toolsCache=r.tools; if(Array.isArray(r.servers)) serversCache=r.servers; studioConnected=r.studio; httpHealthy=true; broadcastStatus(); }
 });

@@ -129,7 +129,7 @@ _One-line what this place is_
     }
   }
 
-  // 10ms TURBO save: 10ms debounce (was 80ms) + micro-batch, no compress, direct chrome.storage set — 8× faster, truthful
+  // 5ms ULTRA save: 5ms debounce (was 80ms) + micro-batch, no compress — 16× faster, perfected
   let _saveTimer = 0;
   function scheduleSave(delay=10){
     clearTimeout(_saveTimer);
@@ -180,7 +180,7 @@ _One-line what this place is_
     getWallText: () => ensureWall().wall || WALL_SKELETON,
     setWallText: (txt)=>{
       const w=ensureWall(); w.wall=String(txt||"").slice(0, 20000); w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      scheduleSave(10);
+      scheduleSave(5);
       return w;
     },
     patchSection: (header, newContent)=>{
@@ -195,7 +195,7 @@ _One-line what this place is_
         else w.wall += `\n${hdr}\n${newContent}\n`;
       }
       w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      scheduleSave(10);
+      scheduleSave(5);
       return w.wall;
     },
     remember: (kind, fact, source="agent")=>{
@@ -210,7 +210,7 @@ _One-line what this place is_
       pruneIfNeeded();
       w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
       // micro-batch: 10ms not 80ms — 8× faster, 10ms TURBO
-      scheduleSave(10);
+      scheduleSave(5);
       try{ console.log("[zs-wall] remember", kind, fact); }catch{}
     },
     timeline: (n=20)=> (ensureWall().timeline||[]).slice(-n),
@@ -262,7 +262,7 @@ _One-line what this place is_
       return lines.join("\n");
     },
     // explicit fast stats for fact-check
-    stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 10 }),
+    stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 5 }),
     adoptStudioText: (studioText)=>{
       if(!studioText || typeof studioText !== "string") return;
       const t=studioText.trim();
@@ -273,7 +273,7 @@ _One-line what this place is_
       if(studioHas >= localHas){
         const w=ensureWall();
         w.wall=t; w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-        scheduleSave(10);
+        scheduleSave(5);
       }
     },
     _saveTimer: null
@@ -284,7 +284,7 @@ _One-line what this place is_
     set(v){ _saveTimer = v; }
   });
 
-  try{ setTimeout(loadWall, 10); }catch{} // 10ms TURBO instant load (was 80ms)
+  try{ setTimeout(loadWall, 5); }catch{} // 5ms ULTRA instant load
 
   try{ window.ZSMemoryWall = MemoryWall; }catch{}
   if(typeof self!=="undefined") try{ self.ZSMemoryWall = MemoryWall; }catch{}

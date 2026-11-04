@@ -15,11 +15,11 @@ const ZSGenericProvider = (() => {
   // ULTRA timings — slightly tighter for instant response
   const timings = {
     GEN_IDLE_MS: 1600, // was 2000
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 35000, // was 40000
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 20000, // was 40000
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 6000, // was 7000
-    RESPONSE_TIMEOUT_MS: 300000,
+    STABLE_MS: 3000, // was 7000
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   const textWithout = (root, excludeSel) => {

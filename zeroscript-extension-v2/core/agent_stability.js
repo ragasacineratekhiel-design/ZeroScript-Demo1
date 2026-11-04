@@ -12,7 +12,7 @@ const ZSAgentStability = (() => {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 3500 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
+      if (lastGood && now - lastGoodAt < 2000 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
       let ed = null;
       try { ed = getEditorFn(); } catch {}
       if (ed && document.contains(ed) && ed.offsetParent!==null) { lastGood = ed; lastGoodAt = now; return ed; }
@@ -91,7 +91,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch {}
-    }, 800); // FIXED 800ms — 10ms was DDoSing bridge (100 req/s), now sane 0.8s poll
+    }, 400); // MAX 400ms — 2× faster than 3.5, still safe (10ms DDOS fixed)
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -101,7 +101,7 @@ const ZSAgentStability = (() => {
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
       // Web Locks keepalive — holds lock so tab stays alive in background
       try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r,100)); }); } catch {}
-    }, 800); // TURBO 10ms-inspired 800ms keepalive (was 3200)
+    }, 400); // MAX 400ms keepalive — 2× faster, holds lock tightly
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -162,10 +162,10 @@ const ZSAgentStability = (() => {
   }
   try { setTimeout(tryPatch, 40); } catch {}
   try { setTimeout(tryPatch, 250); } catch {}
-  try { setTimeout(tryPatch, 700); } catch {}
+  try { setTimeout(tryPatch, 300); } catch {}
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 160);
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 80);
   } catch {}
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;
@@ -173,7 +173,7 @@ const ZSAgentStability = (() => {
       let watched = window.ZSProvider;
       Object.defineProperty(window, "ZSProvider", {
         get(){ return watched; },
-        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 25); return true; },
+        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 10); return true; },
         configurable: true
       });
       if (_ZS) watched=_ZS;

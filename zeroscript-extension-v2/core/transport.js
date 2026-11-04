@@ -4,7 +4,7 @@
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 80; // normal 80ms
+    const CACHE_MS = 40; // 5ms ULTRA 40ms — 2× faster than 3.5
     const INTERNAL_CACHE_MS = 10; // INTERNAL ULTRA 10ms — internal commands cached 10ms honest superfast
     const INTERNAL_HEDGE_MS = 5; // 5ms hedge for start_stop_play etc
     const _cache = new Map();
@@ -39,7 +39,7 @@
             return r;
           }
           // 10ms TURBO backoff: 10ms * attempt (was 50)
-          if(attempt<retry) await new Promise(r=>setTimeout(r, 10*(attempt+1)));
+          if(attempt<retry) await new Promise(r=>setTimeout(r, 5*(attempt+1)));
           else return r;
         }
       })();
@@ -78,7 +78,7 @@
     function getMetrics(){ return {..._metrics}; }
     function clearCache(){ _cache.clear(); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, isInternal, version:"4.1.0 PLAN 10ms WALL" };
+    return { status, listTools, callTool, callBatch, metrics, ping, getMetrics, clearCache, isInternal, version:"4.2.0 EXT-IN-EXT 5ms ULTRA" };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

@@ -102,12 +102,12 @@
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  _zsApply(); setTimeout(_zsApply, 120); setTimeout(_zsApply, 400);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
   } catch {}
 } catch {}
 

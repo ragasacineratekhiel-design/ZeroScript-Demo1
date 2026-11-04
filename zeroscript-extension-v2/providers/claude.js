@@ -42,11 +42,11 @@ const ZSProvider = (() => {
   // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
   const timings = {
     GEN_IDLE_MS: 1100, // was 1200 ULTRA
-    REASON_IDLE_MS: 12000, // was 15000
+    REASON_IDLE_MS: 6000, // was 15000
     WARMUP_MS: 32000, // was 35000
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 7000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   function isUserItem(item){

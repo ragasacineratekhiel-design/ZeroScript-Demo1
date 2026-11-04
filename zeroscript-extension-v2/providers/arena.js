@@ -74,12 +74,12 @@ const ZSProvider = (() => {
   // Arena streams with a hard stop-button signal for the WHOLE generation, so
   // idle windows can be tight (mirrors Gemini, not DeepSeek's reasoning phase).
   const timings = {
-    GEN_IDLE_MS: 1500,
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 45000,
+    GEN_IDLE_MS: 800,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 25000,
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 9000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
@@ -155,7 +155,7 @@ const ZSProvider = (() => {
   // pending battle, but slowly enough never to trip the limiter.
   const THROTTLE_RE =
     /too many requests|trop de requ[êe]tes|rate.?limit|failed to (skip|continue|vote)|impossible/i;
-  const BATTLE_COOLDOWN_MS = 6000;
+  const BATTLE_COOLDOWN_MS = 3000;
   let _battleAt = 0, _battleClicks = 0, _throttleLogged = false;
   function actionThrottled() {
     for (const el of document.querySelectorAll(S.errorSurfaces)) {
@@ -905,12 +905,12 @@ const ZSProvider = (() => {
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  _zsApply(); setTimeout(_zsApply, 120); setTimeout(_zsApply, 400);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
   } catch {}
 } catch {}
 
