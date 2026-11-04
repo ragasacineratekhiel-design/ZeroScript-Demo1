@@ -180,7 +180,7 @@ const ZSProvider = (() => {
         _battleAt = Date.now();
         _battleClicks++;
         diag("arena.battle_pick_a", { n: _battleClicks, label: (b.textContent || "").trim().slice(0, 24) });
-        try { b.click(); } catch {}
+        try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.resolveBattle", _e); }
         return true;
       }
     }
@@ -476,7 +476,7 @@ const ZSProvider = (() => {
     let sent = false;
     for (let i = 0; i < 6 && !sent; i++) {
       if (sendReady()) {
-        try { sendButton().click(); } catch {}
+        try { sendButton().click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.sendReady", _e); }
       } else if (!isHardGenerating()) {
         const o = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
         editor.dispatchEvent(new KeyboardEvent("keydown", o));
@@ -497,11 +497,11 @@ const ZSProvider = (() => {
   function stopGeneration() {
     if (_stopPoll) { clearInterval(_stopPoll); _stopPoll = null; }
     const b = stopButton();
-    if (b) { try { b.click(); } catch {} return; }
+    if (b) { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.stopGeneration", _e); } return; }
     const t0 = Date.now();
     _stopPoll = setInterval(() => {
       const btn = stopButton();
-      if (btn) { try { btn.click(); } catch {} clearInterval(_stopPoll); _stopPoll = null; return; }
+      if (btn) { try { btn.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.stopGeneration", _e); } clearInterval(_stopPoll); _stopPoll = null; return; }
       // Hard cap so the timer never lingers (a fresh Stop click restarts it). We
       // do NOT gate on genActive() here: during the pre-stream "Generating…" gap
       // there's no stop button AND no grown text yet, so genActive() is false -
@@ -583,7 +583,7 @@ const ZSProvider = (() => {
   function pickDirectOption() {
     for (const o of document.querySelectorAll('[role="option"]')) {
       if (o.offsetParent === null) continue;
-      if (/^\s*direct/i.test(o.textContent || "")) { try { o.click(); } catch {} return true; }
+      if (/^\s*direct/i.test(o.textContent || "")) { try { o.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.pickDirectOption", _e); } return true; }
     }
     return false;
   }
@@ -597,10 +597,10 @@ const ZSProvider = (() => {
     if (!combo || /direct/i.test(combo.textContent || "")) return; // gone or already Direct
     // Open the dropdown only if it is closed - clicking an already-open combobox
     // would toggle it shut and there would be no option to pick.
-    if (combo.getAttribute("aria-expanded") !== "true") { try { combo.click(); } catch {} }
+    if (combo.getAttribute("aria-expanded") !== "true") { try { combo.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.restoreDirectOnce", _e); } }
     const ok = await waitFor(pickDirectOption, 2000);  // click the Direct option when it renders
     diag("arena.restore_direct", { ok, was: (combo.textContent || "").trim().slice(0, 24) });
-    if (!ok && combo.getAttribute("aria-expanded") === "true") { try { combo.click(); } catch {} } // reclose on failure
+    if (!ok && combo.getAttribute("aria-expanded") === "true") { try { combo.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.restoreDirectOnce", _e); } } // reclose on failure
   }
 
   // Visible mode guard for the ZeroScript bar (core renderBar reads this every
@@ -695,7 +695,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("arena.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -751,7 +751,7 @@ const ZSProvider = (() => {
     const inp = fileInputEl();
     if (!inp || !images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.attachImages", _e); } });
     if (!dt.items.length) return false;
     try {
       inp.files = dt.files;
@@ -768,8 +768,8 @@ const ZSProvider = (() => {
       if (!frame) return;
       // Each staged card carries a per-card `button[aria-label="Remove file"]`.
       frame.querySelectorAll('.flex.flex-wrap.gap-2 button[aria-label="Remove file"]')
-        .forEach((d) => { try { d.click(); } catch {} });
-    } catch {}
+        .forEach((d) => { try { d.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("arena.clearAttachments", _e); }
   }
 
   // /text/* = a fresh chat with no conversation id yet → "" (transient, never
@@ -883,7 +883,7 @@ const ZSProvider = (() => {
     // increases for every new reply - the core's watcher uses this to refuse
     // finalizing before this send's reply turn exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; try { restoreDirectOnce(); } catch {} },
+    init({ diag: d } = {}) { if (d) diag = d; try { restoreDirectOnce(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.findToolBlockSpot", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,
@@ -904,14 +904,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
 
 })();

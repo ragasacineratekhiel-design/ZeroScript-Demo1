@@ -10,7 +10,7 @@
   const BC_NAME = "zs-agent-hub";
 
   let _bc = null;
-  try { _bc = new BroadcastChannel(BC_NAME); } catch {}
+  try { _bc = new BroadcastChannel(BC_NAME); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub", _e); }
   const _cache = new Map();
   const _pending = new Map();
   let _listeners = [];
@@ -21,17 +21,17 @@
     const payload = { key:k, value, from: opts.from||"planner", t:Date.now(), ttl: opts.ttl|| 120000, v:VERSION };
     _cache.set(HUB_PREFIX+k, payload);
     // broadcast instant
-    try { if(_bc) _bc.postMessage({type:"hub_write", payload}); } catch {}
+    try { if(_bc) _bc.postMessage({type:"hub_write", payload}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.write", _e); }
     // persist via background (bridge temp)
     try {
       await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"agent_temp_write", key:k, value, from:payload.from, ttl:payload.ttl}, ()=>res()); }catch{ res(); }
         setTimeout(res, 37); // MAX 150
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.write", _e); }
     // also mirror to chrome.storage for fallback (10ms)
-    try { chrome.storage.local.set({[HUB_PREFIX+k]: payload}); } catch {}
-    for(const fn of _listeners) try{ fn(payload); }catch{}
+    try { chrome.storage.local.set({[HUB_PREFIX+k]: payload}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.write", _e); }
+    for(const fn of _listeners) try{ fn(payload); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.write", _e); }
     return payload;
   }
 
@@ -45,12 +45,12 @@
         setTimeout(()=>res(null), 50); // MAX 200
       });
       if(r && r.ok && r.payload) { _cache.set(HUB_PREFIX+k, r.payload); return r.payload.value; }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.read", _e); }
     // try chrome.storage
     try{
       const rr = await new Promise(res=>{ try{ chrome.storage.local.get(HUB_PREFIX+k, v=>res(v)); }catch{ res({}); } });
       if(rr && rr[HUB_PREFIX+k]) { _cache.set(HUB_PREFIX+k, rr[HUB_PREFIX+k]); return rr[HUB_PREFIX+k].value; }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.read", _e); }
     return null;
   }
 
@@ -58,7 +58,7 @@
     try{
       const r = await new Promise(res=>{ try{ chrome.runtime.sendMessage({type:"agent_temp_list"}, rr=>res(rr)); }catch{ res(null); } setTimeout(()=>res(null), 50); }); // MAX
       if(r && r.ok && Array.isArray(r.keys)) return r.keys;
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.listKeys", _e); }
     return [..._cache.keys()].map(k=>k.replace(HUB_PREFIX,""));
   }
 
@@ -73,8 +73,8 @@
       const e = { ...(entry || {}), t: (entry && entry.ts) || Date.now(), from: (entry && entry.from) || "agent" };
       _temp.push(e);
       if(_temp.length > TEMP_MAX) _temp = _temp.slice(-TEMP_MAX);
-      try{ const k = HUB_PREFIX + TEMP_KEY; chrome.storage.local.set({ [k]: _temp }); }catch{}
-      for(const fn of _listeners) try{ fn(e); }catch{}
+      try{ const k = HUB_PREFIX + TEMP_KEY; chrome.storage.local.set({ [k]: _temp }); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.pushTemp", _e); }
+      for(const fn of _listeners) try{ fn(e); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.pushTemp", _e); }
       return e;
     }catch{ return null; }
   }
@@ -86,7 +86,7 @@
       const k = HUB_PREFIX + TEMP_KEY;
       const rr = await new Promise(res => { try{ chrome.storage.local.get(k, v => res(v || {})); }catch{ res({}); } });
       if(Array.isArray(rr[k])) _temp = rr[k].slice(-TEMP_MAX);
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.loadTemp", _e); }
     return _temp;
   }
 
@@ -102,21 +102,21 @@
       const m=e.data;
       if(m && m.type==="hub_write" && m.payload){
         _cache.set(HUB_PREFIX+m.payload.key, m.payload);
-        for(const fn of _listeners) try{ fn(m.payload); }catch{}
+        for(const fn of _listeners) try{ fn(m.payload); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
       }
     };
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
   try{
     chrome.storage.onChanged.addListener((ch,area)=>{
       if(area!=="local") return;
       for(const k in ch){
         if(k.startsWith(HUB_PREFIX) && ch[k].newValue){
           _cache.set(k, ch[k].newValue);
-          for(const fn of _listeners) try{ fn(ch[k].newValue); }catch{}
+          for(const fn of _listeners) try{ fn(ch[k].newValue); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
         }
       }
     });
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
 
   // communicator servers turbo: expose fastest path for all servers
   const COMMUNICATOR = {
@@ -137,7 +137,7 @@
     COMMUNICATOR, HUB_PREFIX,
   };
 
-  try{ loadTemp(); }catch{}
-  try{ window.ZSAgentHub = API; window.__zsAgentHub = API; }catch{}
-  if(typeof self!=="undefined") try{ self.ZSAgentHub = API; }catch{}
+  try{ loadTemp(); }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
+  try{ window.ZSAgentHub = API; window.__zsAgentHub = API; }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
+  if(typeof self!=="undefined") try{ self.ZSAgentHub = API; }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
 })();

@@ -296,11 +296,11 @@ const ZSProvider = (() => {
       const cont = lockContainer();
       if (cont && !_phObs) {
         _phObs = new MutationObserver(applyLockedPlaceholder);
-        try { _phObs.observe(cont, { childList: true, subtree: true }); } catch {}
+        try { _phObs.observe(cont, { childList: true, subtree: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.setInputLock", _e); }
       }
       if (!_phTimer) _phTimer = setInterval(applyLockedPlaceholder, 100);
     } else {
-      if (_phObs) { try { _phObs.disconnect(); } catch {} _phObs = null; }
+      if (_phObs) { try { _phObs.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.setInputLock", _e); } _phObs = null; }
       if (_phTimer) { clearInterval(_phTimer); _phTimer = null; }
       if (ed) { ed.setAttribute("contenteditable", "true"); ed.removeAttribute("data-zs-locked"); }
       // Restore the site's own placeholder text on whatever node is current now.
@@ -425,7 +425,7 @@ const ZSProvider = (() => {
       // submitAndGetBase RETRIES this function; only attach if nothing is pending
       // yet, else each retry uploads ANOTHER duplicate copy.
       if (images && images.length && !hasPendingAttachment()) {
-        try { await attachImages(images); } catch {}
+        try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.typeAndSend", _e); }
       }
       // Wait for the send control to enable (proof Lexical registered the text).
       await waitFor(() => !!sendButton(), 1500);
@@ -442,7 +442,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.stopGeneration", _e); }
   }
 
   // Kimi's own agentic mode (see S.currentModelName above) makes the model favor
@@ -574,7 +574,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -614,7 +614,7 @@ const ZSProvider = (() => {
   async function attachImages(images) {
     if (!images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.attachImages", _e); } });
     if (!dt.items.length) return false;
     // Kimi's Lexical composer IGNORES a synthetic file-paste (validated live: the
     // paste event produced no preview at all). Uploads go exclusively through the
@@ -624,7 +624,7 @@ const ZSProvider = (() => {
     let opened = null; // the "+" trigger, set only if WE had to open the menu
     if (!fi) {
       opened = document.querySelector(".toolkit-trigger-btn");
-      if (opened) { try { opened.click(); } catch {} } // opens menu → mounts the input
+      if (opened) { try { opened.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.attachImages", _e); } } // opens menu → mounts the input
       await waitFor(() => !!fileInput(), 2500);
       fi = fileInput();
     }
@@ -636,7 +636,7 @@ const ZSProvider = (() => {
     // Escape does NOT dismiss it (validated live). Toggle the trigger to close it
     // so it doesn't sit open over the composer. The hidden input persists once
     // mounted, so later captures reuse it without reopening the menu.
-    if (opened) { try { opened.click(); } catch {} }
+    if (opened) { try { opened.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.attachImages", _e); } }
     // The thumbnail mounts as `.image-thumbnail … loading` and flips to `… success`
     // once the upload to Kimi's backend completes (validated live: ~5.8s for a
     // 10MB image). Sending while still `loading` silently drops the attachment, so
@@ -655,8 +655,8 @@ const ZSProvider = (() => {
       // Kimi's per-thumbnail remove control (revealed on hover) is
       // `.image-delete-container`; click every one to drop pending uploads.
       document.querySelectorAll(".image-delete-container")
-        .forEach((d) => { try { d.click(); } catch {} });
-    } catch {}
+        .forEach((d) => { try { d.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.clearAttachments", _e); }
   }
 
   // /chat/<id> = a real conversation. "/" = a fresh chat with no id yet → ""
@@ -816,14 +816,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
 
 })();

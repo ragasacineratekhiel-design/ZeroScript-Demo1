@@ -135,7 +135,7 @@ const ZSParse = (() => {
         try {
           const call = normalizeCall(parseLoose(text.slice(start, end + 1)));
           if (call) return call;
-        } catch {}
+        } catch (_e) { globalThis.ZSSafe?.seen?.("parser.extractToolAnywhere", _e); }
         pos = s + 1;
       }
     }
@@ -243,7 +243,7 @@ const ZSParse = (() => {
       try {
         const call = normalizeCall(parseLoose(body + stack.reverse().join("")));
         if (call) return cleanLuaCall(call);
-      } catch {}
+      } catch (_e) { globalThis.ZSSafe?.seen?.("parser.salvageCutOff", _e); }
       return null;
     }
     return null;

@@ -35,6 +35,21 @@ jobs:
       - name: Verification suite
         run: npm run verify
 
+      - name: No empty catch blocks (independent of the verifier)
+        run: |
+          # Deliberately duplicated with tools/verify.js [4d]: this is the one
+          # property that silently regresses without anyone noticing.
+          # exclude comments: prose that mentions `catch {}` is not a catch block
+          n=$(grep -rEn 'catch[[:space:]]*(\([^)]*\))?[[:space:]]*\{[[:space:]]*\}' \
+                --include='*.js' zeroscript-extension-v2 \
+                | grep -v 'core/safe.js' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)' | wc -l)
+          if [ "$n" -ne 0 ]; then
+            echo "::error::$n empty catch block(s) — use globalThis.ZSSafe?.seen?.(site, e)"
+            grep -rEn 'catch[[:space:]]*(\([^)]*\))?[[:space:]]*\{[[:space:]]*\}' --include='*.js' zeroscript-extension-v2 | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)' | head -10
+            exit 1
+          fi
+          echo "0 empty catch blocks"
+
       - name: No secrets or logs committed
         run: |
           if git ls-files | grep -E '(^|/)\.zs_token$|(^|/)logs/.*\.log$'; then

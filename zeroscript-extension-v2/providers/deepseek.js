@@ -691,7 +691,7 @@ const ZSProvider = (() => {
     // site's binding between the pending upload and the message being sent).
     const hasImages = !!(images && images.length);
     if (hasImages) {
-      try { await attachImages(images); } catch {}
+      try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.typeAndSend", _e); }
       // DeepSeek REFUSES the send until the attachment finishes uploading, and its
       // upload spinner (.ds-loading) is NOT a reliable "done" signal - it lingers on
       // the thumbnail and isBusyNow() counts it as "busy", which is what wedged the
@@ -704,7 +704,7 @@ const ZSProvider = (() => {
       while (Date.now() - t0 < 25000) {
         const btn = document.querySelector(S.sendBtn);
         if (btn && !isStopBtn(btn) && btn.getAttribute("aria-disabled") !== "true") {
-          try { btn.click(); } catch {}
+          try { btn.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.typeAndSend", _e); }
         }
         // Editor cleared = the message left; stop square up = generation started.
         if (await waitFor(() => editorText().trim() === "" || isHardGenerating(), 1200)) return;
@@ -725,7 +725,7 @@ const ZSProvider = (() => {
   // we never accidentally re-trigger a send.
   function stopGeneration() {
     const b = document.querySelector(S.stopBtn);
-    if (isStopBtn(b)) try { b.click(); } catch {}
+    if (isStopBtn(b)) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.stopGeneration", _e); }
   }
 
   // ── Error / limit detection (site chrome only, never model output) ───────
@@ -737,7 +737,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -781,8 +781,8 @@ const ZSProvider = (() => {
     try {
       document.querySelectorAll(`${S.attachArea} [class*='delete'], ${S.attachArea} [class*='close'], ${S.attachArea} [class*='remove']`)
         .forEach((d) => ["mouseover", "mousedown", "mouseup", "click"]
-          .forEach((t) => { try { d.dispatchEvent(new MouseEvent(t, { bubbles: true })); } catch {} }));
-    } catch {}
+          .forEach((t) => { try { d.dispatchEvent(new MouseEvent(t, { bubbles: true })); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.clearAttachments", _e); } }));
+    } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.clearAttachments", _e); }
   }
 
   async function attachImages(images) {
@@ -795,7 +795,7 @@ const ZSProvider = (() => {
     if (attachThumbs().length > 0) return true;
     const want = images.length;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.attachImages", _e); } });
     if (!dt.items.length) return false;
     editor.focus();
     // Use the hidden <input type=file> as the PRIMARY path: it triggers DeepSeek's
@@ -809,7 +809,7 @@ const ZSProvider = (() => {
       try {
         fileInput.files = dt.files;
         fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-      } catch {}
+      } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.attachImages", _e); }
     } else {
       editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     }
@@ -983,7 +983,7 @@ const ZSProvider = (() => {
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsDsVer).
       // BUMP DS_VER on meaningful deepseek.js changes worth verifying live.
-      try { document.documentElement.setAttribute("data-zs-ds-ver", "2026-09_unified-model"); } catch {}
+      try { document.documentElement.setAttribute("data-zs-ds-ver", "2026-09_unified-model"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
@@ -1005,14 +1005,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
 
 })();

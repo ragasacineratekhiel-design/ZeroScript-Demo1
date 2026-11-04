@@ -235,7 +235,7 @@ const ZSProvider = (() => {
       _rawSwitched.add(wrap);
       btn.click();
       diag("meta.jsonviewer.raw", { len: txt.length });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("meta.ensureRawView", _e); }
   }
   // Strip the JSON-viewer widget's chrome so only the JSON object is left:
   // remove the tree-expander triangles (▶ ▼ ► ◀ ▲ ▾ …) that Meta interleaves
@@ -502,7 +502,7 @@ const ZSProvider = (() => {
     if (!inp || !images || !images.length) return false;
     tagImages(images);
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.attachImages", _e); } });
     if (!dt.items.length) return false;
     try {
       inp.files = dt.files;
@@ -514,8 +514,8 @@ const ZSProvider = (() => {
   }
   function clearAttachments() {
     try {
-      document.querySelectorAll('button[aria-label="Remove image"]').forEach((b) => { try { b.click(); } catch {} });
-    } catch {}
+      document.querySelectorAll('button[aria-label="Remove image"]').forEach((b) => { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("meta.clearAttachments", _e); }
     _attachedImages = null;
   }
 
@@ -556,7 +556,7 @@ const ZSProvider = (() => {
     let sent = false;
     for (let i = 0; i < 6 && !sent; i++) {
       if (sendReady()) {
-        try { sendButton().click(); } catch {}
+        try { sendButton().click(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.sendReady", _e); }
       } else if (!isHardGenerating()) {
         // Fallback: Enter on the on-screen editor (the send button click is the
         // primary path; this only covers a swallowed click).
@@ -573,7 +573,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) { try { b.click(); } catch {} }
+    if (b) { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.stopGeneration", _e); } }
   }
 
   // ── Response mode (Instantané vs Réflexion) ─────────────────────────────────
@@ -597,11 +597,11 @@ const ZSProvider = (() => {
     try {
       const fire = (el, t) =>
         el.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", button: 0 }));
-      fire(b, "pointerdown"); fire(b, "pointerup"); try { b.click(); } catch {}
+      fire(b, "pointerdown"); fire(b, "pointerup"); try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.fire", _e); }
       const opened = await waitFor(() => !!document.querySelector(S.modeOptHard), 2000);
       if (opened) {
         const opt = document.querySelector(S.modeOptHard);
-        try { opt.click(); } catch {}
+        try { opt.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.fire", _e); }
         await waitFor(isReflexion, 2000);
       }
       // Close the menu if it is still open (Radix closes on select, but be safe).
@@ -646,7 +646,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("meta.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -790,14 +790,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
 
 })();

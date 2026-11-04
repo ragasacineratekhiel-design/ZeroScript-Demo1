@@ -252,7 +252,7 @@ const ZSProvider = (() => {
     const stop = stopButton();
     if (stop && !genActive()) {
       diag("send.unwedge", {});
-      try { stop.click(); } catch {}
+      try { stop.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.unwedgeStop", _e); }
       return true;
     }
     return false;
@@ -464,7 +464,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.stopGeneration", _e); }
   }
 
   // No site modes to enforce on Gemini (model picker is left to the user).
@@ -483,7 +483,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -504,7 +504,7 @@ const ZSProvider = (() => {
     if (!ed) { diag("attach.noEditor"); return false; }
     if (!images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.attachImages", _e); } });
     if (!dt.items.length) { diag("attach.noDtItems"); return false; }
     diag("attach.dispatchPaste", { items: dt.items.length });
     ed.focus();
@@ -546,8 +546,8 @@ const ZSProvider = (() => {
       const box = document.querySelector(S.inputArea);
       if (!box) return;
       box.querySelectorAll("[aria-label*='upprimer'], [aria-label*='emove'], [class*='delete'], [class*='remove']")
-        .forEach((d) => { try { d.click(); } catch {} });
-    } catch {}
+        .forEach((d) => { try { d.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.clearAttachments", _e); }
   }
 
 
@@ -723,14 +723,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
 
 })();

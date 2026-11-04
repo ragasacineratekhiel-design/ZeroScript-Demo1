@@ -82,13 +82,13 @@
     return n;
   }
 
-  document.addEventListener("zs-cm-sync", () => { try { syncAll(); } catch {} }, true);
+  document.addEventListener("zs-cm-sync", () => { try { syncAll(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.syncAll", _e); } }, true);
 
   // A streaming block changes without anyone asking, and the isolated world only
   // syncs when it reads. That is enough for correctness, but a cheap idle sync
   // keeps the attribute warm so the very first read of a finished block is
   // already current.
-  const tick = () => { try { syncAll(); } catch {} };
+  const tick = () => { try { syncAll(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.tick", _e); } };
   setInterval(tick, 250);
   tick();
 
@@ -96,14 +96,14 @@
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); }
 
 })();

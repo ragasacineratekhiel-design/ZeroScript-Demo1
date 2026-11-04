@@ -113,7 +113,7 @@ const ZSGenericProvider = (() => {
     return null;
   }
 
-  function setInputLock(on){ const ed=getEditor(); if(!ed) return; try{ ed.setAttribute("contenteditable", on?"false":"true"); }catch{} }
+  function setInputLock(on){ const ed=getEditor(); if(!ed) return; try{ ed.setAttribute("contenteditable", on?"false":"true"); }catch (_e) { globalThis.ZSSafe?.seen?.("generic.setInputLock", _e); } }
 
   function sendButton(){
     const sels=["fieldset button[type='submit']", "button[aria-label*='Send' i]", "button[data-testid*='send' i]", "button[type='submit']", "form button"];
@@ -160,13 +160,13 @@ const ZSGenericProvider = (() => {
     const ed=getEditor(); if(!ed) throw new Error("Input not found");
     text=truncateForSend(text);
     await setEditorText(ed, text);
-    if(images && images.length){ try{ const dt=new DataTransfer(); images.forEach((img,i)=>{ try{ const bin=atob(img.data); const arr=new Uint8Array(bin.length); for(let j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j); const f=new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}); dt.items.add(f);}catch{}}); ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true})); }catch{} }
+    if(images && images.length){ try{ const dt=new DataTransfer(); images.forEach((img,i)=>{ try{ const bin=atob(img.data); const arr=new Uint8Array(bin.length); for(let j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j); const f=new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}); dt.items.add(f);}catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); }}); ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true})); }catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); } }
     await sleep(62);
     const btn=sendButton();
-    if(btn){ try{ btn.click(); return; }catch{} }
+    if(btn){ try{ btn.click(); return; }catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); } }
     const o={key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}; ed.dispatchEvent(new KeyboardEvent("keydown",o));
   }
-  function stopGeneration(){ const b=stopButton(); if(b) try{b.click();}catch{} }
+  function stopGeneration(){ const b=stopButton(); if(b) try{b.click();}catch (_e) { globalThis.ZSSafe?.seen?.("generic.stopGeneration", _e); } }
   const enforceComposer=()=>({ready:true});
   const ensureComposerReady=async(reason)=>{ diag("mode_ready",{reason,provider:_id}); return{ready:!!getEditor()}; };
   // Shown in the bar before a session starts when the site cannot be driven.

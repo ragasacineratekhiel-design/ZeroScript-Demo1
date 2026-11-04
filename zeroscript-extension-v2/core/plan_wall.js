@@ -40,16 +40,16 @@
       if(r[PLAN_KEY] && PLANS[r[PLAN_KEY]]) currentPlan = r[PLAN_KEY];
       if(r[PLAN_ROLES_KEY] && typeof r[PLAN_ROLES_KEY]==="object") currentRoles = r[PLAN_ROLES_KEY];
       if(r[PLAN_WALL_KEY] && Array.isArray(r[PLAN_WALL_KEY])) { wallLog = r[PLAN_WALL_KEY].slice(-MAX_LOG); if(wallLog.length) _lastSeenId = wallLog[wallLog.length-1].id; }
-      try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch{}
-    }); }catch{}
+      try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._load", _e); }
+    }); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._load", _e); }
   }
   _load();
 
   function _savePlan(){
-    try{ chrome.storage.local.set({[PLAN_KEY]: currentPlan, [PLAN_ROLES_KEY]: currentRoles}); }catch{}
-    try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch{}
+    try{ chrome.storage.local.set({[PLAN_KEY]: currentPlan, [PLAN_ROLES_KEY]: currentRoles}); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._savePlan", _e); }
+    try{ window.__zsPlan = currentPlan; window.__zsPlanRoles = currentRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._savePlan", _e); }
     // notify prompt_enhancer + main
-    try{ chrome.storage.onChanged && null; }catch{}
+    try{ chrome.storage.onChanged && null; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._savePlan", _e); }
   }
 
   function setPlan(planId, roles){
@@ -75,11 +75,11 @@
     wallLog.push(envelope);
     if(wallLog.length > MAX_LOG) wallLog.shift();
     // instant via BroadcastChannel
-    try{ if(_bc) _bc.postMessage(envelope); }catch{}
+    try{ if(_bc) _bc.postMessage(envelope); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.send", _e); }
     // persist at 10ms debounce
     _schedulePersist();
     // local listeners 10ms
-    for(const fn of _listeners) try{ fn(envelope); }catch{}
+    for(const fn of _listeners) try{ fn(envelope); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.send", _e); }
     return envelope;
   }
   let _persistDebounce = null;
@@ -87,7 +87,7 @@
     if(_persistDebounce) return;
     _persistDebounce = setTimeout(()=>{
       _persistDebounce = null;
-      try{ chrome.storage.local.set({[PLAN_WALL_KEY]: wallLog.slice(-MAX_LOG)}); }catch{}
+      try{ chrome.storage.local.set({[PLAN_WALL_KEY]: wallLog.slice(-MAX_LOG)}); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._schedulePersist", _e); }
     }, 5); // honest 10ms
   }
 
@@ -97,7 +97,7 @@
     return ()=>{ const i=_listeners.indexOf(fn); if(i!==-1) _listeners.splice(i,1); };
   }
   function getWallLog(){ return wallLog.slice(); }
-  function clearWall(){ wallLog=[]; try{ chrome.storage.local.set({[PLAN_WALL_KEY]: []}); }catch{} }
+  function clearWall(){ wallLog=[]; try{ chrome.storage.local.set({[PLAN_WALL_KEY]: []}); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.clearWall", _e); } }
 
   // ── BroadcastChannel setup 10ms poll fallback ──
   try{
@@ -110,10 +110,10 @@
       wallLog.push(msg);
       if(wallLog.length > MAX_LOG) wallLog.shift();
       _lastSeenId = msg.id;
-      for(const fn of _listeners) try{ fn(msg); }catch{}
+      for(const fn of _listeners) try{ fn(msg); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.clearWall", _e); }
       _rebroadcastToRuntime(msg);
     };
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.clearWall", _e); }
 
   // ── HONEST FIX (audit #3) — the missing link ──────────────────────────────
   // BroadcastChannel delivery only reaches code that listens on the SAME BC.
@@ -130,7 +130,7 @@
         task: { from: env.from, to: env.to, code: pl.code, text: pl.text, type: pl.type, role: pl.role },
         plan: env.plan,
       }, () => { void chrome.runtime.lastError; });
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._rebroadcastToRuntime", _e); }
   }
   // Public: send a task straight to another tab's executor (deterministic path,
   // does not rely on BC listeners existing on the far side).
@@ -153,7 +153,7 @@
       chrome.storage.local.get([PLAN_WALL_KEY, PLAN_KEY, PLAN_ROLES_KEY], r=>{
         if(r[PLAN_KEY] && PLANS[r[PLAN_KEY]] && r[PLAN_KEY]!==currentPlan){
           currentPlan = r[PLAN_KEY];
-          try{ window.__zsPlan = currentPlan; }catch{}
+          try{ window.__zsPlan = currentPlan; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._poll", _e); }
         }
         if(r[PLAN_ROLES_KEY]) currentRoles = r[PLAN_ROLES_KEY];
         if(Array.isArray(r[PLAN_WALL_KEY])){
@@ -166,13 +166,13 @@
                 wallLog.push(m);
                 if(wallLog.length>MAX_LOG) wallLog.shift();
                 _lastSeenId = m.id;
-                for(const fn of _listeners) try{ fn(m); }catch{}
+                for(const fn of _listeners) try{ fn(m); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._poll", _e); }
               }
             }
           }
         }
       });
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._poll", _e); }
   }
   // last-resort safety net only — NOT the delivery path (see honest note above)
   const SAFETY_POLL_MS = 5000;
@@ -186,7 +186,7 @@
       _stopSafetyPoll();
       if(changes[PLAN_KEY] && changes[PLAN_KEY].newValue) {
         currentPlan = changes[PLAN_KEY].newValue;
-        try{ window.__zsPlan = currentPlan; }catch{}
+        try{ window.__zsPlan = currentPlan; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._stopSafetyPoll", _e); }
       }
       if(changes[PLAN_ROLES_KEY] && changes[PLAN_ROLES_KEY].newValue) currentRoles = changes[PLAN_ROLES_KEY].newValue;
       if(changes[PLAN_WALL_KEY] && Array.isArray(changes[PLAN_WALL_KEY].newValue)){
@@ -197,12 +197,12 @@
             wallLog.push(m);
             if(wallLog.length>MAX_LOG) wallLog.shift();
             _lastSeenId = m.id;
-            for(const fn of _listeners) try{ fn(m); }catch{}
+            for(const fn of _listeners) try{ fn(m); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._stopSafetyPoll", _e); }
           }
         }
       }
     });
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall._stopSafetyPoll", _e); }
 
   // ── Connection & magic word — BRUTALLY HONEST per-role with AI name + switched variant ──
   // User asked: planner is im connected to [ai name] and im the planner heres your listed commands
@@ -240,7 +240,7 @@
       // fallback: use first role
       const firstRole = (PLANS[currentPlan]?.roles||[])[0];
       if(firstRole) return magicForRole(firstRole, thisProvider);
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.firstRole", _e); }
     return MAGIC_CONNECTED;
   }
   let lastTabInfo = null; // {total, byProvider, arena}
@@ -254,7 +254,7 @@
         setTimeout(()=>res(null), 75); // MAX
       });
       if(info && typeof info.total==="number"){ lastTabInfo=info; lastCheckAt=Date.now(); return info; }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.fetchTabInfo", _e); }
     // fallback: we are at least 1 (self)
     return {total:1, arena:0, byProvider:{}, fallback:true};
   }
@@ -300,7 +300,7 @@
     const magic = st.magic;
     send("__system","__all",{type:"agent_start", plan:currentPlan, magic, external:st.external, st, t:Date.now()}, "start");
     // also ask background to wake other tabs
-    try{ chrome.runtime.sendMessage({type:"wake_provider_tabs", plan:currentPlan}); }catch{}
+    try{ chrome.runtime.sendMessage({type:"wake_provider_tabs", plan:currentPlan}); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.broadcastStartAll", _e); }
     return st;
   }
   function getMagicForPrompt(){
@@ -339,11 +339,11 @@
           if(payload && payload.type==="plan_change") window.ZSAgentHub.write("zsPlanState", {plan: currentPlan, roles: currentRoles, t: Date.now()}, 120000);
           if(payload && payload.type==="agent_start") window.ZSAgentHub.write("zsPlanStart", env, 120000);
         }
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
       return env;
     }
     // replace global send reference for external callers via API
-    try{ API.send = sendWithHub; }catch{}
+    try{ API.send = sendWithHub; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
     // also keep internal send for poll, but expose wrapped
     // listen to hub writes for plan wall messages (in case BC/storage missed)
     setTimeout(()=>{
@@ -357,14 +357,14 @@
               wallLog.push(msg);
               if(wallLog.length>MAX_LOG) wallLog.shift();
               _lastSeenId = msg.id;
-              for(const fn of _listeners) try{ fn(msg); }catch{}
+              for(const fn of _listeners) try{ fn(msg); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
             }
           });
         }
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
     }, 37); // MAX 150ms — 2x faster
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
 
-  try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}
-  if(typeof self!=="undefined") try{ self.ZSPlanWall = API; }catch{}
+  try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
+  if(typeof self!=="undefined") try{ self.ZSPlanWall = API; }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.sendWithHub", _e); }
 })();

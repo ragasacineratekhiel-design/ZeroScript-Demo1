@@ -320,8 +320,8 @@
     // explicit capability statement, so nothing downstream can over-claim
     capabilities: { luau: "static-only", js: "parse-only", runtimeExecution: false },
   };
-  try { if (typeof window !== "undefined") window.ZSSandbox = ZSSandbox; } catch {}
-  if (typeof self !== "undefined") try { self.ZSSandbox = ZSSandbox; } catch {}
-  try { if (typeof globalThis !== "undefined") globalThis.ZSSandbox = ZSSandbox; } catch {}
+  try { if (typeof window !== "undefined") window.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }
+  if (typeof self !== "undefined") try { self.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }
+  try { if (typeof globalThis !== "undefined") globalThis.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }
   if (typeof module !== "undefined" && module.exports) module.exports = ZSSandbox;
 })();

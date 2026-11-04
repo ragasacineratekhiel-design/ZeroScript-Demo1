@@ -19,6 +19,6 @@ const ZSProvider = (() => {
   P.version = "4.3.0";
   // Re-apply the stability patch as the composer mounts (the alias files are
   // loaded before the site has finished painting its first frame).
-  try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch{} }; _a(); setTimeout(_a, 50); setTimeout(_a, 300); }catch{}
+  try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch (_e) { globalThis.ZSSafe?.seen?.("copilot._a", _e); } }; _a(); setTimeout(_a, 50); setTimeout(_a, 300); }catch (_e) { globalThis.ZSSafe?.seen?.("copilot._a", _e); }
   return P;
 })();

@@ -35,6 +35,7 @@ and types the result back so the model can continue.
 ```
 manifest.json             MV3 — 16 content-script blocks, 20 hosts, 27 host_permissions
 core/config.js            identity, plans, system prompt, feedback, tool categories
+core/safe.js              safe-error core: counts swallowed failures (35 assertions)
 core/parser.js            command extraction + JSON salvage (37 assertions)
 core/sandbox.js           Luau tokenizer + block balance (36 assertions)
 core/memory_wall.js       persistent project memory
@@ -54,12 +55,36 @@ overlay.css               in-page UI styles
 window.__zsDiag            // last 300 decisions of the loop
 window.__zsMemoryWall.stats()
 window.__zsTransportStats()
+window.ZSSafe.stats()      // swallowed-error counts per call site
 ```
+
+The popup also shows a warning line ("⚠ N errors recorded") whenever something was caught
+and recorded; clicking it copies a full JSON dump for a bug report.
+
+### Errors are not silently swallowed any more
+
+There were 392 empty `catch {}` blocks in 4.3.0. They are all instrumented through `core/safe.js`
+with three different semantics, because "caught" and "ignored" are not the same thing:
+
+| API | Use | Behaviour |
+|---|---|---|
+| `expected(site, fn)` | probes that legitimately fail (element not there yet) | silent, counted; escalates **once** at 25 consecutive failures, then at 50/100/200… |
+| `seen(site, e)` | the drop-in for an old empty `catch` | counted, never logged, never rethrown |
+| `wrap` / `wrapAsync` | should work; user must know | recorded as a fault and surfaced |
+| `guard(site, fn, fallback)` | probe with a typed default | returns the fallback, counts |
+| `retry(site, fn, {tries})` | bridge / messaging (worker asleep is normal) | jittered backoff; only the final failure is reported |
+
+Every call site is written `globalThis.ZSSafe?.seen?.(...)` — optional-chained so a missing
+module cannot turn 392 silent catches into 392 exceptions. `npm run verify` boots the whole
+extension **with `core/safe.js` deleted** to prove that, and fails if an empty catch or a bare
+`ZSSafe.x()` ever reappears.
 
 ## Tests
 
 From the repo root: `npm install && npm run verify` — parse checks, manifest integrity,
 content-script ordering, AST scope analysis (the 4.2.0 ReferenceError class, with a self-test),
-cross-module API contract, version agreement, four assertion suites, and a stubbed-browser boot test.
+cross-module API contract, version agreement, silent-failure hygiene (no empty catches, no unsafe
+`ZSSafe` calls, load order), six assertion suites (154 assertions), and a stubbed-browser boot of
+all 14 site blocks — including a boot with `core/safe.js` removed.
 
 GPL-3.0-or-later — see `../LICENSE`.

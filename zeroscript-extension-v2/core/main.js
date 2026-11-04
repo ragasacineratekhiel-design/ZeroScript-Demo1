@@ -30,19 +30,24 @@
   const _sessionSubs = [];
   function onSessionChange(fn){ if(typeof fn === "function") _sessionSubs.push(fn); }
   function emitSession(){
-    for(const fn of _sessionSubs){ try{ fn(SESSION); }catch{} }
+    for(const fn of _sessionSubs){ try{ fn(SESSION); }catch (_e) { globalThis.ZSSafe?.seen?.("main.emitSession", _e); } }
   }
   function setExecModeState(v){
     SESSION.exec = EXEC_MODES.includes(v) ? v : "single";
     mirrorSession(); emitSession();
-    try{ chrome.storage.local.set({ zsExecMode: SESSION.exec }); }catch{}
+    // A mode that does not persist silently reverts on the next page load, so
+    // this is a real fault, not a probe: wrap() records it and surfaces it.
+    globalThis.ZSSafe?.wrap?.("main.setExecModeState", () => chrome.storage.local.set({ zsExecMode: SESSION.exec }), () => {
+      // in-memory state is still correct for THIS page; only durability is lost
+      globalThis.ZSSafe?.record?.("main.setExecModeState", "exec mode not persisted", "warn");
+    });
     return SESSION.exec;
   }
   function setPlanState(plan, roles){
     if(plan) SESSION.plan = plan;
     if(roles && typeof roles === "object") SESSION.roles = roles;
     mirrorSession(); emitSession();
-    try{ chrome.storage.local.set({ zsPlan: SESSION.plan, zsPlanRoles: SESSION.roles }); }catch{}
+    globalThis.ZSSafe?.wrap?.("main.setPlanState", () => chrome.storage.local.set({ zsPlan: SESSION.plan, zsPlanRoles: SESSION.roles }));
     return { plan: SESSION.plan, roles: SESSION.roles };
   }
   const EXEC_MODES = ["single", "continuous", "loop"];
@@ -53,7 +58,7 @@
       window.__zsExecMode = SESSION.exec;
       window.__zsPlan = SESSION.plan;
       window.__zsPlanRoles = SESSION.roles;
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.mirrorSession", _e); }
   }
   function loadSessionState(){
     try{
@@ -65,7 +70,7 @@
         }
         mirrorSession(); emitSession();
       });
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.loadSessionState", _e); }
     try{
       chrome.storage.onChanged.addListener((ch, area) => {
         if(area !== "local" || !ch) return;
@@ -74,7 +79,7 @@
         if(ch.zsPlanRoles) SESSION.roles = ch.zsPlanRoles.newValue || {};
         mirrorSession(); emitSession();
       });
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.loadSessionState", _e); }
   }
   loadSessionState();
 
@@ -106,13 +111,13 @@
                 data: data || null, snap };
     _diag.push(e);
     if (_diag.length > ZS_DIAG_MAX) _diag.shift();
-    try { console.log("[zs-diag]", e.iso, event, JSON.stringify({ ...data, ...snap })); } catch {}
+    try { console.log("[zs-diag]", e.iso, event, JSON.stringify({ ...data, ...snap })); } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
     try {
       let n = document.getElementById("zs-diag-log");
       if (!n) { n = document.createElement("script"); n.type = "application/json"; n.id = "zs-diag-log"; (document.body || document.documentElement).appendChild(n); }
       n.textContent = JSON.stringify(_diag);
-    } catch {}
-    try { window.__zsDiag = _diag; } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
+    try { window.__zsDiag = _diag; } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
   }
   P.init({ diag });
 
@@ -151,9 +156,9 @@
   function ensureMO(){
     if(_mo) return;
     try{
-      _mo=new MutationObserver(()=>{ const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch{} });
+      _mo=new MutationObserver(()=>{ const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
       _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); }
   }
   function waitForDOMChange(timeout=250){
     ensureMO();
@@ -305,7 +310,7 @@
   async function waitVisible() {
     if (!document.hidden || A.stop) return !A.stop;
     A.parked = true;
-    try { ui.setStarting(); } catch {}
+    try { ui.setStarting(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.waitVisible", _e); }
     try {
       await new Promise((resolve) => {
         const done = () => {
@@ -321,7 +326,7 @@
       });
     } finally {
       A.parked = false;
-      try { ui.setStarting(); } catch {}
+      try { ui.setStarting(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.onVis", _e); }
     }
     return !A.stop;
   }
@@ -415,7 +420,7 @@
               diag("wall.context", { len: digest.length });
             }
           }
-        }catch{}
+        }catch (_e) { globalThis.ZSSafe?.seen?.("main.landed", _e); }
         await P.typeAndSend(text, images);
         // Re-arm the pre-hide window NOW that typeAndSend has returned (the send
         // was just clicked, so our result turn is about to render). The initial
@@ -956,7 +961,7 @@
       note: "no long-poll, no WebTransport — see audit",
     };
   }
-  try { window.__zsTransportStats = transportStats; } catch {}
+  try { window.__zsTransportStats = transportStats; } catch (_e) { globalThis.ZSSafe?.seen?.("main.transportStats", _e); }
 
   // NOTE (audit #33): there used to be a `bgBatch()` helper here that nothing ever
   // called, which implied a batching path that did not exist. It is gone on
@@ -1012,14 +1017,14 @@
     if (!bare || A.imageTools.has(bare)) return;
     A.imageTools.add(bare);
     diag("imageTool.remember", { name: bare, total: A.imageTools.size });
-    try { chrome.storage.local.set({ zsImageTools: [...A.imageTools].slice(-200) }); } catch {}
+    try { chrome.storage.local.set({ zsImageTools: [...A.imageTools].slice(-200) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberImageTool", _e); }
   }
   try {
     chrome.storage.local.get("zsImageTools", (r) => {
       if (r && Array.isArray(r.zsImageTools)) for (const n of r.zsImageTools) A.imageTools.add(n);
       diag("imageTool.loaded", { tools: [...A.imageTools] });
     });
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberImageTool", _e); }
 
   // How long a fetched catalogue stays good enough to reuse without a round trip.
   // ULTRA: shorter TTL (8s vs 30s) so Studio MCP attach is seen ~4× faster,
@@ -1191,7 +1196,7 @@
           return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by 5ms dry-run sandbox BEFORE Studio — no Studio load spent)`;
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
-      }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch{} }
+      }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
     }
     // The player-input tools only run against the Client datamodel (play mode) and
     // "Client" is the sole allowed value, so default it when the model omits it -
@@ -1566,12 +1571,12 @@
           }
           if (A.stop || A.pendingStop) break;
           try { window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
-            `${mode} turn ${execTurns}/${maxTurns} — ${String(res.text||"").slice(0,120)}`, "agent_loop"); } catch {}
+            `${mode} turn ${execTurns}/${maxTurns} — ${String(res.text||"").slice(0,120)}`, "agent_loop"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.txt", _e); }
 
           if (mode === "continuous") {
             diag("exec.continuous.continue", { turn: execTurns, maxTurns });
             try { window.ZSAgentHub && window.ZSAgentHub.write("zsExecState",
-              { mode, turn: execTurns, maxTurns, text: String(res.text||"").slice(0,8000), ts: Date.now() }, 120000); } catch {}
+              { mode, turn: execTurns, maxTurns, text: String(res.text||"").slice(0,8000), ts: Date.now() }, 120000); } catch (_e) { globalThis.ZSSafe?.seen?.("main.txt", _e); }
             base = await submitAndGetBase(
               `[ZeroScript continuous ${execTurns}/${maxTurns}] Keep building. Read the wall/hub state, ` +
               `then find what is still missing (scripts, UI, data, polish) and implement it with ` +
@@ -1593,7 +1598,7 @@
               role, "__all", { type: "loop_text", role, turn: execTurns, text: String(res.text||"") }, "loop");
             window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
               `loop ${role} turn ${execTurns}`, "agent_loop");
-          } catch {}
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.planRoles", _e); }
           base = await submitAndGetBase(loopRolePrompt(role, execTurns, maxTurns));
           continue;
         }
@@ -1705,7 +1710,7 @@
           if (A.pendingStop && isProgress) {
             // still send the tool feedback so conversation stays consistent, then honor
             let _toSend = feedback; _toSend = withSysResend(_toSend); const _images = A.pendingImages; A.pendingImages=null; diag("images.consumed",{count:_images? _images.length:0});
-            try{ base = await submitAndGetBase(_toSend, _images); }catch{}
+            try{ base = await submitAndGetBase(_toSend, _images); }catch (_e) { globalThis.ZSSafe?.seen?.("main.planRoles", _e); }
             honorPendingStopIfNeeded("progressBoundary"); break;
           }
           // Re-inject the command list every REMIND_TOOLS_EVERY successful calls.
@@ -1807,11 +1812,11 @@
       // spot). Too little text to identify → rely on the dataset marker only.
       if (pref.trim().length < 12) return;
       halted.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function forgetHalted(item) {
     if (!item || !halted.size) return;
-    try { halted.delete(`${P.conversationKey()}|${turnKey(item)}`); } catch {}
+    try { halted.delete(`${P.conversationKey()}|${turnKey(item)}`); } catch (_e) { globalThis.ZSSafe?.seen?.("main.forgetHalted", _e); }
   }
   // The halt was recorded MID-stream, so the stored text is a PREFIX of the
   // turn's final text - match on startsWith, never equality.
@@ -1851,7 +1856,7 @@
       // index. Fall back to the dataset marker until there is enough text.
       if (pref.trim().length < 12) return;
       executed.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function isRememberedExecuted(item, txt) {
     if (!executed.size) return false;
@@ -1959,7 +1964,7 @@
       window.ZSPromptEnhancer.wrapTypeAndSend(P);
       P._zsCorePromptWrapped = true;
       diag("enhancer.wrapped", { provider: P.displayName });
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.installPromptEnhancer", _e); }
   })();
 
   function systemPrompt() {
@@ -1972,7 +1977,7 @@
         // Only inject once there is real content — the skeleton alone is noise.
         if(full && stats && stats.wallLen > 400) wallDigest = full.slice(0, 1400);
       }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.systemPrompt", _e); }
     return ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
@@ -2032,18 +2037,25 @@
     sysCountKey = k;
     const local = sysCount;
     sysCount = { users: 0, results: 0 };
-    try {
-      const r = await new Promise((res) => chrome.storage.local.get(k, res));
-      const saved = r && r[k];
-      if (saved) sysCount = {
+    // A failed read must NOT look like "no saved counters": resetting to
+    // {0,0} here is what made the counters appear to reset. Keep the in-memory
+    // numbers on any failure, and record it as a real fault.
+    const r = await globalThis.ZSSafe?.wrapAsync?.("main.loadSysCount",
+      () => new Promise((res) => chrome.storage.local.get(k, res)));
+    const saved = r && r[k];
+    if (saved) {
+      sysCount = {
         users: Math.max(saved.users || 0, local.users || 0),
         results: Math.max(saved.results || 0, local.results || 0),
       };
-    } catch {}
+    } else if (!r) {
+      // read failed (not "empty") — restore rather than zero out
+      sysCount = local;
+    }
     return sysCount;
   }
   function saveSysCount() {
-    try { chrome.storage.local.set({ [sysCountKey]: sysCount }); } catch {}
+    try { chrome.storage.local.set({ [sysCountKey]: sysCount }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.saveSysCount", _e); }
   }
   // Increment SYNCHRONOUSLY, persist asynchronously. sysResendDue() reads
   // sysCount in the same tick as the bump that should trip it, so deferring the
@@ -2171,7 +2183,7 @@
     try{
       if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll){
         window.ZSPlanWall.broadcastStartAll().then(st=>{
-          try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+          try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch (_e) { globalThis.ZSSafe?.seen?.("main.alive", _e); }
           // inject magic word into system prompt re-read (next submit uses window.__zsPlan*)
           // also send via wall so other tabs wake
         });
@@ -2181,7 +2193,7 @@
       chrome.runtime.onMessage.addListener((m, sender, sendResp)=>{
         if(!m) return;
         if(m.type==="zs-plan-wake"){
-          try{ window.__zsPlanConnected=true; }catch{}
+          try{ window.__zsPlanConnected=true; }catch (_e) { globalThis.ZSSafe?.seen?.("main.alive", _e); }
           // REAL auto-start: if this tab hasn't started, start it now (one Start → ALL auto-start)
           try{
             const delay = (m.staggerMs!=null?m.staggerMs: 300 + Math.floor(Math.random()*400));
@@ -2194,15 +2206,15 @@
                 const idle = !A.running && !A.starting;
                 if(idle){
                   console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
-                  try{ window.__zsAssignedRole = m.role || null; }catch{}
+                  try{ window.__zsAssignedRole = m.role || null; }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                   startSession();
-                  try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch{}
+                  try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                 }
               }catch(e){ console.warn('[ZeroScript] auto-start failed', e); }
             }, delay);
             if(sendResp) sendResp({ok:true, willAutoStart:true});
             return true;
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
         }
         // Real AI↔AI wall handoff: when planner posts spec, coder executes it
         if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
@@ -2210,7 +2222,7 @@
             handleWallTask(m);
             if(sendResp) sendResp({ok:true});
             return true;
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
         }
       });
       // Real wall task handler — coder actually executes planner spec via execute_luau
@@ -2220,7 +2232,7 @@
           if(!task || !task.code) return;
           console.log('[ZeroScript] wall task received', task.from, '→', task.to, task.code.slice(0,80));
           // Store in hub temp for audit trail
-          try{ window.ZSAgentHub && window.ZSAgentHub.pushTemp && window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, to:task.to, code:String(task.code||'').slice(0,500), ts:Date.now()}); }catch{}
+          try{ window.ZSAgentHub && window.ZSAgentHub.pushTemp && window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, to:task.to, code:String(task.code||'').slice(0,500), ts:Date.now()}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.handleWallTask", _e); }
           // Actually execute if we are the coder/checker target
           const myRole = (window.__zsAssignedRole || (window.ZSPlanWall && window.ZSPlanWall.magicForCurrentTab && window.ZSPlanWall.magicForCurrentTab()) || '').toLowerCase();
           const isTarget = !task.to || task.to==='__all' || myRole.includes((task.to||'').toLowerCase()) || /coder|checker|executor/.test(myRole);
@@ -2237,7 +2249,7 @@
                 if(!staticCheck.ok){
                   console.warn('[ZeroScript] wall task rejected by static check', staticCheck.error);
                   try{ window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
-                    { type: "wall_result", ok: false, output: "static check: " + staticCheck.error, ts: Date.now() }, "wall"); }catch{}
+                    { type: "wall_result", ok: false, output: "static check: " + staticCheck.error, ts: Date.now() }, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
                   return;
                 }
                 const res = await bg({ type: "call_tool", name: "execute_luau",
@@ -2247,9 +2259,9 @@
                   window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
                     { type: "wall_result", ok: !!res && !!res.ok,
                       output: String((res && (res.text || res.error)) || "").slice(0, 800), ts: Date.now() }, "wall");
-                }catch{}
+                }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
                 try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
-                  `wall exec from ${task.from || "planner"} → ${res && res.ok ? "ok" : "failed"}`, "wall"); }catch{}
+                  `wall exec from ${task.from || "planner"} → ${res && res.ok ? "ok" : "failed"}`, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
               }catch(e){ console.warn('[ZeroScript] wall exec failed', e); }
             }, 120);
           }
@@ -2277,7 +2289,7 @@
                 }
               }
             }
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
         }, 5000);
         // Also hub temp store poll for cross-tab handoff (10ms wall already handles storage)
         setInterval(async ()=>{
@@ -2292,10 +2304,10 @@
                 await handleWallTask({task:t});
               }
             }
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
         }, 2500);
       })();
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
     P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
     try {
@@ -3007,8 +3019,8 @@
       currentPlan = SESSION.plan;
       planRoles = SESSION.roles;
       currentExec = SESSION.exec;
-      try{ if(planBtn) updatePlanBtn(); }catch{}
-      try{ if(execBtn) updateExecBtn(); }catch{}
+      try{ if(planBtn) updatePlanBtn(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.ui", _e); }
+      try{ if(execBtn) updateExecBtn(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.ui", _e); }
     });
 
     function build() {
@@ -3123,7 +3135,7 @@
       const el = planBtn.querySelector("#zs-plan-name");
       if(el) el.textContent = name;
       planBtn.dataset.plan = currentPlan;
-      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch{}
+      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("main.updatePlanBtn", _e); }
       // also sync to prompt enhancer via global
     }
     function buildPlanMenu(){
@@ -3177,10 +3189,10 @@
               }
             }
             // store for prompt injection
-            try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+            try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
           });
         }
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
       // bind
       planMenuEl.querySelectorAll(".zs-plan-opt").forEach(b=>b.addEventListener("click",()=>{
         const pid=b.dataset.plan;
@@ -3189,11 +3201,11 @@
         for(const r of def.roles) if(!nextRoles[r]) nextRoles[r]=providers[0];
         currentPlan=pid; planRoles=nextRoles;
         setPlanState(pid, nextRoles);
-        try{ window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(pid, nextRoles); }catch{}
+        try{ window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(pid, nextRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
         updatePlanBtn();
         buildPlanMenu();
         // re-inject system prompt via notifying prompt enhancer
-        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch{}
+        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
       }));
       planMenuEl.querySelectorAll("select[data-role]").forEach(sel=>sel.addEventListener("change",()=>{
         planRoles={...planRoles, [sel.dataset.role]:sel.value};
@@ -3202,12 +3214,12 @@
       const save=planMenuEl.querySelector(".zs-plan-save");
       if(save) save.addEventListener("click",()=>{
         setPlanState(currentPlan, planRoles);
-        try{ window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch{}
+        try{ window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
         updatePlanBtn();
         planMenuEl.hidden=true;
         toast(`Plan saved: ${PLANS_DEF[currentPlan].name} (${PLANS_DEF[currentPlan].ais} AI) — wall 10ms`);
         // send ready hint via wall + magic word broadcast
-        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch{}
+        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
       });
     }
     function togglePlanMenu(){
@@ -3235,7 +3247,7 @@
       execBtn.dataset.exec=currentExec;
       const el=execBtn.querySelector("#zs-exec-name"); if(el) el.textContent=m.label;
       execBtn.title=`Exec — ${m.label}: ${m.hint} (click to switch)`;
-      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch{}
+      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch (_e) { globalThis.ZSSafe?.seen?.("main.updateExecBtn", _e); }
     }
     // BRUTALLY HONEST: Exec menu now SAME card design as Agent/Plan/Checker — single uses zs-plan-opt
     function buildExecMenu(){
@@ -3269,8 +3281,8 @@
     function setExecMode(v){
       currentExec=setExecModeState(v);
       updateExecBtn(); buildExecMenu();
-      try{ window.__zsExec=currentExec; window.ZSAgentHub && window.ZSAgentHub.write && window.ZSAgentHub.write("__zsExecMode", currentExec, 120000); }catch{}
-      try{ chrome.runtime.sendMessage({kind:"zs_exec_update", exec: currentExec}); }catch{}
+      try{ window.__zsExec=currentExec; window.ZSAgentHub && window.ZSAgentHub.write && window.ZSAgentHub.write("__zsExecMode", currentExec, 120000); }catch (_e) { globalThis.ZSSafe?.seen?.("main.setExecMode", _e); }
+      try{ chrome.runtime.sendMessage({kind:"zs_exec_update", exec: currentExec}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.setExecMode", _e); }
       toast(`Exec: ${EXEC_META[v]?.label||v}`);
       diag("exec.changed",{exec:v});
     }
@@ -3304,7 +3316,7 @@
           syncMenuPrompt();
         }
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.onActionClick", _e); }
     function getCustomPrompt() { return customPrompt; }
     // Reflect the saved value back into the menu textarea (unless being edited).
     function syncMenuPrompt() {
@@ -3327,10 +3339,10 @@
           if (!menuEl.hidden) buildMenu();
         }
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.syncMenuPrompt", _e); }
     function getCustomMcpServers() { return customMcpServers; }
     function saveCustomMcpServers() {
-      try { chrome.storage.local.set({ zsCustomMcpServers: customMcpServers }); } catch {}
+      try { chrome.storage.local.set({ zsCustomMcpServers: customMcpServers }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.saveCustomMcpServers", _e); }
     }
     // The bridge (config.json + live health) is the SOURCE OF TRUTH for which
     // addon servers actually exist - chrome.storage.local is just a display-name
@@ -3458,7 +3470,7 @@
            <input id="zs-mcp-url" class="zs-mcp-field" placeholder="Start command, e.g. npx -y @some/mcp-server" />
            <div class="zs-set-row"><button id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
          </section>`;
-      const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch {} menuEl.hidden = true; };
+      const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.open", _e); } menuEl.hidden = true; };
       menuEl.querySelectorAll("button.zs-site-opt, .zs-tip-opt").forEach((b) =>
         b.addEventListener("click", () => open(b.dataset.u)));
       const ta = menuEl.querySelector("#zs-set-text");
@@ -3467,7 +3479,7 @@
       ta.value = customPrompt;
       saveBtn.addEventListener("click", () => {
         customPrompt = ta.value;
-        try { chrome.storage.local.set({ zsCustomPrompt: customPrompt }); } catch {}
+        try { chrome.storage.local.set({ zsCustomPrompt: customPrompt }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.open", _e); }
         status.textContent = "Saved ✓";
         setTimeout(() => { status.textContent = ""; }, 400);
       });
@@ -3539,7 +3551,7 @@
       chrome.storage.local.get("zsSetupSeen", (r) => {
         if (r && r.zsSetupSeen) setupSeen = true;
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.setMcpBusy", _e); }
 
     function buildSetup() {
       setupCard = document.createElement("div");
@@ -3567,7 +3579,7 @@
       setupCard.querySelector("#zs-setup-copy").addEventListener("click", () => {
         try { navigator.clipboard.writeText(GITHUB_URL); } catch {
           const inp = setupCard.querySelector("#zs-setup-link");
-          inp.select(); try { document.execCommand("copy"); } catch {}
+          inp.select(); try { document.execCommand("copy"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.buildSetup", _e); }
         }
         const btn = setupCard.querySelector("#zs-setup-copy");
         btn.textContent = "Copied!";
@@ -3576,7 +3588,7 @@
 
       setupCard.querySelector("#zs-setup-dismiss").addEventListener("click", () => {
         setupSeen = true;
-        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch {}
+        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.buildSetup", _e); }
         hideSetup();
       });
     }
@@ -3865,7 +3877,7 @@
       // bridge later drops, it would reappear on top of the bridge-lost banner).
       if (s.connected && !setupSeen) {
         setupSeen = true;
-        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch {}
+        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.setStatus", _e); }
       }
       renderBar();
       refreshSetup(s.connected);
@@ -4033,7 +4045,7 @@
     // leave anchored mode so the site's composer returns to its normal layout.
     let anchorPadEl = null;
     function clearAnchorPad() {
-      if (anchorPadEl) { try { anchorPadEl.style.paddingTop = ""; } catch {} anchorPadEl = null; }
+      if (anchorPadEl) { try { anchorPadEl.style.paddingTop = ""; } catch (_e) { globalThis.ZSSafe?.seen?.("main.clearAnchorPad", _e); } anchorPadEl = null; }
     }
 
     // Position the floating "⚠ unstable" pill just above the bar's left edge.
@@ -4061,7 +4073,7 @@
       // rAF loop is resilient (its next frame is scheduled before any body code),
       // so the panel reappears on the very next frame.
       if (root && !root.isConnected) {
-        try { document.documentElement.appendChild(root); } catch {}
+        try { document.documentElement.appendChild(root); } catch (_e) { globalThis.ZSSafe?.seen?.("main.placeBar", _e); }
       }
 
       // The instability warning floats just ABOVE the bar (not inside it), so it
@@ -4091,7 +4103,7 @@
       if (mount) {
         clearAnchorPad();
         if (bar.parentElement !== mount.parent || bar.nextElementSibling !== mount.before) {
-          try { mount.parent.insertBefore(bar, mount.before || null); } catch {}
+          try { mount.parent.insertBefore(bar, mount.before || null); } catch (_e) { globalThis.ZSSafe?.seen?.("main.placeBar", _e); }
         }
         if (!bar.classList.contains("zs-bar-inline")) {
           bar.classList.add("zs-bar-inline");
@@ -4586,7 +4598,7 @@
           try {
             it.dataset.zRegenLen = String(P.classifyText(it, ".zs-chip").length);
             it.dataset.zRegenAt = String(Date.now());
-          } catch {}
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.elapsedOn", _e); }
         }
         // Bridge the gap until the auto-resume watchdog (1s interval) re-owns the
         // tool: regenResume only CLEARS the stop latch, it does not start the loop
@@ -4642,7 +4654,7 @@
         if (grown && Date.now() - (A.stopRetryAt || 0) > 800) {
           A.stopRetryAt = Date.now();
           A.stopStreamLen = P.streamLen ? P.streamLen() : 0;
-          try { P.stopGeneration(); } catch {}
+          try { P.stopGeneration(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.grown", _e); }
           diag("stop.retry");
         } else if (!grown && Date.now() - (A.stopAt || 0) > 2500) {
           // Wedged stop button on a dead stream (text frozen since the stop):
@@ -4734,7 +4746,7 @@
     if (!path) return;
     if (startedSessions.has(path)) return;
     startedSessions.add(path);
-    try { chrome.storage.local.set({ zsStartedSessions: [...startedSessions].slice(-300) }); } catch {}
+    try { chrome.storage.local.set({ zsStartedSessions: [...startedSessions].slice(-300) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberSession", _e); }
   }
   // Load the persisted set once, then re-sync.
   try {
@@ -4744,7 +4756,7 @@
         syncSessionState();
       }
     });
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberSession", _e); }
   // A conversation IS a ZeroScript session if any rendered turn carries a
   // telltale artefact: the system-prompt marker, an injected tool-result /
   // system-note turn, or a ZeroScript command an assistant wrote. Works even

@@ -131,7 +131,7 @@ Every finding below was fixed in the same branch as this audit. `npm run verify`
 | 24 | Committed logs leaked local paths | **Fixed** | `logs/` deleted + git-ignored, `.zs_token` ignored, CI checks for both |
 | 25 | `ZSProvider` read before definition | **Mitigated** | kept try/catch, but `ZSMakeMeta` removes the shared-state hazard |
 | 26 | 400-line `agentLoop`, no iteration cap | **Fixed** | exec budgets added; loop still long but every exit is bounded |
-| 27 | 199 empty `catch{}` | **Mitigated** | the previously-swallowed failures are now real code paths + tests |
+| 27 | 392 empty `catch{}` (not 199 — my first count was low) | **Fixed** | every one instrumented via new `core/safe.js`; see §7 |
 | 28 | 125 ms popup / 150 ms heartbeat / 10 ms poll | **Fixed** | heartbeat 1 s, storage poll event-driven |
 | 29 | 62 GPL headers, no LICENSE | **Fixed** | GPL-3.0 `LICENSE` added; `package.json` declares the same |
 | 30 | Docs duplicated / wrong filenames / dead repo link | **Fixed** | READMEs rewritten, launcher name corrected, changelogs marked ARCHIVED |
@@ -165,3 +165,73 @@ That last point matters: an earlier iteration of the verifier reported "ALL CHEC
 privacy-skipping every AST check because `acorn` was missing. A verifier that passes vacuously is
 worse than none — the dependency is now committed.
 
+
+
+---
+
+## 7. Empty `catch {}` — the 392-block problem (follow-up pass)
+
+The audit counted 199. The real number after a token-aware scan was **392** across 29 files.
+My first count was a regex that missed `catch (e) {   }` with whitespace and nested forms.
+
+### Why "just delete them" would have been the wrong fix
+
+An empty catch is often *correct*: probing the DOM of 20 third-party sites throws constantly and
+retrying is the right behaviour. The bug was never that the catch existed — it was that **every
+one of them looked identical**, so the ones that mattered were indistinguishable from the ones
+that did not. Two failures proved to be swallowed this way:
+
+| Swallowed failure | Consequence |
+|---|---|
+| `bridge.py /api/agent_temp` 404 | every temp-agent write vanished (multi-agent coordination silently dead) |
+| `chrome.storage.local.get` rejecting | read failure looked like "no data" → `sysCount` reset to `{0,0}`, so counters appeared to reset every reload |
+
+### The model: three kinds of failure, decided by the caller
+
+New module `core/safe.js` (35 assertions):
+
+| API | Semantics | Behaviour |
+|---|---|---|
+| `expected(site, fn)` | a probe that is *supposed* to fail sometimes | counted silently; escalates **once** at 25 consecutive failures, then 50/100/200 (doubling horizon — visible forever, no log spam) |
+| `seen(site, e)` | drop-in for an old empty catch | counted, never logged, never rethrown |
+| `wrap` / `wrapAsync` | should work; the user must know | recorded as a real fault and surfaced |
+| `guard(site, fn, fallback)` | probe with a typed default | returns the fallback |
+| `retry(site, fn, {tries})` | bridge/messaging, where one failure is normal | jittered exponential backoff, only the final failure reported |
+
+Faults are a **bounded ring** (40), bursts collapse into one row with a count, and messages are
+**redacted** (long tokens and `?token=` values) before they can reach a bug report.
+
+### The three ways "fixing" this could have made things much worse
+
+| Risk | Mitigation | Proven by |
+|---|---|---|
+| A missing global turns 392 silent catches into 392 **throwing** ones | every site is `globalThis.ZSSafe?.seen?.(...)` — optional chaining cannot throw | the smoke test boots all 14 blocks **with `core/safe.js` deleted** |
+| A probe that fails on every poll floods the console | `expected()` is silent until 25 consecutive failures, then doubles | 200 extra failures produce 4 report lines, not 200 |
+| The reporter itself throws and breaks the page | every entry point is wrapped; `describe()` handles `null`, `Symbol`, throwing `toString`, and throwing Proxies | 7 garbage-input assertions |
+
+### Real functionality repaired (not just instrumented)
+
+| File | Repair |
+|---|---|
+| `background.js` | `fetchToken` was **one** best-effort fetch. If the bridge started a second late, the token stayed empty and **every request 401'd forever**. Now: 3 retries with backoff, then bounded slow re-fetch (≈5 min), plus 401 self-healing that refreshes the token (GET retried once — idempotent; POST returned as `retryable` so a tool is never executed twice). |
+| `background.js` | `agent_temp` POST was fire-and-forget `.catch(()=>{})`; now retried and reported. |
+| `core/main.js` | `setExecModeState`/`setPlanState` persistence failures are now real faults — a mode that silently does not save reverts on the next page load. |
+| `core/main.js` | `loadSysCount`: a failed read no longer masquerades as "no saved counters" (that zeroing was the "my counters reset" bug). |
+| `popup.js`/`popup.html` | faults are now **visible**: "⚠ N errors recorded" with click-to-copy diagnostics. Also fixed a stale `4.2.0` badge still shipping in the popup. |
+| `manifest.json` | `core/safe.js` first in **16/16** content-script blocks — including `chatgpt-cm` and `qwen-net`, which my first pass missed because I only checked blocks containing `main.js`. |
+
+### Enforcement (so this cannot regress)
+
+`npm run verify` gained a **[4d] silent-failure hygiene** group that scans with the same lexer
+used to do the rewrite (a `}` inside a string or comment cannot fake a pass):
+
+1. **0 empty catch blocks** — proven to fire by re-introducing one;
+2. **every `ZSSafe` reference optional-chained** — proven to fire by inserting a bare `ZSSafe.seen()`;
+3. **`core/safe.js` loads first in every block that uses it** — proven to fire by moving it to the end of the manifest array;
+4. **ablation boot** — all 14 blocks with `core/safe.js` removed.
+
+Diagnostic site names were also made useful (`agent_stability.P` → `agent_stability.tryPatch`,
+`providers/claude.barMount` → `claude.barMount`): 200 distinct sites, re-derived in place by
+`tools/fix-empty-catch.js --rename` without touching the hand-written repairs.
+
+**Verification: 19 checks, 6 test suites, 154 assertions, all green.** CI runs it.

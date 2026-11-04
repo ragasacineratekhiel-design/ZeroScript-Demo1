@@ -16,7 +16,7 @@ const ZSClaudeConnector = (() => {
   let _connected = false, _studio = null, _tools = [], _connectAt = 0, _lastPingAt = 0;
   let _wallReady = false, _promptReady = false;
 
-  function log(...a){ try{ console.log(`[zs-claude-connector ${CONNECTOR_VERSION}]`, ...a); }catch{} }
+  function log(...a){ try{ console.log(`[zs-claude-connector ${CONNECTOR_VERSION}]`, ...a); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.log", _e); } }
 
   async function pingBridge(){
     _lastPingAt = Date.now();
@@ -64,12 +64,12 @@ const ZSClaudeConnector = (() => {
     // 2) Wall
     try{ await (window.ZSMemoryWall && window.ZSMemoryWall.load ? window.ZSMemoryWall.load() : Promise.resolve()); _wallReady=true; log("wall ready"); }catch(e){ log("wall err", e); }
     // 3) Prompt enhancer
-    try{ if(window.ZSPromptEnhancer){ _promptReady=true; log("prompt enhancer ready", window.ZSPromptEnhancer.version); }}catch{}
+    try{ if(window.ZSPromptEnhancer){ _promptReady=true; log("prompt enhancer ready", window.ZSPromptEnhancer.version); }}catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
     // 4) Tools list prefetch (so list_commands is instant when Claude asks)
     try{
       const t = await new Promise(res=> chrome.runtime.sendMessage({type:"list_tools"}, x=> res(x)));
       if(t && Array.isArray(t.tools)) { _tools=t.tools; log("tools prefetched", t.tools.length); }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
     _connectAt = Date.now();
     const ms = _connectAt - t0;
     log(`handshake done in ${ms}ms`, {connected:s.connected, studio:s.studio, wall:_wallReady, prompt:_promptReady});
@@ -78,8 +78,8 @@ const ZSClaudeConnector = (() => {
       let el=document.getElementById("zs-claude-wall");
       if(!el){ el=document.createElement("script"); el.type="application/json"; el.id="zs-claude-wall"; (document.documentElement||document.body).appendChild(el); }
       el.textContent = JSON.stringify({ version: CONNECTOR_VERSION, at: new Date().toISOString(), ms, connected:s.connected, studio:s.studio, tools: (_tools?.length||0), wall:_wallReady, prompt:_promptReady });
-      try{ window.__zsClaudeConnector = { version: CONNECTOR_VERSION, connected:s.connected, studio:s.studio, tools:_tools, ms, wall:_wallReady, prompt:_promptReady }; }catch{}
-    }catch{}
+      try{ window.__zsClaudeConnector = { version: CONNECTOR_VERSION, connected:s.connected, studio:s.studio, tools:_tools, ms, wall:_wallReady, prompt:_promptReady }; }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
     return s;
   }
 
@@ -119,12 +119,12 @@ const ZSClaudeConnector = (() => {
   }
 
   // Try attach now and on intervals (SPA nav race)
-  try{ setTimeout(attachToProvider, 20); }catch{}
-  try{ setTimeout(attachToProvider, 100); }catch{}
-  try{ setTimeout(attachToProvider, 300); }catch{}
+  try{ setTimeout(attachToProvider, 20); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
+  try{ setTimeout(attachToProvider, 100); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
+  try{ setTimeout(attachToProvider, 300); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
   try{
     let tries=0; const iv=setInterval(()=>{ if(attachToProvider() || ++tries>40) clearInterval(iv); }, 50);
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
   // Watch future redefine
   try{
     let watched=window.ZSProvider;
@@ -134,7 +134,7 @@ const ZSClaudeConnector = (() => {
       configurable:true
     });
     if(typeof ZSProvider!=="undefined" && ZSProvider!==watched) watched=ZSProvider;
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
 
   // Public
   return { version: CONNECTOR_VERSION, id: CONNECTOR_ID, handshake, pingBridge, ensureStudioReady, attachToProvider };

@@ -144,7 +144,7 @@ const ZSProvider = (() => {
     _codeObs = new MutationObserver(snapAll);
     try {
       _codeObs.observe(document.body, { subtree: true, childList: true, characterData: true });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.ms", _e); }
     snapAll(); // seed any blocks already present
   }
 
@@ -662,7 +662,7 @@ const ZSProvider = (() => {
       // site's binding between the pending upload and the message being sent).
       // Guard: submitAndGetBase RETRIES typeAndSend up to 4x; only attach if
       // nothing is staged yet, else each retry pastes ANOTHER duplicate copy.
-      if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch {} }
+      if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.typeAndSend", _e); } }
       await waitFor(() => !!sendButton(), 2000);
       const btn = sendButton();
       if (btn) { btn.click(); return; }
@@ -677,7 +677,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.stopGeneration", _e); }
   }
 
   function enforceComposer() { return { ready: !!getEditor() }; }
@@ -695,7 +695,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && (RE.contextLimit.test(t) || RE.usageLimit.test(t))) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -736,7 +736,7 @@ const ZSProvider = (() => {
     const ed = getEditor();
     if (!ed || !images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.attachImages", _e); } });
     if (!dt.items.length) return false;
     // Qwen's composer accepts a synthetic image PASTE (validated live: it uploads
     // to Qwen's OSS backend and mounts the `.vision-item-image` preview). Setting
@@ -754,8 +754,8 @@ const ZSProvider = (() => {
     try {
       // Each pending preview carries a `.close-button` remove control.
       document.querySelectorAll(".file-card-list .vision-item-container .close-button")
-        .forEach((b) => { try { b.click(); } catch {} });
-    } catch {}
+        .forEach((b) => { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.clearAttachments", _e); }
   }
 
   const conversationKey = () =>
@@ -846,7 +846,7 @@ const ZSProvider = (() => {
   // BUMP this whenever qwen.js changes in a way worth verifying live.
   const QWEN_VER = "2026-07_per-model-vision3";
   function setVersionBeacon() {
-    try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch {}
+    try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.setVersionBeacon", _e); }
   }
 
   // NOTE: an "⚠ unstable" badge used to be injected next to Qwen's "Auto"/"Think"
@@ -893,7 +893,7 @@ const ZSProvider = (() => {
   try {
     const saved = JSON.parse(localStorage.getItem(MODEL_VIS_LS) || "{}");
     for (const [k, v] of Object.entries(saved)) modelVis.set(k, !!v);
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.startModeWatch", _e); }
 
   const currentModelName = () => {
     const el = document.querySelector('[class*="model-selector-text"]');
@@ -933,7 +933,7 @@ const ZSProvider = (() => {
       if (modelVis.get(nm) !== cap) { modelVis.set(nm, cap); changed = true; }
     });
     if (changed) {
-      try { localStorage.setItem(MODEL_VIS_LS, JSON.stringify(Object.fromEntries(modelVis))); } catch {}
+      try { localStorage.setItem(MODEL_VIS_LS, JSON.stringify(Object.fromEntries(modelVis))); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.nm", _e); }
       diag("model.caps", { current: currentModelName(), known: modelVis.size });
     }
   }
@@ -960,7 +960,7 @@ const ZSProvider = (() => {
         }
       }
     });
-    try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch {}
+    try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.startModelCapWatch", _e); }
   }
 
   // Site-specific pre-session warning (main.js renders it in the bar).
@@ -1025,14 +1025,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
 
 })();

@@ -18,6 +18,10 @@ const EXT = path.join(path.resolve(__dirname, ".."), "zeroscript-extension-v2");
 const mf = JSON.parse(fs.readFileSync(path.join(EXT, "manifest.json"), "utf8"));
 
 // Pick a site block that loads main.js (chatgpt has the most moving parts).
+// ABLATION knob: with ZSSafe absent the 392 instrumented catches must STILL be
+// harmless, because every call is optional-chained off globalThis.
+const ABLATE_SAFE = process.argv.includes("--no-safe");
+
 const blocks = (mf.content_scripts || []).filter((cs) => (cs.js || []).some((f) => /main\.js$/.test(f)));
 if (!blocks.length) { console.log("no content-script block loads main.js"); process.exit(1); }
 
@@ -164,6 +168,9 @@ for (const block of blocks) {
   let lastCtx = blockCtx;
   console.log(`\n[${host}] ${block.js.length} files`);
   for (const rel of block.js) {
+    // Ablation: skip the safe-error core entirely and confirm every instrumented
+    // catch still behaves like the empty one it replaced.
+    if (ABLATE_SAFE && rel === "core/safe.js") continue;
     const file = path.join(EXT, rel);
     const src = fs.readFileSync(file, "utf8");
     try {

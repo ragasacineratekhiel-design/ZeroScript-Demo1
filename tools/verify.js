@@ -525,6 +525,86 @@ function checkProviderContract() {
   if (!bad) ok("provider", `${checked} providers export every unguarded method main.js calls`);
 }
 
+
+// ── 4d. silent-failure hygiene ─────────────────────────────────────────────
+// The 4.3.0 tree shipped 392 empty `catch {}` blocks. They are now all counted
+// through core/safe.js. This check keeps it that way, and enforces the two
+// properties that make the fix SAFE rather than merely present:
+//   (a) zero empty catch blocks remain;
+//   (b) every ZSSafe reference is optional-chained off globalThis, because a
+//       bare `ZSSafe.seen()` would turn 392 silent catches into 392 throws.
+function checkSilentFailures() {
+  console.log("\n[4d] silent-failure hygiene");
+  const files = [];
+  (function walk(dir) {
+    for (const e of require("fs").readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".js")) files.push(p);
+    }
+  })(path.join(ROOT, "zeroscript-extension-v2"));
+
+  // (a) empty catches — scanned with the same lexer as the fixer, so a `}` in a
+  // string or comment cannot fake a pass.
+  const { codeMask, findEmptyCatches } = require("./fix-empty-catch.js");
+  let empty = 0;
+  const offenders = [];
+  for (const f of files) {
+    if (path.basename(f) === "safe.js") continue; // documents the pattern in prose
+    const src = require("fs").readFileSync(f, "utf8");
+    const hits = findEmptyCatches(src, codeMask(src));
+    if (hits.length) { empty += hits.length; offenders.push(`${path.relative(ROOT, f)} (${hits.length})`); }
+  }
+  if (empty) fail("silent", `${empty} empty catch block(s) still swallow failures: ${offenders.slice(0, 5).join(", ")}`);
+  else ok("silent", "0 empty catch blocks — every failure is counted via core/safe.js");
+
+  // (b) every ZSSafe use must be fail-safe
+  let bare = 0;
+  const bareSites = [];
+  for (const f of files) {
+    const src = require("fs").readFileSync(f, "utf8");
+    const mask = codeMask(src);
+    const re = /(?:^|[^.\w$])(ZSSafe)\s*\.\s*(seen|wrap|wrapAsync|guard|retry|record|report|stats|clear|expected|probe)\b/g;
+    let m;
+    while ((m = re.exec(src))) {
+      // the allowed forms are globalThis.ZSSafe?.x?.() and window.ZSSafe?.x?.()
+      const before = src.slice(Math.max(0, m.index - 12), m.index);
+      if (/globalThis\.$/.test(before) || /window\.$/.test(before) || /self\.$/.test(before)) {
+        // must also be optional-chained
+        const after = src.slice(m.index, m.index + 60);
+        if (!/\?\./.test(after)) { bare++; bareSites.push(path.relative(ROOT, f) + ": " + after.slice(0, 40)); }
+        continue;
+      }
+      if (mask[m.index] === 0) continue;
+      bare++; bareSites.push(path.relative(ROOT, f) + ": " + src.slice(m.index, m.index + 40).split("\n")[0]);
+    }
+  }
+  if (bare) fail("silent", `${bare} unsafe ZSSafe reference(s) — a missing global would make catch blocks throw: ${bareSites.slice(0, 3).join(" | ")}`);
+  else ok("silent", "every ZSSafe reference is optional-chained (cannot throw when absent)");
+
+  // (c) EVERY block whose scripts use ZSSafe must load core/safe.js FIRST.
+  // (checking only blocks that contain main.js missed chatgpt-cm and qwen-net,
+  // which are standalone blocks with their own instrumented catches)
+  const mf = JSON.parse(require("fs").readFileSync(path.join(ROOT, "zeroscript-extension-v2", "manifest.json"), "utf8"));
+  const usesSafe = new Set();
+  for (const f of files) {
+    if (require("fs").readFileSync(f, "utf8").includes("ZSSafe")) usesSafe.add(path.relative(path.join(ROOT, "zeroscript-extension-v2"), f).split(path.sep).join("/"));
+  }
+  let badBlocks = 0;
+  const badDetail = [];
+  for (const b of mf.content_scripts || []) {
+    const needs = (b.js || []).some((f) => usesSafe.has(f));
+    if (needs && (b.js || []).indexOf("core/safe.js") !== 0) {
+      badBlocks++;
+      badDetail.push((b.matches || [])[0] + " -> " + b.js.join(","));
+    }
+  }
+  if (badBlocks) fail("silent", `core/safe.js is not first in ${badBlocks} content-script block(s) that use it: ${badDetail.slice(0, 3).join(" | ")}`);
+  else ok("silent", "core/safe.js loads first in every block that uses it");
+}
+
+
 // ── 6. version agreement// ── 6. version agreement ──────────────────────────────────────────────────
 function checkVersions(mf) {
   console.log("\n[5] version agreement");
@@ -546,7 +626,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);
@@ -575,6 +655,7 @@ checkSameFileScopes();
 selfTestScopeChecker();
 checkApiMembers();
 checkProviderContract();
+checkSilentFailures();
 checkVersions(mf);
 if (!process.argv.includes("--checks-only")) runTests();
 
@@ -588,6 +669,15 @@ function runSmokeTest() {
     console.log(out.split("\n").filter((l) => /THROW|MISSING|BROKEN|✗/.test(l)).slice(0, 12).map((l) => "      " + l).join("\n"));
   } else {
     ok("smoke", "all modules boot and every public API is present");
+  }
+  // Ablation: the same boot with core/safe.js REMOVED. The 392 instrumented
+  // catches must behave exactly like the empty ones they replaced — if any of
+  // them were written as a bare `ZSSafe.x()`, this is where that would explode.
+  const r2 = require("child_process").spawnSync(process.execPath, [path.join(ROOT, "tools", "simulate-load.js"), "--no-safe"], { encoding: "utf8" });
+  if (r2.status !== 0) {
+    fail("smoke", "modules fail to boot when core/safe.js is absent — the error instrumentation is not fail-safe");
+  } else {
+    ok("smoke", "boots with core/safe.js removed (instrumented catches are fail-safe)");
   }
 }
 if (!process.argv.includes("--checks-only")) runSmokeTest();
