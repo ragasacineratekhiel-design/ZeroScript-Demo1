@@ -883,7 +883,7 @@ const ZSProvider = (() => {
     // increases for every new reply - the core's watcher uses this to refuse
     // finalizing before this send's reply turn exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; try { restoreDirectOnce(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.findToolBlockSpot", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; Promise.resolve().then(restoreDirectOnce).catch((e) => globalThis.ZSSafe?.seen?.("arena.restoreDirectOnce", e)); },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,

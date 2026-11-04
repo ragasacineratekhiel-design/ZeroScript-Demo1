@@ -111,7 +111,16 @@ refresh();
 // A popup is open for seconds at a time and its payload changes only when the
 // bridge does (background pushes zs-status anyway). 125ms was 8 round-trips per
 // second to re-render the same text.
-setInterval(refresh, 800);
+// Paused when the popup is not visible, and cleared on unload — the previous
+// version spun forever with no way to stop it.
+let _refreshTimer = setInterval(() => {
+  if (typeof document !== "undefined" && document.hidden) return;
+  refresh();
+}, 800);
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => { clearInterval(_refreshTimer); }, { once: true });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+}
 
 // If opened as plain file:// HTML (not extension popup), show demo state
 try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }

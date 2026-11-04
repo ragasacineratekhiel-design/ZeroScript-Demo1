@@ -162,140 +162,162 @@ function checkManifest() {
 // than guessing. `npm install` in the repo root enables it.
 function checkSameFileScopes() {
   console.log("\n[3] same-file scope integrity (AST)");
-  const acorn = ACORN;
-  if (!acorn) { fail("scope", "acorn could not be loaded (tools/vendor/acorn missing and no node_modules) — the AST checks cannot run"); return; }
-
+  if (!ACORN) { fail("scope", "acorn unavailable — the AST checks cannot run (do not let this pass silently)"); return; }
   const files = walk(EXT).filter((f) => f.endsWith(".js") && !/test-/.test(f));
-  const SCOPE_NODES = new Set(["Program", "FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "CatchClause"]);
   let problems = 0;
-
   for (const file of files) {
     const src = fs.readFileSync(file, "utf8");
-    let ast;
-    try { ast = acorn.parse(src, { ecmaVersion: "latest", locations: true }); }
-    catch { continue; } // syntax already reported by check 1
-
-    const scopes = []; // {node, parent, decls:Map(name->loc), identReads:[{name,loc}]}
-    function newScope(node, parent) {
-      const sc = { node, parent, decls: new Map(), reads: [] };
-      scopes.push(sc);
-      return sc;
-    }
-    const rootScope = newScope(ast, null);
-
-    // Declare every binding a pattern introduces (destructuring included).
-    function addPattern(pat, scope) {
-      if (!pat || typeof pat.type !== "string") return;
-      switch (pat.type) {
-        case "Identifier":
-          if (!scope.decls.has(pat.name)) scope.decls.set(pat.name, []);
-          scope.decls.get(pat.name).push({ line: pat.loc.start.line, col: pat.loc.start.column });
-          break;
-        case "ObjectPattern":
-          for (const prop of pat.properties || []) {
-            if (prop.type === "RestElement") addPattern(prop.argument, scope);
-            else addPattern(prop.value, scope);
-          }
-          break;
-        case "ArrayPattern":
-          for (const el of pat.elements || []) if (el) addPattern(el, scope);
-          break;
-        case "AssignmentPattern":
-          addPattern(pat.left, scope);
-          break;
-        case "RestElement":
-          addPattern(pat.argument, scope);
-          break;
-      }
-    }
-
-    // Pass 1: collect declarations per scope (var/let/const/function/params/catch).
-    (function collect(node, scope) {
-      if (!node || typeof node.type !== "string") return;
-      let child = scope;
-      if (node.type !== "Program" && SCOPE_NODES.has(node.type)) child = newScope(node, scope);
-      switch (node.type) {
-        case "VariableDeclarator":
-          // handles `const x`, `const {a, b: c} = o`, `const [k, v] = p`, `...rest`
-          addPattern(node.id, child);
-          break;
-        case "FunctionDeclaration":
-          // HOISTED: the name belongs to the scope that CONTAINS the declaration.
-          if (node.id && node.id.type === "Identifier") scope.decls.set(node.id.name, [{ line: node.id.loc.start.line, col: node.id.loc.start.column }]);
-          for (const prm of node.params || []) addPattern(prm, child);
-          break;
-        case "FunctionExpression":
-        case "ArrowFunctionExpression":
-          if (node.id && node.id.type === "Identifier") child.decls.set(node.id.name, [{ line: node.id.loc.start.line, col: node.id.loc.start.column }]);
-          for (const prm of node.params || []) addPattern(prm, child);
-          break;
-        case "CatchClause":
-          if (node.param) addPattern(node.param, child);
-          break;
-        case "ClassDeclaration":
-          if (node.id) scope.decls.set(node.id.name, [{ line: node.id.loc.start.line, col: node.id.loc.start.column }]);
-          break;
-      }
-      for (const key of Object.keys(node)) {
-        if (key === "loc" || key === "range") continue;
-        const v = node[key];
-        if (Array.isArray(v)) v.forEach((c) => collect(c, child));
-        else if (v && typeof v.type === "string") collect(v, child);
-      }
-    })(ast, rootScope);
-
-    // Pass 2: collect reads, correctly excluding non-references.
-    // `obj.id` reads the PROPERTY "id", not a variable named id; `{ id: 1 }` and
-    // `{ id }` shorthand keys, and labels, are not references either. Missing this
-    // is what made an earlier version of this check report thousands of phantom
-    // "unreachable" reads.
-    (function reads(node, scope, parent, parentKey) {
-      if (!node || typeof node.type !== "string") return;
-      let child = scope;
-      if (node.type !== "Program" && SCOPE_NODES.has(node.type)) {
-        child = scopes.find((sc) => sc.node === node) || scope;
-      }
-      if (node.type === "Identifier" && node.loc) {
-        const isProperty = parent && parent.type === "MemberExpression" && parentKey === "property" && !parent.computed;
-        const isObjectKey = parent && parent.type === "Property" && parentKey === "key" && !parent.computed;
-        const isLabel = parent && (parent.type === "LabeledStatement" || parent.type === "BreakStatement" || parent.type === "ContinueStatement");
-        const isMethodKey = parent && (parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && parentKey === "key";
-        const isExportName = parent && parent.type === "ExportSpecifier" && parentKey === "exported";
-        if (!(isProperty || isObjectKey || isLabel || isMethodKey || isExportName)) {
-          child.reads.push({ name: node.name, loc: node.loc.start });
-        }
-      }
-      for (const key of Object.keys(node)) {
-        if (key === "loc" || key === "range") continue;
-        const v = node[key];
-        if (Array.isArray(v)) v.forEach((c) => reads(c, child, node, key));
-        else if (v && typeof v.type === "string") reads(v, child, node, key);
-      }
-    })(ast, rootScope, null, null);
-
-    // Resolve: for each read, walk the enclosing chain. If nothing encloses it but
-    // SOME other scope declares it, that declaration is unreachable → ReferenceError.
-    const declaredAnywhere = new Map();
-    for (const sc of scopes) for (const name of sc.decls.keys()) declaredAnywhere.set(name, true);
-    const reported = new Set();
-    for (const sc of scopes) {
-      for (const r of sc.reads) {
-        let encl = sc, found = false;
-        while (encl && !found) {
-          if (encl.decls.has(r.name)) found = true;
-          encl = encl.parent;
-        }
-        if (found) continue;
-        if (!declaredAnywhere.has(r.name)) continue; // a real global (ZS, chrome, …)
-        const key = `${r.name}@${r.loc.line}`;
-        if (reported.has(key)) continue;
-        reported.add(key);
+    for (const r of findUnreachableReads(src)) {
+      if (r.parseError) { fail("scope", `${path.relative(ROOT, file)}:${r.loc.line} does not parse: ${r.parseError}`); problems++; continue; }
+      if (r.declaredElsewhere) {
         fail("scope", `${path.relative(ROOT, file)}:${r.loc.line} reads "${r.name}" from a scope that cannot see its declaration — ReferenceError at runtime (the 4.2.0 bug class)`);
+        problems++;
+      } else if (!r.known) {
+        fail("scope", `${path.relative(ROOT, file)}:${r.loc.line} reads "${r.name}" which is declared NOWHERE in the file and is not a known host global — ReferenceError the moment that line runs`);
         problems++;
       }
     }
   }
-  if (!problems) ok("scope", `${files.length} files: no unreachable identifier reads`);
+  if (!problems) ok("scope", `${files.length} files: no unreachable identifier reads, no undefined names`);
+}
+
+// ── host/global allowlist ─────────────────────────────────────────────────
+// Every name here is provided by the browser, the extension APIs, or a module
+// that loads BEFORE the file being checked (manifest order is verified
+// separately). A bare typo must never be excused by this list, so it is
+// deliberately explicit rather than "anything capitalised".
+const HOST_GLOBALS = new Set([
+  // language / builtins
+  "globalThis","window","self","document","navigator","location","history","console",
+  "Object","Array","String","Number","Boolean","Math","JSON","Date","RegExp","Error","TypeError",
+  "Promise","Map","Set","WeakMap","WeakSet","Symbol","Proxy","Reflect","BigInt","Intl",
+  "setTimeout","clearTimeout","setInterval","clearInterval","queueMicrotask","requestAnimationFrame",
+  "cancelAnimationFrame","requestIdleCallback","structuredClone","fetch","AbortController","AbortSignal",
+  "URL","URLSearchParams","Blob","File","FileReader","FormData","TextEncoder","TextDecoder",
+  "Event","CustomEvent","InputEvent","KeyboardEvent","MouseEvent","PointerEvent","DragEvent",
+  "MutationObserver","IntersectionObserver","ResizeObserver","PerformanceObserver",
+  "BroadcastChannel","MessageChannel","performance","crypto","atob","btoa",
+  "NaN","Infinity","undefined","parseInt","parseFloat","isNaN","isFinite","encodeURIComponent","decodeURIComponent",
+  "Text","Comment","Node","NodeList","Element","HTMLElement","HTMLInputElement","DocumentFragment","Range","Selection",
+  "localStorage","sessionStorage","indexedDB","FileList","DataTransfer","ClipboardEvent","WheelEvent","FocusEvent",
+  // extension APIs
+  "chrome","browser","importScripts",
+  // module globals that load before every consumer (manifest order is checked)
+  "ZSSafe","ZS","ZSParse","ZSSandbox","ZSMemoryWall","ZSPromptEnhancer","ZSPlanWall","ZSPeerWall",
+  "ZSAgentHub","ZSAgentStability","ZSProvider","ZSGenericProvider","ZSMakeMeta","ZSClaudeConnector",
+  "ZS_FEEDBACK","__zsDebug",
+  // found by this very check on first real run (they are real, I simply had not
+  // listed them — which is the point of an explicit allowlist)
+  "WebSocket","ArrayBuffer","Uint8Array","Uint16Array","Uint32Array","Int8Array","Int16Array","Int32Array",
+  "Float32Array","Float64Array","DataView","Function","Blob","DOMRect","DOMRectReadOnly",
+  "getComputedStyle","innerWidth","innerHeight","outerWidth","outerHeight","devicePixelRatio",
+  "arguments","module","require","exports","process","global",
+]);
+
+// ── shared: find identifier reads that cannot resolve ─────────────────────
+// Single implementation used by BOTH the real check and the self-tests. A
+// self-test that reimplements the checker proves nothing about the checker.
+function findUnreachableReads(src) {
+  const acorn = ACORN;
+  if (!acorn) return [];
+  let ast;
+  try { ast = acorn.parse(src, { ecmaVersion: "latest", locations: true }); } catch (e) {
+    return [{ name: "<parse>", loc: { line: (e.loc && e.loc.line) || 0 }, parseError: e.message }];
+  }
+  const SCOPE_NODES = new Set(["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "BlockStatement", "CatchClause", "Program"]);
+  const rootScope = { node: ast, parent: null, decls: new Map(), reads: [] };
+  const scopes = [rootScope];
+
+  function addPattern(node, scope) {
+    if (!node) return;
+    switch (node.type) {
+      case "Identifier": scope.decls.set(node.name, [{ line: node.loc.start.line }]); break;
+      case "ObjectPattern":
+        for (const p of node.properties) addPattern(p.type === "RestElement" ? p.argument : p.value, scope);
+        break;
+      case "ArrayPattern": for (const e of node.elements) addPattern(e, scope); break;
+      case "RestElement": addPattern(node.argument, scope); break;
+      case "AssignmentPattern": addPattern(node.left, scope); break;
+    }
+  }
+
+  (function collect(node, scope) {
+    if (!node || typeof node.type !== "string") return;
+    let child = scope;
+    if (SCOPE_NODES.has(node.type) && node !== ast) {
+      child = { node, parent: scope, decls: new Map(), reads: [] };
+      scopes.push(child);
+    }
+    switch (node.type) {
+      case "VariableDeclarator": if (node.id) addPattern(node.id, child); break;
+      case "FunctionDeclaration":
+        // HOISTING: a function declaration's NAME binds in the ENCLOSING scope,
+        // not in its own body scope. Putting it in `child` makes every call
+        // from a sibling function look unreachable (1,235 false positives when
+        // this was first extracted).
+        if (node.id) scope.decls.set(node.id.name, [{ line: node.id.loc.start.line }]);
+        for (const prm of node.params || []) addPattern(prm, child);
+        break;
+      case "FunctionExpression":
+      case "ArrowFunctionExpression":
+        if (node.id && node.id.type === "Identifier") child.decls.set(node.id.name, [{ line: node.id.loc.start.line }]);
+        for (const prm of node.params || []) addPattern(prm, child);
+        break;
+      case "CatchClause": if (node.param) addPattern(node.param, child); break;
+      case "ClassDeclaration":
+        if (node.id) child.decls.set(node.id.name, [{ line: node.id.loc.start.line }]);
+        break;
+    }
+    for (const key of Object.keys(node)) {
+      if (key === "loc" || key === "range") continue;
+      const v = node[key];
+      if (Array.isArray(v)) { v.forEach((c) => collect(c, child)); }
+      else if (v && typeof v.type === "string") { collect(v, child); }
+    }
+  })(ast, rootScope);
+
+  (function reads(node, scope, parent, parentKey) {
+    if (!node || typeof node.type !== "string") return;
+    let child = scope;
+    if (SCOPE_NODES.has(node.type) && node !== ast) child = scopes.find((sc) => sc.node === node) || scope;
+    if (node.type === "Identifier" && node.loc) {
+      const isProperty = parent && parent.type === "MemberExpression" && parentKey === "property" && !parent.computed;
+      const isObjectKey = parent && parent.type === "Property" && parentKey === "key" && !parent.computed;
+      const isLabel = parent && (parent.type === "LabeledStatement" || parent.type === "BreakStatement" || parent.type === "ContinueStatement");
+      const isMethodKey = parent && (parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && parentKey === "key";
+      const isExportName = parent && parent.type === "ExportSpecifier" && parentKey === "exported";
+      const isDeclTarget = parent && parent.type === "VariableDeclarator" && parentKey === "id";
+      const isFnId = parent && (parent.type === "FunctionDeclaration" || parent.type === "FunctionExpression") && parentKey === "id";
+      const isParam = parent && parentKey === "params";
+      if (!(isProperty || isObjectKey || isLabel || isMethodKey || isExportName || isDeclTarget || isFnId || isParam)) {
+        child.reads.push({ name: node.name, loc: node.loc.start });
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (key === "loc" || key === "range") continue;
+      const v = node[key];
+      if (Array.isArray(v)) { v.forEach((c) => reads(c, child, node, key)); }
+      else if (v && typeof v.type === "string") { reads(v, child, node, key); }
+    }
+  })(ast, rootScope, null, null);
+
+  const declaredAnywhere = new Set();
+  for (const sc of scopes) for (const name of sc.decls.keys()) declaredAnywhere.add(name);
+  const out = [];
+  const seenKeys = new Set();
+  for (const sc of scopes) {
+    for (const r of sc.reads) {
+      let encl = sc, found = false;
+      while (encl && !found) { if (encl.decls.has(r.name)) found = true; encl = encl.parent; }
+      if (found) continue;
+      const known = declaredAnywhere.has(r.name) || HOST_GLOBALS.has(r.name) || /^ZS[A-Z]/.test(r.name);
+      const key = `${r.name}@${r.loc.line}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      out.push({ name: r.name, loc: r.loc, declaredElsewhere: declaredAnywhere.has(r.name), known });
+    }
+  }
+  return out;
 }
 
 // ── 5. no calls to API members a module never exports ─────────────────────
@@ -328,8 +350,8 @@ function exportedMembers(file, exportNames) {
     }
     for (const k of Object.keys(node)) {
       const v = node[k];
-      if (Array.isArray(v)) v.forEach(visit);
-      else if (v && typeof v.type === "string") visit(v);
+      if (Array.isArray(v)) { v.forEach(visit); }
+      else if (v && typeof v.type === "string") { visit(v); }
     }
   })(ast);
   return names;
@@ -373,6 +395,16 @@ function selfTestScopeChecker() {
   const fixture = path.join(ROOT, "tools", "fixtures", "trapped-declaration.js");
   if (!fs.existsSync(fixture)) { warn("scope", "self-test fixture missing"); return; }
   if (!ACORN) { warn("scope", "acorn missing — self test skipped"); return; }
+  // Second fixture: an undefined read INSIDE a nested function body. This is the
+  // shape that slipped through for the whole project (dangling-else walk bug +
+  // "unknown name must be a global" exemption). Both must fail loudly.
+  const fixture2 = path.join(ROOT, "tools", "fixtures", "undefined-inside-function.js");
+  if (fs.existsSync(fixture2)) {
+    const src2 = fs.readFileSync(fixture2, "utf8");
+    const caught2 = findUnreachableReads(src2).filter((r) => /ghost/i.test(r.name));
+    if (caught2.length) ok("scope", `self-test caught the undefined call inside a nested function (${caught2.length})`);
+    else fail("scope", "the checker did NOT catch an undefined call inside a nested function body — it is blind again");
+  }
   const realExt = EXT;
   // temporarily point the walker at the fixtures dir only
   const savedRoot = ROOT;
@@ -407,8 +439,8 @@ function selfTestScopeChecker() {
       for (const k of Object.keys(node)) {
         if (k === "loc") continue;
         const v = node[k];
-        if (Array.isArray(v)) v.forEach((c) => collect(c, child));
-        else if (v && typeof v.type === "string") collect(v, child);
+        if (Array.isArray(v)) { v.forEach((c) => collect(c, child)); }
+        else if (v && typeof v.type === "string") { collect(v, child); }
       }
     })(ast, root);
     (function reads(node, scope) {
@@ -781,6 +813,27 @@ function runSmokeTest() {
   }
 }
 if (!process.argv.includes("--checks-only")) runSmokeTest();
+
+// ── 8. deep defect audit (dead code, unhandled promises, leaks) ───────────
+function runDeepAudit() {
+  console.log("\n[8] deep defect audit");
+  const r = require("child_process").spawnSync(process.execPath, [path.join(ROOT, "tools", "audit-deep.js"), "--json"], { encoding: "utf8" });
+  if (r.status === 2) { warn("deep", "audit-deep.js could not run"); return; }
+  let findings;
+  try { findings = JSON.parse(r.stdout || "[]"); } catch { warn("deep", "audit-deep.js produced unparseable output"); return; }
+  const p0 = findings.filter((f) => f.sev === "P0");
+  const p1 = findings.filter((f) => f.sev === "P1" && /unhandled-promise|leaked-timer|provider-drift/.test(f.kind));
+  const dead = findings.filter((f) => f.kind === "dead-code");
+  if (p0.length) { fail("deep", `${p0.length} broken file(s): ${p0.slice(0, 2).map((f) => f.file).join(", ")}`); return; }
+  if (p1.length) {
+    for (const f of p1.slice(0, 4)) fail("deep", `${f.file}:${f.line} ${f.kind} — ${f.msg}`);
+    if (p1.length > 4) console.log(`      … ${p1.length - 4} more`);
+    return;
+  }
+  if (dead.length) fail("deep", `${dead.length} unreachable function(s): ${dead.slice(0, 3).map((f) => f.msg).join("; ")}`);
+  else ok("deep", `no broken files, no unhandled async at module scope, no unreachable functions (${findings.length} advisory findings)`);
+}
+if (!process.argv.includes("--checks-only")) runDeepAudit();
 
 console.log("\n======================");
 if (warnings.length) {

@@ -175,7 +175,16 @@ const ZSGenericProvider = (() => {
   const modeWarning=()=>{
     try{
       if(!getEditor()) return "Composer not found on this page — open a new chat";
-      if(captchaPresent && captchaPresent()) return "Captcha / verification in the way — solve it first";
+      // HONEST: this used to read `captchaPresent && captchaPresent()` — a name
+      // that exists nowhere in this file. Guarding an UNDECLARED variable is a
+      // ReferenceError, not a null check, so every generic-driver site threw
+      // here and the warning silently degraded to nothing (caught by the
+      // no-undef pass in tools/verify.js).
+      const signIn = document.querySelector(
+        'iframe[src*="captcha" i], iframe[src*="challenges" i], #challenge-form, [data-testid*="captcha" i], .cf-turnstile');
+      if (signIn) return "Captcha / verification in the way — solve it first";
+      if (/verify you are human|unusual traffic/i.test((document.body.innerText || "").slice(0, 1500)))
+        return "Captcha / verification in the way — solve it first";
       return null;
     }catch{ return null; }
   };

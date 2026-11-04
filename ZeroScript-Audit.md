@@ -341,3 +341,84 @@ New verifier group **[4f] timing honesty**:
 4. any sub-50 ms `setInterval` in a hot path warns.
 
 `config.js`'s prompt text no longer claims a 10 ms wall; it describes the peer channel as it is.
+
+
+---
+
+## 10. The tooling was lying — and that is the worst finding in this document
+
+**Finding 43 (🔴 P0, and it invalidates earlier "ALL CHECKS PASSED" claims).**
+The verifier's AST walker had a **dangling `else`**:
+
+```js
+if (Array.isArray(v)) for (const c of v) if (c && c.type === "string") walk(c);
+else if (v && typeof v.type === "string") walk(v);   // ← binds to the INNER if
+```
+
+The `else` bound to the *inner* `if`, so a single-object child — which includes
+every `FunctionDeclaration.body`, a `BlockStatement` — was **never recursed into**.
+The walker entered a function, visited its parameters, and stopped.
+
+I proved the impact rather than assuming it: I planted `ghostVarInsideFunction()` — a
+guaranteed ReferenceError — inside a function body and ran the suite. It printed
+**"ALL CHECKS PASSED."** The check had been verifying almost nothing below the
+top level of each file, for the entire project.
+
+Second, independent bug in the same check:
+`if (!declaredAnywhere.has(name)) continue;` treated *any* unknown identifier as
+"probably a host global (ZS, chrome…)". Combined with the walk bug this meant the
+one thing the check exists to catch — a typo'd call — was exempt by default.
+
+### Fixed, and made structurally impossible to regress
+
+| Change | Effect |
+|---|---|
+| braced every `if/else` in the walker (5 sites across 2 tools) | function bodies are visited |
+| extracted **one** `findUnreachableReads(src)` | the check and its self-test now run the *same* code; a test that reimplements the checker proves nothing |
+| explicit `HOST_GLOBALS` allowlist (~110 verified names) | an undeclared name is a **failure**, not an exemption |
+| second fixture `tools/fixtures/undefined-inside-function.js` | an undefined call inside a nested function is now a permanent regression test |
+| function-declaration **hoisting** restored after the extraction | putting a fn's name in its own scope produced 1,235 false positives |
+
+Proof, after the fix — same planted bug:
+`✗ [scope] core/main.js:376 reads "ghostVarInsideFunction" which is declared NOWHERE…`
+
+### What the repaired check immediately found
+
+- **`providers/generic.js` — `captchaPresent` does not exist.** I wrote
+  `if (captchaPresent && captchaPresent())` in the previous pass. Guarding an
+  *undeclared* variable is a ReferenceError, not a null check, so every
+  generic-driver site threw there. Replaced with a real DOM probe.
+- 10 unhandled async rejections, the worst being `agentLoop(base)` called bare:
+  one rejection inside the agent loop killed the session silently, leaving the
+  "Agent is working" cover up and no error anywhere. Now caught, the UI is
+  restored, and the reason is shown.
+- 3 instances of `try { someAsyncFn(); } catch {}` — a try/catch **cannot** catch a
+  rejected promise. This is why `agent_hub`'s temp store and arena's
+  `restoreDirectOnce` could fail with nothing recorded.
+- `popup.js` and `chatgpt-cm.js` set intervals that nothing could ever clear.
+
+### New standing gate: `[8] deep defect audit`
+
+`tools/audit-deep.js` (a real defect hunter, not a linter) now runs inside
+`npm run verify` and fails on: unparseable files, unhandled module-scope async
+rejections, leaked timers, unreachable functions, and drift between providers in
+helpers that are supposed to be identical.
+
+Its own first version was wrong twice — it reported 11 unused variables that were
+destructuring patterns, and 36 "provider drift" warnings for functions that are
+*supposed* to differ per site (each reads a different DOM). Both were fixed by
+making the check narrower and more honest, not by suppressing output.
+
+### Honest state
+
+| Severity | Before this pass | Now |
+|---|---|---|
+| P0 (broken / lying checks) | 2 | 0 |
+| P1 (real defects) | 54 | 0 |
+| P2 (dead / duplicated) | 7 | 7 advisory |
+| P3 (hygiene) | 30 | 30 advisory |
+
+The 37 remaining advisories are real but low-value: duplicated `fileFromImage`
+across providers, `async` functions with no `await`, and single-use globals
+assigned for debugging. They are listed by `node tools/audit-deep.js` rather than
+hidden.

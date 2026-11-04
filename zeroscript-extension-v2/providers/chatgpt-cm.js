@@ -113,7 +113,14 @@
       syncAll();
     } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.tick", _e); }
   };
-  setInterval(tick, 400);
+  // Paused when hidden (a background tab has nothing to sync) and stoppable —
+  // the previous version had no way to stop it at all.
+  let _tickTimer = setInterval(() => { tick(); }, 400);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { clearInterval(_tickTimer); _tickTimer = 0; }
+    else if (!_tickTimer) _tickTimer = setInterval(() => { tick(); }, 400);
+  });
+  window.addEventListener("pagehide", () => { if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = 0; } });
   tick();
 
 // ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─

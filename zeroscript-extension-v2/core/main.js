@@ -2293,7 +2293,10 @@
                 if(idle){
                   console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
                   try{ window.__zsAssignedRole = m.role || null; }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
-                  startSession();
+                  Promise.resolve().then(() => startSession()).catch((e) => {
+                    globalThis.ZSSafe?.seen?.("main.planWakeStart", e);
+                    try { ui.banner("warn", "Could not auto-start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.planWakeBanner", _e); }
+                  });
                   try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                 }
               }catch(e){ console.warn('[ZeroScript] auto-start failed', e); }
@@ -2332,7 +2335,7 @@
         // Real AI↔AI wall handoff: when planner posts spec, coder executes it
         if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
           try{
-            handleWallTask(m);
+            Promise.resolve().then(() => handleWallTask(m)).catch((e) => globalThis.ZSSafe?.seen?.("main.handleWallTask", e));
             if(sendResp) sendResp({ok:true});
             return true;
           }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
@@ -3458,7 +3461,13 @@
 
     function onActionClick() {
       const kind = actionBtn.dataset.kind;
-      if (kind === "start" || kind === "start-degraded") startSession();
+      if (kind === "start" || kind === "start-degraded") {
+        // startSession is async; a rejection used to leave the bar in "Starting…"
+        Promise.resolve().then(() => startSession()).catch((e) => {
+          globalThis.ZSSafe?.seen?.("main.startSessionClick", e);
+          try { ui.banner("warn", "Could not start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.startSessionClick.banner", _e); }
+        });
+      }
     }
 
     // ── Custom prompt (persisted) ───────────────────────────────────────────
@@ -4884,7 +4893,7 @@
   }
   // Hydrate the persisted re-statement budget for this conversation up front, so
   // the first tool result after a reload already knows the real tally.
-  loadSysCount();
+  Promise.resolve().then(() => loadSysCount()).catch((e) => globalThis.ZSSafe?.seen?.("main.loadSysCount", e));
   bg({ type: "status" }).then(onStatus);
   // HONEST (max-speed pass): this polled `status` 10x/second — but the payload
   // only changes when the socket does, and background already PUSHES
@@ -5097,7 +5106,27 @@
       // A Stop clicked during this 300ms window sets A.userStopped → honor it and
       // do NOT start the loop (otherwise the stop is silently ignored and the
       // freshly-started loop strands the "Stopping…" flag).
-      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 5); // MAX 5ms
+      setTimeout(() => {
+        if (!A.running && !A.userStopped) {
+          // agentLoop is async and used to be called bare: one rejection anywhere
+          // inside it killed the session silently, leaving the input cover up and
+          // the user staring at a frozen bar. Now the failure is surfaced through
+          // ZSSafe AND shown in the UI, so "it just stopped" becomes actionable.
+          Promise.resolve()
+            .then(() => agentLoop(base))
+            .catch((e) => {
+              globalThis.ZSSafe?.seen?.("main.agentLoop", e);
+              try {
+                A.running = false;
+                ui.showStop(false);
+                ui.inputCover(false);
+                P.setInputLock(false);
+                ui.banner("warn", "Agent loop stopped on an error",
+                  String((e && e.message) || e).slice(0, 160) + " — press Start to continue.");
+              } catch (_e) { globalThis.ZSSafe?.seen?.("main.agentLoopRecover", _e); }
+            });
+        }
+      }, 5);
     },
     onNativeStop: () => {
       // A click on the site's own stop = a deliberate manual stop → suppress
@@ -5211,7 +5240,8 @@
     // The reply turn is ALREADY present - act on it immediately. Null token makes
     // the identity-based newReply test unconditionally true (any current id != null).
     A.sendToken = null;
-    agentLoop(P.assistantCount() - 1);
+    Promise.resolve().then(() => agentLoop(P.assistantCount() - 1))
+      .catch((e) => globalThis.ZSSafe?.seen?.("main.agentLoopResume", e));
   }, 1000);
 
   // ── System-prompt re-injection fallback ───────────────────────────────────

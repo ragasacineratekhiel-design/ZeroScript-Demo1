@@ -91,7 +91,12 @@
     const p = origFetch.apply(this, args);
     try {
       if (typeof url === "string" && /\/chat\/completions/i.test(url)) {
-        p.then((res) => { try { if (res && res.body) consume(res.clone()); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.url", _e); } });
+        p.then((res) => {
+          if (res && res.body) {
+            Promise.resolve().then(() => consume(res.clone()))
+              .catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.consume", e));
+          }
+        }).catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.fetchTap", e));
       }
     } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.url", _e); }
     return p;
