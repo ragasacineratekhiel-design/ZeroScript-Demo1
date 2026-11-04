@@ -10,7 +10,7 @@ const ZS = (() => {
   const APP_NAME = "ZeroScript MAX";
   const APP_VERSION = "4.4.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
-  // ── SWITCH PLAN — 4 modes — orchestrated multi-AI with 10ms wall ──
+  // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
     direct: { id:"direct", name:"Direct", ais:1, roles:["coder"], desc:"1 AI direct — fastest single" },
     agent:  { id:"agent",  name:"Agent",  ais:3, roles:["planner","coder","checker"], desc:"3 AI Planner→Coder→Checker — max quality" },
@@ -28,11 +28,14 @@ const ZS = (() => {
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
-    RECONNECT_MIN: 5,        // 5ms ULTRA — instant reconnect (was 10)
-    RECONNECT_MAX: 100,       // 5ms ultra cap (was 800)
-    HEARTBEAT_MS: 62,        // MAX 250ms — ABSOLUTE 1.6x faster
-    STALE_MS: 150,           // MAX 600ms — ABSOLUTE
-    HTTP_TIMEOUT: 300,       // 5ms ultra 1.2s timeout (was 2000)
+    // HONEST: these are documented defaults, but the LIVE values are the
+    // constants at the top of background.js (that is what actually runs). They
+    // are kept in sync here so nothing quotes a number that is not real.
+    RECONNECT_MIN: 5,        // background.js RECONNECT_MIN = 5
+    RECONNECT_MAX: 200,      // background.js RECONNECT_MAX = 200
+    HEARTBEAT_MS: 1000,      // background.js HEARTBEAT_MS = 1000 (MV3 clamps ~1s)
+    STALE_MS: 400,           // background.js STALE_SOCKET_MS = 400
+    HTTP_TIMEOUT: 4000,      // background.js HTTP_TIMEOUT = 4000 (status/tools reads)
     WS_PING_MS: 100,
     HEDGE_MS: 5,             // 5ms ULTRA hedge — super powerful (was 10)
     BATCH_MAX: 64,            // EXT-IN-EXT 32 tools per batch (was 24)
@@ -46,8 +49,9 @@ const ZS = (() => {
 //    dead config; anything still unused has been removed rather than left to mislead.) ──
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 150,          // MAX 600ms — ABSOLUTE
-  STUDIO_POLL_MS: 10,              // MAX 40ms — ABSOLUTE, Studio plugin throttles to 100
-  STUDIO_HEARTBEAT_MS: 6,         // MAX 100ms — ABSOLUTE
+  // STUDIO_POLL_MS / STUDIO_HEARTBEAT_MS were removed: zero consumers, and the
+  // numbers (10ms / 6ms) were marketing, not code. Studio liveness is driven by
+  // bridge.py STUDIO_PROBE_* + the WS status push.
   EDITOR_REDISCOVER_MS: 15,          // MAX 60ms — ABSOLUTE
   GEN_VOTE_IDLE_MS: 5,             // MAX 15ms — ABSOLUTE, race with React render
   SEND_RETRY: 7,                    // MAX 7 retries — never lose
@@ -165,7 +169,7 @@ const STABILITY = {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "", memoryDigest = "" } = opts;
 
-    // Plan injection for orchestrated multi-AI 10ms wall + tab check + external vs internal
+    // Plan injection for orchestrated multi-AI peer channel + tab check + external vs internal
     let planInfo = "";
     try{
       const p = (typeof window!=="undefined" && window.__zsPlan) || DEFAULT_PLAN;
@@ -175,7 +179,7 @@ const STABILITY = {
       const wall = (typeof window!=="undefined" && window.ZSPlanWall) ? window.ZSPlanWall.getMagicForPrompt() : null;
       const magic = wall ? wall.magic : (p==="direct" ? "im connected to other agent" : "im not connected to other agents no external commands");
       const tabWarn = wall && wall.warn ? ` TAB WARN: ${wall.warn}` : (tabInfo && tabInfo.total ? ` Tabs: ${tabInfo.total} (arena ${tabInfo.arena||0})` : "");
-      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via 10ms wall: ZSPlanWall.send(myRole,nextRole,{spec|code|review}). Read wall via ZSPlanWall.getWallLog(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately. Use wall 10ms." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via wall 10ms."}\nWall latency: 10ms honest — BroadcastChannel + chrome.storage. Use wall for handoff.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
+      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via the peer channel: ZSPeerWall.sendToRole (or simply reply — peers receive it automatically) — and READ what peers send you via ZSPeerWall.takeInbound(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately, delivered by the peer channel." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via the peer channel."}\nPeer delivery: event-driven (BroadcastChannel + background routing). A peer message arrives in YOUR context automatically — do not claim to be the other AI.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
     }catch (_e) { globalThis.ZSSafe?.seen?.("config.wall", _e); }
 
     // ── PROJECT MEMORY (audit #16): injected from core/memory_wall.js ───────

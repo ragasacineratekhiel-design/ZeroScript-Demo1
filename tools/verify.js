@@ -635,6 +635,74 @@ function checkSilentFailures() {
 }
 
 
+// ── 4f. timing honesty ────────────────────────────────────────────────────
+// The tree carried constants like `STUDIO_HEARTBEAT_MS: 6` and
+// `STUDIO_HEARTBEAT_INTERVAL = 0.4` that NOBODY READ — numbers that exist only
+// to look fast. This check enforces the only property that matters: a timing
+// constant must be consumed, and the documented value must match the live one.
+function checkTimingHonesty() {
+  console.log("\n[4f] timing honesty");
+  const EXT = path.join(ROOT, "zeroscript-extension-v2");
+  const cfg = fs.readFileSync(path.join(EXT, "core/config.js"), "utf8");
+  const bg = fs.readFileSync(path.join(EXT, "background.js"), "utf8");
+  const bridge = fs.readFileSync(path.join(ROOT, "ZeroScript Demo", "ZeroScript-Free-1.5.5", "bridge.py"), "utf8");
+
+  // (a) dead timing knobs must not exist
+  const DEAD = ["STUDIO_POLL_MS", "STUDIO_HEARTBEAT_MS", "STUDIO_HEARTBEAT_INTERVAL"];
+  const dead = [];
+  for (const k of DEAD) {
+    for (const [name, src] of [["config.js", cfg], ["background.js", bg], ["bridge.py", bridge]]) {
+      // a declaration with no other reference in the whole tree is dead
+      const all = fs.readFileSync(path.join(EXT, "core/config.js"), "utf8") + bg + bridge +
+        fs.readFileSync(path.join(EXT, "core/main.js"), "utf8");
+      const count = (all.match(new RegExp(k, "g")) || []).length;
+      const declared = new RegExp(`^\\s*(const\\s+)?${k}\\s*[:=]`, "m").test(src);
+      if (declared && count <= 1) dead.push(`${k} (${name})`);
+    }
+  }
+  if (dead.length) fail("timing", `dead timing constant(s) with no consumer: ${dead.join(", ")}`);
+  else ok("timing", "no dead timing constants (every declared knob is read somewhere)");
+
+  // (b) config.js must not contradict background.js — that is how the tree ended
+  // up quoting a 62ms heartbeat that did not exist
+  const pairs = [
+    ["RECONNECT_MIN", /RECONNECT_MIN\s*=\s*(\d+)/],
+    ["RECONNECT_MAX", /RECONNECT_MAX\s*=\s*(\d+)/],
+    ["HEARTBEAT_MS", /HEARTBEAT_MS\s*=\s*(\d+)/],
+    ["HTTP_TIMEOUT", /HTTP_TIMEOUT\s*=\s*(\d+)/],
+  ];
+  let drift = 0;
+  for (const [name, re] of pairs) {
+    const live = bg.match(re);
+    const documented = cfg.match(new RegExp(name + ":\\s*(\\d+)"));
+    if (live && documented && live[1] !== documented[1]) {
+      fail("timing", `${name}: background.js runs ${live[1]} but config.js documents ${documented[1]}`);
+      drift++;
+    }
+  }
+  if (!drift) ok("timing", "documented transport values match the live background.js constants");
+
+  // (c) a timeout shorter than the work it guards is a bug, not a speed-up.
+  //     HTTP_TIMEOUT guards GET /api/status, which fans out to a shell probe.
+  const httpT = parseInt((bg.match(/HTTP_TIMEOUT\s*=\s*(\d+)/) || [])[1] || "0", 10);
+  if (httpT && httpT < 2000) fail("timing", `HTTP_TIMEOUT=${httpT}ms is shorter than the bridge's status probe — this produced false "bridge offline"`);
+  else ok("timing", `HTTP_TIMEOUT=${httpT}ms is above the bridge's status probe cost`);
+
+  // (d) hot polling paths must not be faster than a frame without a reason
+  const hot = [];
+  for (const f of ["core/main.js", "popup.js", "providers/chatgpt-cm.js"]) {
+    const src = fs.readFileSync(path.join(EXT, f), "utf8");
+    const re = /setInterval\([^,]+,\s*(\d+)\)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const ms = parseInt(m[1], 10);
+      if (ms > 0 && ms < 50) hot.push(`${f}: ${ms}ms`);
+    }
+  }
+  if (hot.length) warn("timing", `sub-50ms setInterval polling: ${hot.join(", ")} — verify it is a deliberate safety net`);
+  else ok("timing", "no gratuitous sub-50ms interval polling in hot paths");
+}
+
 // ── 6. version agreement// ── 6. version agreement ──────────────────────────────────────────────────
 function checkVersions(mf) {
   console.log("\n[5] version agreement");
@@ -687,6 +755,7 @@ checkApiMembers();
 checkProviderContract();
 checkSilentFailures();
 checkPeerWiring();
+checkTimingHonesty();
 checkVersions(mf);
 if (!process.argv.includes("--checks-only")) runTests();
 

@@ -88,8 +88,32 @@
   // syncs when it reads. That is enough for correctness, but a cheap idle sync
   // keeps the attribute warm so the very first read of a finished block is
   // already current.
-  const tick = () => { try { syncAll(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.tick", _e); } };
-  setInterval(tick, 250);
+  // HONEST (max-speed pass): this called a FULL DOM sweep every 250ms forever
+  // — on a long conversation that is hundreds of node reads 4x/second, on every
+  // tab, whether or not anything changed. It is now idempotent and change-gated:
+  // cheap signature first, full sync only when the transcript actually moved,
+  // and it idles completely when the tab is hidden.
+  let _lastSig = "";
+  const sig = () => {
+    try {
+      // No getItems() here: this module's unit is `.cm-content` (CodeMirror).
+      // Signature = how many blocks + the tail of the last one.
+      const nodes = document.querySelectorAll(".cm-content");
+      const n = nodes.length;
+      const last = n ? (nodes[n - 1].textContent || "") : "";
+      return n + "|" + last.length + "|" + last.slice(-24);
+    } catch (_e) { return ""; }
+  };
+  const tick = () => {
+    try {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const now = sig();
+      if (now === _lastSig) return;      // nothing changed → no work at all
+      _lastSig = now;
+      syncAll();
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.tick", _e); }
+  };
+  setInterval(tick, 400);
   tick();
 
 // ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─

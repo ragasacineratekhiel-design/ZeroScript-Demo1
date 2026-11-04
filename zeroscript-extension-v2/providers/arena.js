@@ -387,10 +387,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(30);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ───────────────────────────────────────────────────────────────
   // Arena's composer hard-caps the message at 120000 chars: past that the submit
@@ -592,7 +592,7 @@ const ZSProvider = (() => {
     let combo = null;
     for (let i = 0; i < 60 && !combo; i++) { // up to ~15s for post-login load
       combo = [...document.querySelectorAll('button[role="combobox"]')].find((x) => x.offsetParent !== null) || null;
-      if (!combo) await sleep(62);
+      if (!combo) await sleep(8); // recovery poll (was 62ms)
     }
     if (!combo || /direct/i.test(combo.textContent || "")) return; // gone or already Direct
     // Open the dropdown only if it is closed - clicking an already-open combobox

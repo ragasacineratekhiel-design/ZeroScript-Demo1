@@ -3233,7 +3233,9 @@
       }, true);
 
       applyTheme();
-      setInterval(applyTheme, 250); // MAX 1s — 2x faster theme sync
+      // Theme is a colour swap, not a hot path: 250ms was 4 storage reads/second
+      // for a value that changes when the user edits settings.
+      setInterval(applyTheme, 800);
       renderBar();
       placeBar(); // start the per-frame anchoring loop
     }
@@ -4884,7 +4886,13 @@
   // the first tool result after a reload already knows the real tally.
   loadSysCount();
   bg({ type: "status" }).then(onStatus);
-  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 100); // MAX 400ms — 2x faster status
+  // HONEST (max-speed pass): this polled `status` 10x/second — but the payload
+  // only changes when the socket does, and background already PUSHES
+  // `zs-status` on every change (chrome.runtime.onMessage below). Polling at
+  // 100ms was ~600 wake-ups/minute per tab for data we were already being sent.
+  // 800ms is the "is it still alive" tier; real changes arrive instantly via the
+  // push. Values that must be instant are event-driven, not polled.
+  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 800);
 
   // Session state is derived from the ACTUAL chat, but sites VIRTUALIZE their
   // message lists: the system-prompt turn is dropped from the DOM once it
@@ -5064,7 +5072,11 @@
   mo.observe(document.documentElement, { childList: true, subtree: true });
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 10); // MAX 40ms sweep — 16x faster, still safe CPU
+  // HONEST: this was 10ms — 100 sweeps/second — stacked on top of a full-document
+  // MutationObserver that already fires on every relevant change, i.e. the two
+  // were doing the same work and the interval was the expensive redundant one.
+  // It stays as a convergence net, but at a rate that costs nothing when idle.
+  setInterval(scheduleSweep, 400);
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 

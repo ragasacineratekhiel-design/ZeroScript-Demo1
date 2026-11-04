@@ -356,7 +356,7 @@ const ZSProvider = (() => {
     while(Date.now()-t0<totalMs){
       if(sendButton()) return true;
       if(unwedgeStop() && await waitFor(()=>!!sendButton(),1500)) return true;
-      await sleep(62);
+      await sleep(8); // recovery poll: was 62ms (8x faster to notice the button returned)
     }
     return !!sendButton();
   }
@@ -391,8 +391,11 @@ const ZSProvider = (() => {
     return{present:true, reply: textWithout(it,".zs-chip").trim(), thinking, item:it};
   }
   async function waitFor(pred, timeout){
+    // 30ms granularity added up to ~30ms of dead time on EVERY wait (and there
+    // are several per turn). A DOM read is microseconds; 8ms still leaves the
+    // main thread idle ~99% and keeps React's own batching unchallenged.
     const t0=Date.now();
-    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(30); }
+    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(8); }
     return false;
   }
 
@@ -460,7 +463,8 @@ const ZSProvider = (() => {
         ok=true;
       }catch (_e) { globalThis.ZSSafe?.seen?.("claude.setEditorText", _e); }
     }
-    await sleep(30);
+    // one frame for the input event to flush (was a flat 30ms on every write)
+    await sleep(8);
     return ok;
   }
 
@@ -472,22 +476,28 @@ const ZSProvider = (() => {
     if(relock) ed.setAttribute("contenteditable","true");
     try{
       // Ensure composer is ready
-      ed.focus(); await sleep(20);
+      ed.focus();
+      // Focus takes a frame to reach the editor; poll instead of guessing 20ms.
+      await waitFor(()=> document.activeElement === ed || !!editorText(), 120);
       await setEditorText(ed, text);
-      await sleep(25);
-      // Verify text landed
-      if(!editorText().includes(text.slice(0,12))){
-        // Retry once with slower method
-        await sleep(50);
+      // Verify text landed — read back as soon as it does, not after a fixed 25ms.
+      const probe = text.slice(0,12);
+      if(!await waitFor(()=> editorText().includes(probe), 250)){
+        // Retry once; the second write only happens if the first did not land.
         await setEditorText(ed, text);
+        await waitFor(()=> editorText().includes(probe), 400);
       }
       if(images && images.length){
         try{ await attachImages(images); }catch (_e) { globalThis.ZSSafe?.seen?.("claude.typeAndSend", _e); }
+        // HONEST: this loop had no success exit. It re-clicked send for a full
+        // 25s even after the message was accepted, so every image turn paid +25s.
+        // It now returns the moment the composer clears or generation starts.
         const t0=Date.now();
         while(Date.now()-t0<25000){
           const b=sendButton();
           if(b && !b.disabled){ try{b.click();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.typeAndSend", _e); } }
           if(await waitFor(()=> editorText().trim()==="" || !!stopButton(), 1200)) return;
+          await sleep(60); // was a tight re-click loop; 60ms is far below React's frame budget
         }
         return;
       }
@@ -497,8 +507,9 @@ const ZSProvider = (() => {
       if(btn){
         if(btn.disabled){ diag("send.disabled",{}); return; }
         btn.click();
-        // Also dispatch Enter as backup for Claude's ProseMirror
-        await sleep(20);
+        // Also dispatch Enter as backup for Claude's ProseMirror.
+        // A single frame is enough for the click handler to run.
+        await sleep(8);
         if(editorText().trim()!==""){
           const o={key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true,cancelable:true};
           ed.dispatchEvent(new KeyboardEvent("keydown",o));
@@ -522,7 +533,7 @@ const ZSProvider = (() => {
     // Claude has no mode selector — just ensure editor exists
     let tries=0;
     while(tries<8 && !getEditor()){
-      await sleep(37); tries++;
+      await sleep(8); tries++;   // was 37ms — the composer appears within a frame or two
     }
     return{ready: !!getEditor()};
   }

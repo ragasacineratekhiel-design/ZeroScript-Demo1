@@ -79,6 +79,31 @@ What is still true and worth knowing:
 - The peer channel carries text/code between models; it does not merge their memory walls.
   Each tab keeps its own.
 
+## Latency — what the numbers actually are
+
+Every timing constant is now either consumed by real code or deleted. `npm run verify`
+fails if a documented value disagrees with the live one, or if a declared knob has no reader.
+
+| Path | Value | Why that value |
+|---|---|---|
+| Provider `waitFor` poll | **8 ms** (was 30) | a DOM read is microseconds; 8 ms still leaves the main thread idle ~99% |
+| Editor read-back verify | **poll, not fixed sleep** | the old fixed 25–50 ms was *simultaneously* too slow when responsive and too short when not |
+| Send-recovery poll | **8 ms** (was 62) | only runs when the send button is wedged; notices recovery ~8× sooner |
+| Peer/plan delivery | **event-driven** | BroadcastChannel + background routing + ack; no polling at all |
+| Status poll (tab) | **800 ms** (was 100) | background already *pushes* `zs-status` on change; the poll is a liveness net |
+| Popup refresh | **800 ms** (was 125) | same reason; a popup is open for seconds |
+| Theme sync | **800 ms** (was 250) | a colour swap is not a hot path |
+| Camouflage sweep | **400 ms** (was 10) | a full-document `MutationObserver` already covers every change; the interval is only a convergence net |
+| `chatgpt-cm` sync | **signature-gated, 400 ms ceiling** | previously a full DOM sweep 4×/s forever; now zero work when nothing changed or the tab is hidden |
+| Bridge `HTTP_TIMEOUT` | **4000 ms** (was 600) | 600 ms produced false "bridge offline": `/api/status` fans out to a PowerShell probe budgeted 8 s |
+| Bridge status/tools TTL | **0.4 s / 0.5 s** (was 0.06/0.08) | a TTL shorter than the work it caches guarantees a miss — we paid for the cache *and* re-ran the probe |
+| Bridge Studio confirm | **0.35 s** (was 1.5) | re-probe to reject a flapping read |
+| Connector handshake poll | **12 ms** (was 75) | loopback RTT is <1 ms |
+
+Two constants that were **pure decoration** are gone: `STUDIO_POLL_MS: 10` and
+`STUDIO_HEARTBEAT_MS: 6` (zero consumers). So was `STUDIO_HEARTBEAT_INTERVAL = 0.4` in
+`bridge.py`. Faster numbers that nothing reads are not speed.
+
 ## Diagnostics
 
 ```js

@@ -50,7 +50,7 @@ const ZSClaudeConnector = (() => {
         log("Studio degraded — no place, but Edit mode ok");
         return last;
       }
-      await new Promise(r=> setTimeout(r, 75));
+      await new Promise(r=> setTimeout(r, 12)); // was 75ms — loopback RTT is <1ms
     }
     return last;
   }

@@ -91,7 +91,7 @@ const ZSAgentStability = (() => {
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
         if (studio !== null) lastStudio = studio;
       } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); }
-    }, 400); // MAX 400ms — 2× faster than 3.5, still safe (10ms DDOS fixed)
+    }, 400); // 400ms keepalive — a composer re-lock only needs to outpace a user edit
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -101,7 +101,7 @@ const ZSAgentStability = (() => {
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
       // Web Locks keepalive — holds lock so tab stays alive in background
       try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r, 25)); }); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
-    }, 400); // MAX 400ms keepalive — 2× faster, holds lock tightly
+    }, 400); // 400ms keepalive — holds the lock tight without polling the DOM
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {

@@ -108,7 +108,10 @@ try {
 } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 refresh();
-setInterval(refresh, 125); // MAX 500ms — absolute, popup hidden when closed
+// A popup is open for seconds at a time and its payload changes only when the
+// bridge does (background pushes zs-status anyway). 125ms was 8 round-trips per
+// second to re-render the same text.
+setInterval(refresh, 800);
 
 // If opened as plain file:// HTML (not extension popup), show demo state
 try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }

@@ -286,3 +286,58 @@ always false — the distinctness gate could never fire. A test that cannot fail
 - two *different* provider tabs must be open; same-model plans are refused by design;
 - Arena is one hostname, so several Arena models are **one** provider here;
 - peer text crosses models, memory walls do not — each tab keeps its own.
+
+
+---
+
+## 9. Latency pass — and the "fake fast" constants
+
+**Finding 40 (🟠 P1): several timing constants existed only to look fast.**
+`core/config.js` advertised `STUDIO_POLL_MS: 10`, `STUDIO_HEARTBEAT_MS: 6` and
+`HEARTBEAT_MS: 62`; `bridge.py` declared `STUDIO_HEARTBEAT_INTERVAL = 0.4`. **None of them had a
+consumer.** `config.js` also documented a 62 ms heartbeat while `background.js` ran 1000 ms, so the
+tree quoted a number that did not exist. Worse, the *prompt text* told the model
+"Wall latency: 10ms honest", which the model then repeated to the user.
+
+**Finding 41 (🔴 P0, produced a real bug): `HTTP_TIMEOUT = 600` was shorter than the work it guards.**
+`GET /api/status` uses it as the default, and the bridge's status build calls
+`_roblox_studio_app_running()` — a PowerShell/tasklist probe budgeted 8 s. On any cold start that
+read timed out, so the popup showed **"Bridge offline" while the bridge was healthy** and the tool
+list silently stayed stale. A speed number had become a correctness bug.
+
+**Finding 42 (🟠 P1): a redundant hot loop.** `main.js` ran `setInterval(scheduleSweep, 10)` — 100
+sweeps/second — *on top of* a full-document `MutationObserver` doing the same work.
+`providers/chatgpt-cm.js` ran a full DOM sweep every 250 ms forever, visible or not.
+
+### What was changed, and what was deliberately *not* made faster
+
+| Path | Before | After | Reasoning |
+|---|---|---|---|
+| Provider `waitFor` (9 providers) | 30 ms | **8 ms** | a DOM read is µs; 8 ms keeps the thread idle ~99% |
+| Editor verify | fixed 25–50 ms sleeps | **read-back poll** | a fixed wait is both too slow and too short |
+| Send-recovery poll | 62 ms | **8 ms** | recovery path only; notices recovery 8× sooner |
+| Status poll | 100 ms | **800 ms** | background already pushes every change |
+| Popup / theme | 125 / 250 ms | **800 ms** | not hot paths |
+| Camouflage sweep | 10 ms | **400 ms** | `MutationObserver` already covers changes |
+| `chatgpt-cm` sync | 250 ms full sweep | **change-gated + hidden-idle** | zero work when nothing moved |
+| `HTTP_TIMEOUT` | 600 ms | **4000 ms** | 600 ms was a *bug*; it must exceed the bridge probe |
+| Bridge status/tools TTL | 60 / 80 ms | **400 / 500 ms** | a TTL below the work it caches always misses |
+| Bridge Studio confirm / retry | 1.5 s / 1.0 s | **0.35 s / 0.5 s** | re-probe early, still rejects flapping reads |
+| Connector handshake poll | 75 ms | **12 ms** | loopback RTT < 1 ms |
+
+Deliberately **not** reduced: MV3 service-worker heartbeat (1 s — Chrome clamps it anyway), bridge
+subprocess timeouts (8–10 s — real process spawns), tool-call request timeouts (90 s — Studio may
+genuinely be loading a place), and the 5 s plan-wall safety net (event delivery already covers the
+fast path).
+
+### Enforcement
+
+New verifier group **[4f] timing honesty**:
+
+1. no declared timing constant without a consumer;
+2. every value documented in `config.js` matches the live constant in `background.js`
+   (proven by injecting `HEARTBEAT_MS: 62` and watching it fail);
+3. `HTTP_TIMEOUT` must exceed the cost of the probe it guards;
+4. any sub-50 ms `setInterval` in a hot path warns.
+
+`config.js`'s prompt text no longer claims a 10 ms wall; it describes the peer channel as it is.

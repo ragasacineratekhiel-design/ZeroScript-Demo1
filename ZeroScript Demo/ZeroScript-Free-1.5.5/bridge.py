@@ -246,8 +246,15 @@ class TTLCache:
                 oldest=min(self.store, key=lambda kk: self.store[kk][1])
                 self.store.pop(oldest,None)
             self.store[k]=(v, time.monotonic()+self.ttl)
-_cache_tools=TTLCache(ttl=0.08)  # TURBO 10ms — was 0.35s, now 0.08s super fast truthful
-_cache_status=TTLCache(ttl=0.06)  # TURBO 10ms — was 0.25s, now 0.06s instant Studio drop
+# HONEST (max-speed pass): these TTLs were shorter than the work they cache.
+# A status build fans out to _roblox_studio_app_running() (PowerShell/tasklist,
+# budgeted 8s) — caching that for 60ms means the cache missed on essentially every
+# request, so we paid for the cache AND re-ran the probe. A 0.5s/0.4s window
+# absorbs bursts (the popup, several provider tabs and a batch all ask at once)
+# while staying far below human perception for a status dot. Freshness that
+# matters (a tool call) never goes through these caches at all.
+_cache_tools=TTLCache(ttl=0.5)
+_cache_status=TTLCache(ttl=0.4)
 
 # ── Spinner/log/banner (kept from v1.5.5) ───────────────────────────────
 class _Spinner:
@@ -742,7 +749,14 @@ STUDIO_ALL_SERVICES = [
     "MarketplaceService","InsertService","AssetService","ContentProvider",
     "StarterPlayerScripts","Players","ReplicatedStorage","ServerScriptService"
 ]
-STUDIO_HEARTBEAT_INTERVAL = 0.4  # TURBO 10ms — was 1.2s, now 0.4s super fast monitoring
+# HONEST (max-speed pass): this constant was DECLARED AND NEVER READ — a fake
+# tuning knob. The values that actually drive latency are below, and they are the
+# ones that matter. probe_studio() shells out (PowerShell/tasklist, up to 8s), so
+# its cadence is deliberately conservative: polling it faster would only spawn
+# more processes, not make Studio appear sooner.
+STUDIO_PROBE_CONFIRM_S = 0.35   # re-probe after "app running" to reject a flapping read (was 1.5s)
+STUDIO_PROBE_RETRY_S   = 0.5    # gap between retries while waiting for Studio to attach (was 1.0s)
+STUDIO_PROBE_RETRIES   = 12     # 12 x 0.5s = 6s window (was 8 x 1.0s)
 _studio_last_ok = time.time()
 _studio_consec_fails = 0
 
@@ -1390,11 +1404,11 @@ async def main():
             _st=await asyncio.to_thread(probe_studio)
             if _st["app"] is False:
                 with _Spinner("    waiting for Roblox Studio to attach..."):
-                    for _ in range(8):
-                        await asyncio.sleep(1); _st=await asyncio.to_thread(probe_studio)
+                    for _ in range(STUDIO_PROBE_RETRIES):
+                        await asyncio.sleep(STUDIO_PROBE_RETRY_S); _st=await asyncio.to_thread(probe_studio)
                         if _st["app"] is not False: break
             if _st["app"] is True:
-                await asyncio.sleep(1.5); confirm=await asyncio.to_thread(probe_studio)
+                await asyncio.sleep(STUDIO_PROBE_CONFIRM_S); confirm=await asyncio.to_thread(probe_studio)
                 if confirm["app"] is not True: _st=confirm
             if roblox_client and (roblox_total==0 or _st["app"] is False):
                 if killed_squatter or reclaimed: log("    still waiting for Studio MCP toggle (see action box above)...","yl")

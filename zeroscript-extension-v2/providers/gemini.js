@@ -273,7 +273,7 @@ const ZSProvider = (() => {
     while (Date.now() - t0 < totalMs) {
       if (sendButton()) return true;
       if (unwedgeStop() && await waitFor(() => !!sendButton(), 1500)) return true;
-      await sleep(62);
+      await sleep(8); // recovery poll: was 62ms (8x faster to notice the button returned)
     }
     return !!sendButton();
   }
@@ -315,10 +315,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(30);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ───────────────────────────────────────────────────────────────
   // Gemini's composer is a Quill editor wrapped by an Angular ControlValueAccessor.

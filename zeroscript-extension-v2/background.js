@@ -28,8 +28,15 @@ const HEARTBEAT_MS = 1000;   // HONEST (audit #28): 150ms bought nothing (MV3 th
                              // every 150ms. 1s keeps the socket warm and the UI live.
 const STALE_SOCKET_MS = 400;// MAX 400ms — ABSOLUTE
 const REQUEST_TIMEOUT_DEFAULT = 90000;
-const HTTP_TIMEOUT = 600;   // MAX 600ms — ABSOLUTE, will timeout on slow bridge
-const HEDGE_MS = 5;         // MAX 5ms hedge — perfected matches config
+// HONEST (this pass): 600ms was a real bug, not a speed-up. `GET /api/status`
+// and `GET /api/tools` use this as their DEFAULT, and /api/status fans out to
+// `_roblox_studio_app_running()` (a PowerShell/tasklist probe that is allowed
+// 8s by bridge.py). With a 600ms budget that read timed out on any cold start,
+// so the popup showed "Bridge offline" while the bridge was healthy, and the
+// tool list silently stayed stale. Localhost round-trips take <1ms; the budget
+// is for the BRIDGE's work, not the network. Keep it generous.
+const HTTP_TIMEOUT = 4000;  // status/tools reads; per-call sites override this
+const HEDGE_MS = 5;         // parallel-hedge window (WS vs HTTP race)
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
