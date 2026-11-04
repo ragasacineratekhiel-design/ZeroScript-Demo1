@@ -2012,7 +2012,112 @@
         });
       }
       // listen for wake from other tab
-      chrome.runtime.onMessage.addListener((m)=>{ if(m && m.type==="zs-plan-wake"){ try{ window.__zsPlanConnected=true; }catch{} } });
+      // BRUTALLY HONEST: zs-plan-wake now really auto-starts the session — not just flag
+      chrome.runtime.onMessage.addListener((m, sender, sendResp)=>{
+        if(!m) return;
+        if(m.type==="zs-plan-wake"){
+          try{ window.__zsPlanConnected=true; }catch{}
+          // REAL auto-start: if this tab hasn't started, start it now (one Start → ALL auto-start)
+          try{
+            const delay = (m.staggerMs!=null?m.staggerMs: 300 + Math.floor(Math.random()*400));
+            setTimeout(()=>{
+              try{
+                // If state is idle/stopped, trigger startSession like user clicked Start in this tab
+                if(typeof P!=='undefined' && P.startSession){
+                  const st = (P.state||'').toLowerCase();
+                  const idle = !st || st==='idle' || st==='stopped' || st==='ready' || st==='error';
+                  if(idle){
+                    console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
+                    P.startSession();
+                    try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch{}
+                  }
+                }
+              }catch(e){ console.warn('[ZeroScript] auto-start failed', e); }
+            }, delay);
+            if(sendResp) sendResp({ok:true, willAutoStart:true});
+            return true;
+          }catch{}
+        }
+        // Real AI↔AI wall handoff: when planner posts spec, coder executes it
+        if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
+          try{
+            handleWallTask(m);
+            if(sendResp) sendResp({ok:true});
+            return true;
+          }catch{}
+        }
+      });
+      // Real wall task handler — coder actually executes planner spec via execute_luau
+      async function handleWallTask(m){
+        try{
+          const task = m.task || m.payload || m;
+          if(!task || !task.code) return;
+          console.log('[ZeroScript] wall task received', task.from, '→', task.to, task.code.slice(0,80));
+          // Store in hub temp for audit trail
+          try{ if(window.ZSAgentHub) window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, code:task.code.slice(0,500), ts:Date.now()}); }catch{}
+          // Actually execute if we are the coder/checker target
+          const myRole = (window.__zsAssignedRole || (window.ZSPlanWall && window.ZSPlanWall.magicForCurrentTab && window.ZSPlanWall.magicForCurrentTab()) || '').toLowerCase();
+          const isTarget = !task.to || task.to==='__all' || myRole.includes((task.to||'').toLowerCase()) || /coder|checker|executor/.test(myRole);
+          if(isTarget){
+            // Defer execution slightly to let UI settle
+            setTimeout(async ()=>{
+              try{
+                if(window.ZSSandbox && window.ZSSandbox.executeLuau){
+                  const res = await window.ZSSandbox.executeLuau(task.code, {wall:true, from:task.from});
+                  console.log('[ZeroScript] wall exec result', res);
+                  // Post result back to wall so planner can see it
+                  try{
+                    if(window.ZSPlanWall) window.ZSPlanWall.send('executor', task.from||'planner', {type:'wall_result', ok:!!res?.ok, output:(res?.output||res?.error||'').slice(0,800), ts:Date.now()}, 'wall');
+                  }catch{}
+                } else if(window.execute_luau){
+                  const res = await window.execute_luau(task.code);
+                  console.log('[ZeroScript] wall exec via execute_luau', res);
+                }
+              }catch(e){ console.warn('[ZeroScript] wall exec failed', e); }
+            }, 120);
+          }
+        }catch(e){ console.warn('[ZeroScript] handleWallTask err', e); }
+      }
+      // Periodic wall poll — every 5s check for new planner specs to execute (real communication, not fake storage)
+      (function startWallPoll(){
+        let lastWallLen = 0;
+        setInterval(async ()=>{
+          try{
+            if(!window.ZSPlanWall || !window.ZSPlanWall.getWallLog) return;
+            const log = window.ZSPlanWall.getWallLog();
+            if(!log || !log.length) return;
+            if(log.length <= lastWallLen) return;
+            // Process only new entries
+            const news = log.slice(lastWallLen);
+            lastWallLen = log.length;
+            for(const entry of news){
+              // If entry is a planner spec for coder, trigger execution
+              const msg = entry.msg || entry.payload || entry;
+              const chan = entry.channel || entry.chan || '';
+              if(chan==='plan' || chan==='wall' || entry.to==='coder' || entry.to==='__all'){
+                if(msg && (msg.code || msg.luau || msg.spec) && (msg.type==='plan_spec' || msg.type==='execute' || !!msg.code)){
+                  await handleWallTask({task:{code: msg.code||msg.luau||msg.spec, from: entry.from||'planner', to: entry.to||'coder'}});
+                }
+              }
+            }
+          }catch{}
+        }, 5000);
+        // Also hub temp store poll for cross-tab handoff (10ms wall already handles storage)
+        setInterval(async ()=>{
+          try{
+            if(!window.ZSAgentHub || !window.ZSAgentHub.getTemp) return;
+            const temps = window.ZSAgentHub.getTemp();
+            if(!temps || !temps.length) return;
+            // Look for unclaimed wall tasks in temp store
+            for(const t of temps.slice(-10)){
+              if(t && t.type==='wall_exec_pending' && !t.claimed){
+                t.claimed = true;
+                await handleWallTask({task:t});
+              }
+            }
+          }catch{}
+        }, 2500);
+      })();
     }catch{}
     P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
@@ -2941,7 +3046,7 @@
       }
     }
     // ── Exec Mode logic (Single/Continuous/Loop) ──
-    const EXEC_META={ single:{label:"Single", hint:"One prompt → build done"}, continuous:{label:"Continuous", hint:"Keeps building until full game done; Stop waits for progress"}, loop:{label:"Loop", hint:"Planner ↔ Coder ↔ Checker loop; Stop waits for progress"} };
+    const EXEC_META={ single:{label:"Single", icon:"⚡", hint:"One prompt → build done — same card design as Agent"}, continuous:{label:"Continuous", icon:"🔄", hint:"Keeps building until full game done; Stop waits for progress"}, loop:{label:"Loop", icon:"♾️", hint:"Planner ↔ Coder ↔ Checker loop; Stop waits for progress"} };
     function updateExecBtn(){
       if(!execBtn) return;
       const m=EXEC_META[currentExec]||EXEC_META.single;
@@ -2950,19 +3055,34 @@
       execBtn.title=`Exec — ${m.label}: ${m.hint} (click to switch)`;
       try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch{}
     }
+    // BRUTALLY HONEST: Exec menu now SAME card design as Agent/Plan/Checker — single uses zs-plan-opt
     function buildExecMenu(){
       if(!execMenuEl) return;
       execMenuEl.replaceChildren();
+      // Header like plan menu
+      const h3 = document.createElement('h3'); h3.textContent = 'Switch Exec Mode';
+      const note = document.createElement('p'); note.className='zs-plan-note'; note.textContent='Single=1 prompt→done. Continuous=keeps building. Loop=planner↔coder↔checker handoff via 10ms wall.';
+      execMenuEl.append(h3, note);
+      const countInfo = document.createElement('div'); countInfo.className='zs-plan-note'; countInfo.style.cssText='margin-bottom:4px;opacity:0.9';
+      const curMeta = EXEC_META[currentExec] || EXEC_META.single;
+      countInfo.textContent = `Current: ${curMeta.icon} ${curMeta.label} — ${curMeta.hint}`;
+      execMenuEl.appendChild(countInfo);
       for(const [k,meta] of Object.entries(EXEC_META)){
-        const b=document.createElement("button"); b.className="zs-exec-row"+(k===currentExec?" active":""); b.dataset.exec=k; b.setAttribute("aria-selected", k===currentExec?"true":"false");
-        const dot=document.createElement("span"); dot.className="zs-exec-dot";
-        const info=document.createElement("span"); info.className="zs-exec-info";
-        const tt=document.createElement("span"); tt.className="zs-exec-title"; tt.textContent=meta.label;
-        const hh=document.createElement("span"); hh.className="zs-exec-hint"; hh.textContent=meta.hint;
-        info.append(tt, hh); b.append(dot, info);
+        const active = k===currentExec ? ' zs-plan-active' : '';
+        const b=document.createElement("button"); b.className="zs-plan-opt"+active; b.dataset.exec=k; b.setAttribute("aria-selected", k===currentExec?"true":"false");
+        // Icon + label left, arrow/check right — identical to plan cards
+        const left=document.createElement("span");
+        const ais = (k==='single'? '1 prompt' : k==='continuous'? 'auto' : 'loop');
+        left.innerHTML = `<strong>${meta.icon} ${meta.label}</strong> <span class="zs-plan-ais"><b>${ais}</b></span><br><span>${meta.hint}</span>`;
+        const right=document.createElement("span"); right.textContent = k===currentExec ? "✓" : "→";
+        b.append(left, right);
         b.addEventListener("click",(ev)=>{ ev.stopPropagation(); setExecMode(k); execMenuEl.hidden=true; });
         execMenuEl.appendChild(b);
       }
+      // Save indicator
+      const saveHint = document.createElement('div'); saveHint.className='zs-plan-note'; saveHint.style.cssText='margin-top:6px';
+      saveHint.textContent = 'Pick exec mode — saved instantly. Single uses same card design as Agent/Plan/Checker.';
+      execMenuEl.appendChild(saveHint);
     }
     function setExecMode(v){
       currentExec=v;
@@ -2979,7 +3099,7 @@
         buildExecMenu();
         if(execBtn && execMenuEl){
           const r=execBtn.getBoundingClientRect();
-          execMenuEl.style.left=Math.max(8, Math.round(r.left - 90))+"px";
+          execMenuEl.style.left=Math.max(8, Math.round(r.left - 120))+"px";
           execMenuEl.style.bottom=Math.max(8, Math.round(window.innerHeight - r.top + 8))+"px";
         }
         execMenuEl.hidden=false; if(menuEl) menuEl.hidden=true; if(planMenuEl) planMenuEl.hidden=true;
