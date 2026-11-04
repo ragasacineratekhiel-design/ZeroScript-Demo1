@@ -621,7 +621,7 @@ const ZSProvider = (() => {
   async function ensureComposerReady(reason) {
     // Force Réflexion before the session runs (Instantané is much weaker). Fire and
     // forget - readiness never blocks on it (the mode flip is best-effort).
-    Promise.resolve().then(ensureThinkMode).catch((e) => globalThis.ZSSafe?.seen?.("meta.ensureThinkMode", e));
+    Promise.resolve().then(ensureThinkMode).catch((e) => globalThis.ZSSafe?.seen?.("meta.ensureComposerReady", e));
     diag("mode_ready", { reason, provider: "meta", ready: !!getEditor() });
     return { ready: !!getEditor() };
   }

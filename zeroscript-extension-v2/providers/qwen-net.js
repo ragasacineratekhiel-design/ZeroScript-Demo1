@@ -94,9 +94,9 @@
         p.then((res) => {
           if (res && res.body) {
             Promise.resolve().then(() => consume(res.clone()))
-              .catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.consume", e));
+              .catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.url", e));
           }
-        }).catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.fetchTap", e));
+        }).catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.url", e));
       }
     } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.url", _e); }
     return p;

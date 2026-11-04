@@ -86,7 +86,7 @@ async function fetchToken(){
   }
   return !!got;
 }
-Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken.toplevel", e));
+Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken", e));
 
 // ── BroadcastChannel leader election (single WS) ──────────────────────
 try{
@@ -117,7 +117,7 @@ try{
     }
     if(m.type==='request' && isLeader){
       // follower asks leader to proxy a tool call
-      Promise.resolve().then(() => handleProxyRequest(m)).catch((e) => globalThis.ZSSafe?.seen?.("background.handleProxyRequest", e));
+      Promise.resolve().then(() => handleProxyRequest(m)).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken", e));
     }
     if(m.type==='response' && !isLeader){
       resolvePending(m.id, m.payload);
@@ -286,7 +286,7 @@ function startHeartbeat(){
       }
       // adaptive: active vs idle
       sendWS({type:'ping'}, 4000).catch(()=>{});
-      Promise.resolve().then(refreshStudioStatus).catch((e) => globalThis.ZSSafe?.seen?.("background.refreshStudioStatus", e));
+      Promise.resolve().then(refreshStudioStatus).catch((e) => globalThis.ZSSafe?.seen?.("background.startHeartbeat", e));
     }
   }, HEARTBEAT_MS);
 }
@@ -699,7 +699,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       }
       case "reconnect":
         reconnectDelay=RECONNECT_MIN; httpHealthy=false; connect();
-        Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken.reconnect", e));
+        Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.cur", e));
         sendResponse({ok:true}); break;
       case "ping":
         // ultra-fast health ping
@@ -711,8 +711,8 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   })(); return true;
 });
 
-chrome.runtime.onStartup.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.onStartup.token", e)); connect(); });
-chrome.runtime.onInstalled.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.onInstalled.token", e)); connect(); });
+chrome.runtime.onStartup.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.cur", e)); connect(); });
+chrome.runtime.onInstalled.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.cur", e)); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
   chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.5}); // BRUTAL HONEST: chrome.alarms clamps to 1m minimum — 0.02 ignored, using 30s + setInterval fallback

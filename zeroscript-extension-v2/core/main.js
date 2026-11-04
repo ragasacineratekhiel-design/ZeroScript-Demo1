@@ -2294,8 +2294,8 @@
                   console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
                   try{ window.__zsAssignedRole = m.role || null; }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                   Promise.resolve().then(() => startSession()).catch((e) => {
-                    globalThis.ZSSafe?.seen?.("main.planWakeStart", e);
-                    try { ui.banner("warn", "Could not auto-start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.planWakeBanner", _e); }
+                    globalThis.ZSSafe?.seen?.("main.delay", e);
+                    try { ui.banner("warn", "Could not auto-start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                   });
                   try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                 }
@@ -2335,7 +2335,7 @@
         // Real AI↔AI wall handoff: when planner posts spec, coder executes it
         if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
           try{
-            Promise.resolve().then(() => handleWallTask(m)).catch((e) => globalThis.ZSSafe?.seen?.("main.handleWallTask", e));
+            Promise.resolve().then(() => handleWallTask(m)).catch((e) => globalThis.ZSSafe?.seen?.("main.who", e));
             if(sendResp) sendResp({ok:true});
             return true;
           }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
@@ -3464,8 +3464,8 @@
       if (kind === "start" || kind === "start-degraded") {
         // startSession is async; a rejection used to leave the bar in "Starting…"
         Promise.resolve().then(() => startSession()).catch((e) => {
-          globalThis.ZSSafe?.seen?.("main.startSessionClick", e);
-          try { ui.banner("warn", "Could not start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.startSessionClick.banner", _e); }
+          globalThis.ZSSafe?.seen?.("main.onActionClick", e);
+          try { ui.banner("warn", "Could not start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.onActionClick", _e); }
         });
       }
     }
@@ -4893,7 +4893,7 @@
   }
   // Hydrate the persisted re-statement budget for this conversation up front, so
   // the first tool result after a reload already knows the real tally.
-  Promise.resolve().then(() => loadSysCount()).catch((e) => globalThis.ZSSafe?.seen?.("main.loadSysCount", e));
+  Promise.resolve().then(() => loadSysCount()).catch((e) => globalThis.ZSSafe?.seen?.("main.onStatus", e));
   bg({ type: "status" }).then(onStatus);
   // HONEST (max-speed pass): this polled `status` 10x/second — but the payload
   // only changes when the socket does, and background already PUSHES
@@ -5115,7 +5115,7 @@
           Promise.resolve()
             .then(() => agentLoop(base))
             .catch((e) => {
-              globalThis.ZSSafe?.seen?.("main.agentLoop", e);
+              globalThis.ZSSafe?.seen?.("main.preHideWholeItems", e);
               try {
                 A.running = false;
                 ui.showStop(false);
@@ -5123,7 +5123,7 @@
                 P.setInputLock(false);
                 ui.banner("warn", "Agent loop stopped on an error",
                   String((e && e.message) || e).slice(0, 160) + " — press Start to continue.");
-              } catch (_e) { globalThis.ZSSafe?.seen?.("main.agentLoopRecover", _e); }
+              } catch (_e) { globalThis.ZSSafe?.seen?.("main.preHideWholeItems", _e); }
             });
         }
       }, 5);
@@ -5241,7 +5241,7 @@
     // the identity-based newReply test unconditionally true (any current id != null).
     A.sendToken = null;
     Promise.resolve().then(() => agentLoop(P.assistantCount() - 1))
-      .catch((e) => globalThis.ZSSafe?.seen?.("main.agentLoopResume", e));
+      .catch((e) => globalThis.ZSSafe?.seen?.("main.preHideWholeItems", e));
   }, 1000);
 
   // ── System-prompt re-injection fallback ───────────────────────────────────

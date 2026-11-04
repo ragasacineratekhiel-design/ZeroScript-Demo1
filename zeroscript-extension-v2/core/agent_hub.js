@@ -140,7 +140,7 @@
   // HONEST: `try { loadTemp(); } catch {}` does NOT catch a rejected promise —
   // the try/catch only sees the synchronous part. loadTemp is async, so any
   // storage failure was an unhandled rejection with nothing recording it.
-  Promise.resolve().then(loadTemp).catch((e) => globalThis.ZSSafe?.seen?.("agent_hub.loadTemp", e));
+  Promise.resolve().then(loadTemp).catch((e) => globalThis.ZSSafe?.seen?.("agent_hub.onWrite", e));
   try{ window.ZSAgentHub = API; window.__zsAgentHub = API; }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
   if(typeof self!=="undefined") try{ self.ZSAgentHub = API; }catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.onWrite", _e); }
 })();
