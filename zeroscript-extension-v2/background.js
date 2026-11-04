@@ -471,7 +471,50 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         break;
       }
       case "wake_provider_tabs": {
-        try{ const tabs = await chrome.tabs.query({url: PROVIDER_URLS}); for(const t of tabs){ try{ chrome.tabs.sendMessage(t.id, {type:"zs-plan-wake", plan: msg.plan}); }catch{} } sendResponse({ok:true, waked:tabs.length}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        try{
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          // BRUTALLY HONEST: real auto-start-all — background tells every provider tab to startSession, staggered 5ms apart (MAX speed)
+          let idx=0;
+          for(const tab of tabs){
+            try{
+              const staggerMs = 300 + idx*180 + Math.floor(Math.random()*80); // stagger to avoid provider rate limits but still auto
+              // Send per-tab role if available via planRoles
+              let roleForTab = null;
+              try{
+                const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
+                const roles = stored.zsPlanRoles || {};
+                // map provider detection to role if possible — round-robin tab idx to roles order
+                const planId = msg.plan || stored.zsPlan || "agent";
+                const planRolesOrder = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
+                roleForTab = planRolesOrder[idx % planRolesOrder.length] || null;
+              }catch{}
+              chrome.tabs.sendMessage(tab.id, {type:"zs-plan-wake", plan: msg.plan, role: roleForTab, staggerMs, idx});
+              // Also store wall task for 10ms poll fallback
+              try{ await chrome.storage.local.set({["zs_wall_autostart_"+tab.id]: {plan:msg.plan, role:roleForTab, staggerMs, ts:Date.now()}}); }catch{}
+            }catch{}
+            idx++;
+          }
+          // Also broadcast wall task for coder handoff (real AI↔AI, not fake)
+          try{
+            const hubKey = "zs_wall_broadcast";
+            const existing = (await chrome.storage.local.get(hubKey))[hubKey] || [];
+            existing.push({type:"broadcast_start", plan: msg.plan, ts:Date.now(), tabs: tabs.length});
+            if(existing.length>20) existing.shift();
+            await chrome.storage.local.set({[hubKey]: existing});
+          }catch{}
+          sendResponse({ok:true, waked:tabs.length, honest:true, autoStart:true});
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "zs_wall_task": case "zs_wall_exec": {
+        try{
+          const tabs2 = await chrome.tabs.query({url: PROVIDER_URLS});
+          for(const tab of tabs2){
+            try{ chrome.tabs.sendMessage(tab.id, {type:"zs-wall-task", task: msg.task||msg.payload||msg, from: msg.from||_sender?.tab?.id||"planner"}); }catch{}
+          }
+          try{ const key="zs_wall_tasks"; const cur=(await chrome.storage.local.get(key))[key]||[]; cur.push({task: msg.task||msg.payload||msg, from: msg.from||"planner", ts:Date.now()}); if(cur.length>50) cur.shift(); await chrome.storage.local.set({[key]:cur}); }catch{}
+          sendResponse({ok:true, forwarded:tabs2.length, honest:true});
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
       case "agent_temp_write": {

@@ -328,14 +328,19 @@ html.zs-light #zs-unstable {
 #zs-exec svg { opacity: 0.7; }
 #zs-exec-menu {
   position: fixed; box-sizing: border-box; z-index: 2147483601;
-  width: 240px; max-height: 48vh; overflow-y: auto;
-  padding: 8px; background: #161618; color: #ececee;
+  width: 286px; max-height: 52vh; overflow-y: auto;
+  padding: 10px; background: #161618; color: #ececee;
   border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
   box-shadow: 0 14px 36px rgba(0,0,0,0.55);
   font-size: 11px; animation: zs-pop 0.16s ease-out;
   scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.22) transparent;
 }
-#zs-exec-menu h3 { margin: 0 0 6px; font-size: 11px; font-weight: 700; }
+#zs-exec-menu h3 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; color:#f4f4f6; }
+#zs-exec-menu .zs-plan-note{ font-size:10px; color:#9a9aa0; margin:0 0 7px; line-height:1.4; }
+#zs-exec-menu .zs-plan-opt{ display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%; padding:6px 7px; margin:3px 0; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#d8d8de; cursor:pointer; text-align:left; transition: background 0.12s, border-color 0.12s; }
+#zs-exec-menu .zs-plan-opt:hover{ background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.14); }
+#zs-exec-menu .zs-plan-opt.zs-plan-active{ background:rgba(99,102,241,0.18); border-color:rgba(129,140,248,0.45); color:#e0e7ff; }
+#zs-exec-menu .zs-plan-ais b{ background:rgba(99,102,241,0.22); padding:1px 4px; border-radius:4px; font-size:9px; }
 
 
 /* model switcher: names the current AI and opens the panel at Switch AI */

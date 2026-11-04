@@ -166,9 +166,45 @@
     });
   }catch{}
 
-  // ── Connection & magic word — external commands handshake ──
+  // ── Connection & magic word — BRUTALLY HONEST per-role with AI name + switched variant ──
+  // User asked: planner is im connected to [ai name] and im the planner heres your listed commands
+  // coder is planner but switched with coder same with checker — we implement BOTH honest and switched
   const MAGIC_CONNECTED = "im connected to other agent";
   const MAGIC_NOT = "im not connected to other agents no external commands";
+  // Per-role with provider name — honest real magic words
+  function magicForRole(role, provider){
+    const p = (provider || roles[role] || currentRoles[role] || "other agent").toLowerCase();
+    // Honest: planner->planner, coder->coder, checker->checker
+    if(role==="planner") return `im connected to ${p} and im the planner heres your listed commands`;
+    if(role==="coder") return `im connected to ${p} and im the coder heres your listed commands`;
+    if(role==="checker") return `im connected to ${p} and im the checker heres your listed commands`;
+    return `im connected to ${p} and im the ${role} heres your listed commands`;
+  }
+  // Switched variant as user requested: planner switched with coder (planner says coder, coder says planner)
+  function magicForRoleSwitched(role, provider){
+    const p = (provider || roles[role] || currentRoles[role] || "other agent").toLowerCase();
+    if(role==="planner") return `im connected to ${p} and im the coder heres your listed commands`; // switched
+    if(role==="coder") return `im connected to ${p} and im the planner heres your listed commands`; // switched
+    if(role==="checker") return `im connected to ${p} and im the checker heres your listed commands`;
+    return `im connected to ${p} and im the ${role} heres your listed commands`;
+  }
+  // Helper: get magic for current tab's assigned role based on provider
+  function magicForCurrentTab(){
+    // Determine which role this tab is assigned to by matching provider name to role assignment
+    // If provider not found in roles, fallback to generic with currentPlan
+    try{
+      const thisProvider = (typeof window!=="undefined" && window.__zsProviderName) || (typeof ZSProvider!=="undefined" && ZSProvider.displayName) || "other agent";
+      for(const r of (PLANS[currentPlan]?.roles || [])){
+        if((currentRoles[r]||"").toLowerCase() === thisProvider.toLowerCase()){
+          return magicForRole(r, thisProvider);
+        }
+      }
+      // fallback: use first role
+      const firstRole = (PLANS[currentPlan]?.roles||[])[0];
+      if(firstRole) return magicForRole(firstRole, thisProvider);
+    }catch{}
+    return MAGIC_CONNECTED;
+  }
   let lastTabInfo = null; // {total, byProvider, arena}
   let lastCheckAt = 0;
   async function fetchTabInfo(){
@@ -244,7 +280,8 @@
     return {magic:MAGIC_NOT, external:false, need:plan.ais, have:1, connected:false, warn:"checking tabs..."};
   }
 
-  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt };
+  // Extended API with per-role magic (brutally honest upgrade)
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole };
 
   // ── 4.2.0 EXT-IN-EXT hub bridge — planner sends via wall + hub temp storage ──
   // When a wall message is sent, also write to ZSAgentHub for bridge temp storage (planner usually sender).
