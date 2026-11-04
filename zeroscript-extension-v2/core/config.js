@@ -18,8 +18,8 @@ const ZS = (() => {
     checker:{ id:"checker",name:"Checker",ais:2, roles:["coder","checker"], desc:"2 AI Coder+Checker — auto-fix" },
   };
   const DEFAULT_PLAN = "direct";
-  DEFAULT_EXEC = "single";
-  EXEC_MODES = { single: { label: "Single", def: true }, continuous: { label: "Continuous" }, loop: { label: "Loop" } };
+  const DEFAULT_EXEC = "single";
+  const EXEC_MODES = { single: { label: "Single", def: true }, continuous: { label: "Continuous" }, loop: { label: "Loop" } };
 
   // ── MAX Transport — 8 methods, 5ms ULTRA hedge, zero drops — TELEMETRY 4.2 — FACT-CHECKED ────────
   const TRANSPORT = {
@@ -541,6 +541,8 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     TRANSPORT,
     PLANS,
     DEFAULT_PLAN,
+    DEFAULT_EXEC,
+    EXEC_MODES,
     STABILITY,
     FEEDBACK,
     toolCategory,

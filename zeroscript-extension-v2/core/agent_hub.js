@@ -93,8 +93,8 @@
   const COMMUNICATOR = {
     servers: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
     hedgeMs: 5,
-    pollMs: 10,
-    batchMax: 24,
+    pollMs: 5,
+    batchMax: 32,
     version: "4.2.0 MAX",
   };
 
