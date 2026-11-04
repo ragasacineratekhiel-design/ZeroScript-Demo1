@@ -38,7 +38,7 @@
             _metrics.calls++; _metrics.avgMs = Math.round((_metrics.avgMs*0.8)+(ms*0.2));
             return r;
           }
-          // 10ms TURBO backoff: 10ms * attempt (was 50)
+          // 10ms MAX backoff: 10ms * attempt (was 50)
           if(attempt<retry) await new Promise(r=>setTimeout(r, 5*(attempt+1)));
           else return r;
         }

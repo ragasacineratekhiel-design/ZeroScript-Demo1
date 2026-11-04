@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript TURBO 10ms v4.0.0 super-fast, fact-checked
+// core/parser.js - ZeroScript MAX 10ms v4.0.0 super-fast, fact-checked
 // Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware — 10ms TTL
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here
@@ -12,7 +12,7 @@ const ZSParse = (() => {
   "use strict";
 
   // ── MAX 5ms: parse cache - doubled size, halved TTL (LRU 512, 5ms // MAX2 TTL) — truthful, super fast dedupes repeated watches ─
-  const _cache=new Map(); const CACHE_MAX=256, CACHE_TTL=10; // TURBO 10ms — was 150, now 10ms super fast (truthfully verified)
+  const _cache=new Map(); const CACHE_MAX=256, CACHE_TTL=10; // MAX 10ms — was 150, now 10ms super fast (truthfully verified)
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }
 

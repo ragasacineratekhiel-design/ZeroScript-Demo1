@@ -44,7 +44,7 @@ _One-line what this place is_
 - last update: ${new Date().toISOString()}
 `;
 
-  // ── 10× TURBO: skip heavy compress — direct store is faster for <20k. Only keep decompress for legacy pack reads.
+  // ── 10× MAX: skip heavy compress — direct store is faster for <20k. Only keep decompress for legacy pack reads.
   function decompress(pack){
     if(!pack) return "";
     if(!pack.c) return pack.v;
@@ -73,7 +73,7 @@ _One-line what this place is_
 
   function nowISO(){ try{ return new Date().toISOString(); }catch{ return ""; } }
 
-  // 10× TURBO ensureWall: 0ms in-mem hit — no 2000ms window, return instantly if exists
+  // 10× MAX ensureWall: 0ms in-mem hit — no 2000ms window, return instantly if exists
   function ensureWall(){
     if(_wall) return _wall;
     _wall = { version: WALL_VERSION, updatedAt: nowISO(), wall: WALL_SKELETON, timeline: [], facts: {} };
@@ -156,7 +156,7 @@ _One-line what this place is_
     }
   }
 
-  // ── 10× TURBO: precomputed buildContext — O(1) return, only recompute when dirty
+  // ── 10× MAX: precomputed buildContext — O(1) return, only recompute when dirty
   function recomputeContext(){
     const w=_wall || ensureWall();
     const lines=[];
@@ -209,12 +209,12 @@ _One-line what this place is_
       w.timeline.push({ t: entry.t, iso: entry.iso, evt: kind, msg: fact.slice(0,120) });
       pruneIfNeeded();
       w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
-      // micro-batch: 10ms not 80ms — 8× faster, 10ms TURBO
+      // micro-batch: 10ms not 80ms — 8× faster, 10ms MAX
       scheduleSave(5);
       try{ console.log("[zs-wall] remember", kind, fact); }catch{}
     },
     timeline: (n=20)=> (ensureWall().timeline||[]).slice(-n),
-    // 10× TURBO buildContext: cached O(1) — instant
+    // 10× MAX buildContext: cached O(1) — instant
     buildContext: ()=>{
       if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 2000) return _ctxCache; // MAX 2s
       return recomputeContext();

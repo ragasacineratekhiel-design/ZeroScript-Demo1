@@ -450,7 +450,7 @@ const ZSProvider = (() => {
     // Method 4: direct DOM + input event (last resort)
     if(!ok){
       try{
-        ed.innerHTML=""; 
+        ed.innerHTML="";
         const tn=document.createTextNode(text);
         ed.appendChild(tn);
         ed.dispatchEvent(new InputEvent("input",{bubbles:true}));

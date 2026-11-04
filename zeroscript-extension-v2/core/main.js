@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/main.js — TURBO 10ms SUPER FAST v4.0.0 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
+// core/main.js — MAX 10ms SUPER FAST v4.0.0 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
 // Drives any AI chat site through the ZSProvider interface (providers/*.js):
 // waits for the model's reply, parses ZeroScript commands (ZSParse), asks the
 // background worker to execute them on the Roblox MCP bridge, and feeds the
@@ -617,7 +617,7 @@
       }
 
       if (!doneSince) doneSince = Date.now();
-      if (Date.now() - doneSince < 10) {  // TURBO 10ms settle (was 280) — DOM is stable 10ms
+      if (Date.now() - doneSince < 10) {  // MAX 10ms settle (was 280) — DOM is stable 10ms
         await Promise.race([sleep(5), waitForDOMChange(5)]); // MAX 5ms (was 60/280)
         continue;
       }
@@ -686,7 +686,7 @@
           diag("carousel.resolved");
           await sleep(5); continue; // MAX                            // let it collapse, re-read
         }
-        await sleep(10); continue; // TURBO
+        await sleep(10); continue; // MAX
       }
       if (ZSParse.hasToolSignature(r)) {
         const calls = ZSParse.parseToolCalls(r);
@@ -826,7 +826,7 @@
   function bgKey(m){ try{ return m.type+":"+(m.name||m.server_id||"")+":"+JSON.stringify(m.arguments||""); }catch{ return m.type; } }
   function bg(msg) {
     // short cache for status/list_tools so rapid UI polls don't flood bridge
-    if(msg.type==="status" && Date.now()-ULTRA._statusAt < 10 && ULTRA._statusCache){ // TURBO 10ms (was 400)
+    if(msg.type==="status" && Date.now()-ULTRA._statusAt < 10 && ULTRA._statusCache){ // MAX 10ms (was 400)
       return Promise.resolve(ULTRA._statusCache);
     }
     const k=bgKey(msg);

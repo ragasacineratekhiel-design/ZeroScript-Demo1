@@ -5,7 +5,7 @@
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // core/agent_stability.js — ZeroScript MAX TELEMETRY 4.0.0 — SUPER FAST 10ms — UNIVERSAL AI + self-heal syntax + STOP-on-error
-// TURBO 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
+// MAX 10ms v4.0.0 — FACT-CHECKED single-prompt truthful + /force
 const ZSAgentStability = (() => {
   "use strict";
   function makeEditorHelper(getEditorFn, fallbacks = []) {
@@ -44,7 +44,7 @@ const ZSAgentStability = (() => {
     };
   }
   function makeGenerationHelper(isGeneratingFn, opts = {}) {
-    const { idleMs = 80, streamCheck = null } = opts; // TURBO 10ms 80ms tighter (was 800)
+    const { idleMs = 80, streamCheck = null } = opts; // MAX 10ms 80ms tighter (was 800)
     let lastGenTrueAt = 0, lastLen = 0;
     return function hardenedIsGenerating() {
       let gen = false;
@@ -66,10 +66,10 @@ const ZSAgentStability = (() => {
     for (let i = 0; i < maxRetries; i++) {
       try {
         await typeAndSendFn(text, images);
-        await new Promise(r => setTimeout(r, 10)); // TURBO 10ms verify (was 180)
+        await new Promise(r => setTimeout(r, 10)); // MAX 10ms verify (was 180)
         return true;
       } catch (e) { lastErr = e; }
-      await new Promise(r => setTimeout(r, 10 * (i+1))); // TURBO 10ms backoff (was 100)
+      await new Promise(r => setTimeout(r, 10 * (i+1))); // MAX 10ms backoff (was 100)
       if (i === maxRetries - 2 && text && text.length < 50000) {
         try { await navigator.clipboard.writeText(text); document.execCommand("paste"); } catch {}
       }
@@ -139,7 +139,7 @@ const ZSAgentStability = (() => {
       }
       const origGen = P.isGenerating.bind(P);
       const streamCheck = P.streamLen ? (()=>{ try { const la=P.lastAssistant(); return la? P.streamLen(la):0; } catch { return 0; } }) : null;
-      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 80, streamCheck }); // TURBO 10ms 80 (was 800)
+      P.isGenerating = makeGenerationHelper(origGen, { idleMs: 80, streamCheck }); // MAX 10ms 80 (was 800)
 
       if (!P._zsStabilityPatched) {
         P._zsStabilityPatched = true;
