@@ -29,14 +29,14 @@ const ZS = (() => {
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
     RECONNECT_MIN: 5,        // 5ms ULTRA — instant reconnect (was 10)
-    RECONNECT_MAX: 400,       // 5ms ultra cap (was 800)
-    HEARTBEAT_MS: 250,        // MAX 250ms — ABSOLUTE 1.6x faster
-    STALE_MS: 600,           // MAX 600ms — ABSOLUTE
-    HTTP_TIMEOUT: 1200,       // 5ms ultra 1.2s timeout (was 2000)
-    WS_PING_MS: 400,
+    RECONNECT_MAX: 100,       // 5ms ultra cap (was 800)
+    HEARTBEAT_MS: 62,        // MAX 250ms — ABSOLUTE 1.6x faster
+    STALE_MS: 150,           // MAX 600ms — ABSOLUTE
+    HTTP_TIMEOUT: 300,       // 5ms ultra 1.2s timeout (was 2000)
+    WS_PING_MS: 100,
     HEDGE_MS: 5,             // 5ms ULTRA hedge — super powerful (was 10)
-    BATCH_MAX: 32,            // EXT-IN-EXT 32 tools per batch (was 24)
-    CACHE_TTL_MS: 40,         // 5ms ultra 40ms cache — instant attach (was 80)
+    BATCH_MAX: 64,            // EXT-IN-EXT 32 tools per batch (was 24)
+    CACHE_TTL_MS: 10,         // 5ms ultra 40ms cache — instant attach (was 80)
     COMPRESSION: "deflate",
     PREFERRED: "ws",
     VERSION: "4.2.0 EXT-IN-EXT 5ms ULTRA",
@@ -44,15 +44,15 @@ const ZS = (() => {
 
 // ── STABILITY 4.1.0 PLAN 10ms — universal 15 AIs + orchestrated multi-AI + Wall 10ms TRIM + dry-run + spec — 10x ────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 600,          // MAX 600ms — ABSOLUTE
-  STUDIO_POLL_MS: 40,              // MAX 40ms — ABSOLUTE, Studio plugin throttles to 100
-  STUDIO_HEARTBEAT_MS: 100,         // MAX 100ms — ABSOLUTE
-  EDITOR_REDISCOVER_MS: 60,          // MAX 60ms — ABSOLUTE
-  GEN_VOTE_IDLE_MS: 15,             // MAX 15ms — ABSOLUTE, race with React render
+  AGENT_KEEPALIVE_MS: 150,          // MAX 600ms — ABSOLUTE
+  STUDIO_POLL_MS: 10,              // MAX 40ms — ABSOLUTE, Studio plugin throttles to 100
+  STUDIO_HEARTBEAT_MS: 6,         // MAX 100ms — ABSOLUTE
+  EDITOR_REDISCOVER_MS: 15,          // MAX 60ms — ABSOLUTE
+  GEN_VOTE_IDLE_MS: 5,             // MAX 15ms — ABSOLUTE, race with React render
   SEND_RETRY: 7,                    // MAX 7 retries — never lose
   RECONNECT_BACKOFF_MS: [5, 10, 20, 40], // 10ms WALL 5ms instant backoff (was 10,25,60,120)
   MAX_RECONNECT_ATTEMPTS: 30,
-  STUDIO_RECONNECT_MS: 10,          // MAX 10ms — ABSOLUTE
+  STUDIO_RECONNECT_MS: 5,          // MAX 10ms — ABSOLUTE
   INTERNAL_CACHE_MS: 10,           // 10ms honest — internal commands cached 10ms
   INTERNAL_HEDGE_MS: 5,            // 5ms hedge for start_stop_play etc — fastest
 };

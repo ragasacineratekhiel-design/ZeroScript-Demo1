@@ -25,7 +25,7 @@
     try {
       await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"agent_temp_write", key:k, value, from:payload.from, ttl:payload.ttl}, ()=>res()); }catch{ res(); }
-        setTimeout(res,150); // MAX 150
+        setTimeout(res, 37); // MAX 150
       });
     } catch {}
     // also mirror to chrome.storage for fallback (10ms)
@@ -41,7 +41,7 @@
     try{
       const r = await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"agent_temp_read", key:k}, rr=>res(rr)); }catch{ res(null); }
-        setTimeout(()=>res(null),200); // MAX 200
+        setTimeout(()=>res(null), 50); // MAX 200
       });
       if(r && r.ok && r.payload) { _cache.set(HUB_PREFIX+k, r.payload); return r.payload.value; }
     }catch{}
@@ -55,7 +55,7 @@
 
   async function listKeys(){
     try{
-      const r = await new Promise(res=>{ try{ chrome.runtime.sendMessage({type:"agent_temp_list"}, rr=>res(rr)); }catch{ res(null); } setTimeout(()=>res(null),200); }); // MAX
+      const r = await new Promise(res=>{ try{ chrome.runtime.sendMessage({type:"agent_temp_list"}, rr=>res(rr)); }catch{ res(null); } setTimeout(()=>res(null), 50); }); // MAX
       if(r && r.ok && Array.isArray(r.keys)) return r.keys;
     }catch{}
     return [..._cache.keys()].map(k=>k.replace(HUB_PREFIX,""));

@@ -131,7 +131,7 @@ const ZSGenericProvider = (() => {
   const clickContinueBtn=()=>{ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch{return false;}};
   const snapshot=()=>{ try{ const it=lastAssistant(); return {rp:(it?.textContent||"").length}; }catch{return {};}};
   const readAssistant=()=>{ const it=lastAssistant(); if(!it) return{present:false,reply:"",thinking:"",item:null}; return{present:true, reply:textWithout(it).trim(), thinking:"", item:it}; };
-  const waitFor=async(pred,timeout)=>{ const t0=Date.now(); while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(60);} return false; };
+  const waitFor=async(pred,timeout)=>{ const t0=Date.now(); while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(15);} return false; };
   const SEND_MAX_CHARS=100000;
   const truncateForSend=(t)=> t&&t.length>SEND_MAX_CHARS ? t.slice(0,SEND_MAX_CHARS-500)+"\n\n[…truncated…]\n\n"+t.slice(-500) : t;
 
@@ -140,7 +140,7 @@ const ZSGenericProvider = (() => {
     try{
       const sel=window.getSelection(); const r=document.createRange(); r.selectNodeContents(ed); sel.removeAllRanges(); sel.addRange(r);
       document.execCommand("insertText",false,text);
-      await sleep(60);
+      await sleep(15);
       if((ed.innerText||ed.textContent||"").trim().length < 10){
         if(ed.tagName==="TEXTAREA"){ ed.value=text; ed.dispatchEvent(new Event("input",{bubbles:true})); }
         else { ed.textContent=text; ed.dispatchEvent(new InputEvent("input",{bubbles:true})); }
@@ -154,7 +154,7 @@ const ZSGenericProvider = (() => {
     text=truncateForSend(text);
     await setEditorText(ed, text);
     if(images && images.length){ try{ const dt=new DataTransfer(); images.forEach((img,i)=>{ try{ const bin=atob(img.data); const arr=new Uint8Array(bin.length); for(let j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j); const f=new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}); dt.items.add(f);}catch{}}); ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true})); }catch{} }
-    await sleep(250);
+    await sleep(62);
     const btn=sendButton();
     if(btn){ try{ btn.click(); return; }catch{} }
     const o={key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}; ed.dispatchEvent(new KeyboardEvent("keydown",o));

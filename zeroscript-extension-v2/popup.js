@@ -57,11 +57,11 @@ function bind(id, fn) {
 }
 
 bind("reconnect", () => {
-  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 150)); } catch {}
+  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 37)); } catch {}
 });
 bind("restart", (e) => {
   const t = e.target; t.textContent = "Restarting…";
-  try { chrome.runtime.sendMessage({ type: "restart_mcp" }, () => { t.textContent = "⟳ Restart Roblox server"; setTimeout(refresh, 150); }); } catch { t.textContent = "⟳ Restart Roblox server"; }
+  try { chrome.runtime.sendMessage({ type: "restart_mcp" }, () => { t.textContent = "⟳ Restart Roblox server"; setTimeout(refresh, 37); }); } catch { t.textContent = "⟳ Restart Roblox server"; }
 });
 bind("kofi", () => { try { chrome.tabs.create({ url: KOFI_URL }); } catch { window.open(KOFI_URL, "_blank"); } });
 bind("settings", () => {
@@ -86,7 +86,7 @@ try {
 } catch {}
 
 refresh();
-setInterval(refresh, 500); // MAX 500ms — absolute, popup hidden when closed
+setInterval(refresh, 125); // MAX 500ms — absolute, popup hidden when closed
 
 // If opened as plain file:// HTML (not extension popup), show demo state
 try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch {}

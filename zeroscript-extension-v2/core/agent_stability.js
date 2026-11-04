@@ -66,7 +66,7 @@ const ZSAgentStability = (() => {
     for (let i = 0; i < maxRetries; i++) {
       try {
         await typeAndSendFn(text, images);
-        await new Promise(r => setTimeout(r, 10)); // MAX 10ms verify (was 180)
+        await new Promise(r => setTimeout(r, 5)); // MAX 10ms verify (was 180)
         return true;
       } catch (e) { lastErr = e; }
       await new Promise(r => setTimeout(r, 10 * (i+1))); // MAX 10ms backoff (was 100)
@@ -100,7 +100,7 @@ const ZSAgentStability = (() => {
       try { if (getEditor && document.hasFocus()) { /* keep alive */ } } catch {}
       try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch {}
       // Web Locks keepalive — holds lock so tab stays alive in background
-      try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r,100)); }); } catch {}
+      try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r, 25)); }); } catch {}
     }, 400); // MAX 400ms keepalive — 2× faster, holds lock tightly
     return () => clearInterval(iv);
   }
@@ -160,12 +160,12 @@ const ZSAgentStability = (() => {
       return true;
     } catch(e){ try{ console.log("[zs-ultra] patch failed", e);}catch{} return false; }
   }
-  try { setTimeout(tryPatch, 40); } catch {}
-  try { setTimeout(tryPatch, 80); } catch {} // MAX
-  try { setTimeout(tryPatch, 120); } catch {} // MAX
+  try { setTimeout(tryPatch, 10); } catch {}
+  try { setTimeout(tryPatch, 20); } catch {} // MAX
+  try { setTimeout(tryPatch, 30); } catch {} // MAX
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 40); // MAX
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 10); // MAX
   } catch {}
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;
@@ -173,7 +173,7 @@ const ZSAgentStability = (() => {
       let watched = window.ZSProvider;
       Object.defineProperty(window, "ZSProvider", {
         get(){ return watched; },
-        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 10); return true; },
+        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 5); return true; },
         configurable: true
       });
       if (_ZS) watched=_ZS;

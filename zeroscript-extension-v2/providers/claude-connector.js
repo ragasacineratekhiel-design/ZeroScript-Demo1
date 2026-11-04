@@ -50,7 +50,7 @@ const ZSClaudeConnector = (() => {
         log("Studio degraded — no place, but Edit mode ok");
         return last;
       }
-      await new Promise(r=> setTimeout(r, 300));
+      await new Promise(r=> setTimeout(r, 75));
     }
     return last;
   }
@@ -119,18 +119,18 @@ const ZSClaudeConnector = (() => {
   }
 
   // Try attach now and on intervals (SPA nav race)
-  try{ setTimeout(attachToProvider, 80); }catch{}
-  try{ setTimeout(attachToProvider, 400); }catch{}
-  try{ setTimeout(attachToProvider, 1200); }catch{}
+  try{ setTimeout(attachToProvider, 20); }catch{}
+  try{ setTimeout(attachToProvider, 100); }catch{}
+  try{ setTimeout(attachToProvider, 300); }catch{}
   try{
-    let tries=0; const iv=setInterval(()=>{ if(attachToProvider() || ++tries>40) clearInterval(iv); }, 200);
+    let tries=0; const iv=setInterval(()=>{ if(attachToProvider() || ++tries>40) clearInterval(iv); }, 50);
   }catch{}
   // Watch future redefine
   try{
     let watched=window.ZSProvider;
     Object.defineProperty(window,"ZSProvider",{
       get(){ return watched; },
-      set(v){ watched=v; setTimeout(attachToProvider, 30); return true; },
+      set(v){ watched=v; setTimeout(attachToProvider, 7); return true; },
       configurable:true
     });
     if(typeof ZSProvider!=="undefined" && ZSProvider!==watched) watched=ZSProvider;

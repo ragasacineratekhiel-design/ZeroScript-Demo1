@@ -81,7 +81,7 @@
   // ── ULTRA: metrics + transport awareness ─────────────────────────────────
   const ULTRA = {
     version: (ZS.APP_VERSION||"4.0.0"),
-    transport: (ZS.TRANSPORT||{PORT_WS:17613, PORT_HTTP:17614, RECONNECT_MIN:200, HEARTBEAT_MS:5000}),
+    transport: (ZS.TRANSPORT||{PORT_WS:17613, PORT_HTTP:17614, RECONNECT_MIN:100, HEARTBEAT_MS:2500}),
     metrics:{ sends:0, tools:0, avgMs:0, p95Ms:0, lastToolMs:0 },
     // micro-cache for bg status (avoid hammering bridge)
     _statusCache:null, _statusAt:0,
@@ -238,7 +238,7 @@
   // false ONLY if the user stopped while we were parked, so callers can break.
   // EVENT-DRIVEN, not polled. A chained setTimeout loop is subject to Chrome's
   // "intensive throttling": once a tab has been hidden >5 min, chained timers are
-  // clamped to ONE tick per minute, so a sleep(300) poll could take up to a full
+  // clamped to ONE tick per minute, so a sleep(75) poll could take up to a full
   // minute to notice the tab came back - the user sees the bar sit on "Paused"
   // long after they returned. visibilitychange fires immediately on unhide, so we
   // race it against a slow stop-poll (the stop path is not latency-critical).
@@ -257,7 +257,7 @@
         document.addEventListener("visibilitychange", onVis);
         // Safety net only: covers a stop click while parked, and the (unlikely)
         // case of a missed visibilitychange event.
-        const iv = setInterval(() => { if (A.stop || !document.hidden) done(); }, 500); // MAX 500ms
+        const iv = setInterval(() => { if (A.stop || !document.hidden) done(); }, 125); // MAX 500ms
       });
     } finally {
       A.parked = false;
@@ -380,7 +380,7 @@
       // Camouflage the turn we just injected without waiting on the rAF observer
       // (paused in a background tab). A couple of nudges cover the render.
       setTimeout(scheduleSweep, 5); // MAX 5ms
-      setTimeout(scheduleSweep, 10); // MAX 10ms
+      setTimeout(scheduleSweep, 5); // MAX 10ms
     }
   }
 
@@ -686,7 +686,7 @@
           diag("carousel.resolved");
           await sleep(5); continue; // MAX                            // let it collapse, re-read
         }
-        await sleep(10); continue; // MAX
+        await sleep(5); continue; // MAX
       }
       if (ZSParse.hasToolSignature(r)) {
         const calls = ZSParse.parseToolCalls(r);
@@ -1102,7 +1102,7 @@
     // Hard watchdog: even if the background worker never answers, the loop
     // gets a definitive result and continues.
     const hardCap = new Promise((res) =>
-      setTimeout(() => res({ ok: false, kind: "timeout", error: "no response from the extension worker" }), timeout + 15000)); // MAX halved
+      setTimeout(() => res({ ok: false, kind: "timeout", error: "no response from the extension worker" }), timeout + 7500)); // MAX halved
     // Stop watcher: a blocking tool (e.g. wait_job_finished) would otherwise keep
     // the loop awaiting the bridge for up to minutes, leaving the input locked and
     // the Stop button stuck. When the user halts (A.stop), abandon the wait within
@@ -2823,7 +2823,7 @@
       }, true);
 
       applyTheme();
-      setInterval(applyTheme, 1000); // MAX 1s — 2x faster theme sync
+      setInterval(applyTheme, 250); // MAX 1s — 2x faster theme sync
       renderBar();
       placeBar(); // start the per-frame anchoring loop
     }
@@ -3082,13 +3082,13 @@
       const t0 = Date.now();
       // Give the bridge a moment to actually drop before we start polling, so we
       // don't instantly match the pre-restart "connected" state.
-      await new Promise((r) => setTimeout(r, 50)); // MAX 50ms
+      await new Promise((r) => setTimeout(r, 12)); // MAX 50ms
       while (Date.now() - t0 < timeoutMs) {
         const s = await bg({ type: "status" });
         if (s && s.connected) {
           if (!id || (Array.isArray(s.servers) && s.servers.some((x) => x.id === id))) return true;
         }
-        await new Promise((r) => setTimeout(r, 300)); // MAX
+        await new Promise((r) => setTimeout(r, 75)); // MAX
       }
       return false;
     }
@@ -3168,7 +3168,7 @@
         customPrompt = ta.value;
         try { chrome.storage.local.set({ zsCustomPrompt: customPrompt }); } catch {}
         status.textContent = "Saved ✓";
-        setTimeout(() => { status.textContent = ""; }, 1600);
+        setTimeout(() => { status.textContent = ""; }, 400);
       });
       const mcpNameEl = menuEl.querySelector("#zs-mcp-name");
       const mcpUrlEl = menuEl.querySelector("#zs-mcp-url");
@@ -3197,7 +3197,7 @@
           if (!r || !r.ok) {
             setMcpBusy(false);
             mcpStatus.textContent = (r && r.error) || "Couldn't remove server";
-            setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 2400);
+            setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 600);
             return;
           }
           customMcpServers = customMcpServers.filter((s) => s.id !== id);
@@ -3212,7 +3212,7 @@
         const command = mcpUrlEl.value.trim();
         if (!name || !command) {
           mcpStatus.textContent = "Name and command required";
-          setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 1800);
+          setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 450);
           return;
         }
         const id = mcpSlug(name);
@@ -3222,7 +3222,7 @@
         if (!r || !r.ok) {
           setMcpBusy(false);
           mcpStatus.textContent = (r && r.error) || "Couldn't add server";
-          setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 2400);
+          setTimeout(() => { if (!mcpBusy) mcpStatus.textContent = ""; }, 600);
           return;
         }
         customMcpServers.push({ id, name, command });
@@ -3270,7 +3270,7 @@
         }
         const btn = setupCard.querySelector("#zs-setup-copy");
         btn.textContent = "Copied!";
-        setTimeout(() => { btn.textContent = "Copy"; }, 800); // MAX
+        setTimeout(() => { btn.textContent = "Copy"; }, 200); // MAX
       });
 
       setupCard.querySelector("#zs-setup-dismiss").addEventListener("click", () => {
@@ -3660,7 +3660,7 @@
       }
       if (!actionBtn) return;
       actionBtn.classList.add("zs-flash");
-      setTimeout(() => actionBtn.classList.remove("zs-flash"), 600); // MAX
+      setTimeout(() => actionBtn.classList.remove("zs-flash"), 150); // MAX
     }
 
     // ── Theme auto-detection (light / dark) ─────────────────────────────────
@@ -4084,8 +4084,8 @@
       t.className = "zs-toast";
       t.textContent = msg;
       root.appendChild(t);
-      setTimeout(() => t.classList.add("show"), 10);
-      setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 150); }, 2000); // MAX
+      setTimeout(() => t.classList.add("show"), 5);
+      setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 37); }, 2000); // MAX
     }
 
     function banner(kind, title, msg) {
@@ -4415,7 +4415,7 @@
   // the first tool result after a reload already knows the real tally.
   loadSysCount();
   bg({ type: "status" }).then(onStatus);
-  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 400); // MAX 400ms — 2x faster status
+  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 100); // MAX 400ms — 2x faster status
 
   // Session state is derived from the ACTUAL chat, but sites VIRTUALIZE their
   // message lists: the system-prompt turn is dropped from the DOM once it
@@ -4595,7 +4595,7 @@
   mo.observe(document.documentElement, { childList: true, subtree: true });
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 40); // MAX 40ms sweep — 16x faster, still safe CPU
+  setInterval(scheduleSweep, 10); // MAX 40ms sweep — 16x faster, still safe CPU
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 

@@ -88,7 +88,7 @@
     _persistDebounce = setTimeout(()=>{
       _persistDebounce = null;
       try{ chrome.storage.local.set({[PLAN_WALL_KEY]: wallLog.slice(-MAX_LOG)}); }catch{}
-    }, 10); // honest 10ms
+    }, 5); // honest 10ms
   }
 
   function onMessage(fn){
@@ -177,7 +177,7 @@
     try{
       const info = await new Promise(res=>{
         try{ chrome.runtime.sendMessage({type:"count_provider_tabs"}, r=>res(r)); }catch{ res(null); }
-        setTimeout(()=>res(null), 300); // MAX
+        setTimeout(()=>res(null), 75); // MAX
       });
       if(info && typeof info.total==="number"){ lastTabInfo=info; lastCheckAt=Date.now(); return info; }
     }catch{}
@@ -286,7 +286,7 @@
           });
         }
       }catch{}
-    }, 150); // MAX 150ms — 2x faster
+    }, 37); // MAX 150ms — 2x faster
   }catch{}
 
   try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}

@@ -387,7 +387,7 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(30);
     }
     return false;
   }
@@ -592,7 +592,7 @@ const ZSProvider = (() => {
     let combo = null;
     for (let i = 0; i < 60 && !combo; i++) { // up to ~15s for post-login load
       combo = [...document.querySelectorAll('button[role="combobox"]')].find((x) => x.offsetParent !== null) || null;
-      if (!combo) await sleep(250);
+      if (!combo) await sleep(62);
     }
     if (!combo || /direct/i.test(combo.textContent || "")) return; // gone or already Direct
     // Open the dropdown only if it is closed - clicking an already-open combobox
@@ -905,12 +905,12 @@ const ZSProvider = (() => {
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
   const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 120); setTimeout(_zsApply, 400);
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 120); };
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
   } catch {}
 } catch {}
 
