@@ -44,15 +44,15 @@ const ZS = (() => {
 
 // ── STABILITY 4.1.0 PLAN 10ms — universal 15 AIs + orchestrated multi-AI + Wall 10ms TRIM + dry-run + spec — 10x ────
 const STABILITY = {
-  AGENT_KEEPALIVE_MS: 800,          // MAX 800ms — perfected (was 3200)
-  STUDIO_POLL_MS: 80,               // MAX 80ms poll — perfected
-  STUDIO_HEARTBEAT_MS: 150,         // MAX 150ms heartbeat — perfected
-  EDITOR_REDISCOVER_MS: 100,         // MAX 100ms rediscovery — perfected
-  GEN_VOTE_IDLE_MS: 25,             // MAX 25ms — instant vote perfected
+  AGENT_KEEPALIVE_MS: 600,          // MAX 600ms — ABSOLUTE
+  STUDIO_POLL_MS: 40,              // MAX 40ms — ABSOLUTE, Studio plugin throttles to 100
+  STUDIO_HEARTBEAT_MS: 100,         // MAX 100ms — ABSOLUTE
+  EDITOR_REDISCOVER_MS: 60,          // MAX 60ms — ABSOLUTE
+  GEN_VOTE_IDLE_MS: 15,             // MAX 15ms — ABSOLUTE, race with React render
   SEND_RETRY: 7,                    // MAX 7 retries — never lose
   RECONNECT_BACKOFF_MS: [5, 10, 20, 40], // 10ms WALL 5ms instant backoff (was 10,25,60,120)
   MAX_RECONNECT_ATTEMPTS: 30,
-  STUDIO_RECONNECT_MS: 20,          // MAX 20ms — instant perfected
+  STUDIO_RECONNECT_MS: 10,          // MAX 10ms — ABSOLUTE
   INTERNAL_CACHE_MS: 10,           // 10ms honest — internal commands cached 10ms
   INTERNAL_HEDGE_MS: 5,            // 5ms hedge for start_stop_play etc — fastest
 };

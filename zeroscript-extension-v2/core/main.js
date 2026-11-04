@@ -225,7 +225,7 @@
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(10); // TURBO 10ms (was 120)
+      await sleep(5); // MAX 5ms
     }
     return false;
   }
@@ -257,7 +257,7 @@
         document.addEventListener("visibilitychange", onVis);
         // Safety net only: covers a stop click while parked, and the (unlikely)
         // case of a missed visibilitychange event.
-        const iv = setInterval(() => { if (A.stop || !document.hidden) done(); }, 1000);
+        const iv = setInterval(() => { if (A.stop || !document.hidden) done(); }, 500); // MAX 500ms
       });
     } finally {
       A.parked = false;
@@ -280,7 +280,7 @@
     diag("park.resumed", { parkedMs: parked });
     // Give the site a beat to repaint: a tab that was hidden has no layout, so
     // the first reads after unhide can come back stale/blank.
-    if (!A.stop) await sleep(10); // TURBO 10ms (was 400)
+    if (!A.stop) await sleep(5); // MAX 5ms
     return parked;
   }
 
@@ -308,7 +308,7 @@
       // stream shows growth → fall back to the full idle wait.
       const _settleItem = P.lastAssistant();
       const _settleLen0 = _settleItem ? P.streamLen(_settleItem) : 0;
-      await sleep(10); // TURBO 10ms (was 200)
+      await sleep(5); // MAX 5ms
       if (_settleItem && _settleItem === P.lastAssistant() &&
           P.streamLen(_settleItem) > _settleLen0) {
         await waitFor(() => !P.isGenerating(), 4000);
@@ -376,11 +376,11 @@
       // for the whole phase, so don't lift it here between an injection and the
       // next waitForResponse - it stays up until the loop / bootstrap ends.
       if (!A.starting && !A.running) ui.inputCover(false);
-      setTimeout(() => (A.injecting = false), 10); // TURBO 10ms (was 400)
+      setTimeout(() => (A.injecting = false), 5); // MAX 5ms
       // Camouflage the turn we just injected without waiting on the rAF observer
       // (paused in a background tab). A couple of nudges cover the render.
-      setTimeout(scheduleSweep, 10); // TURBO 10ms (was 200)
-      setTimeout(scheduleSweep, 25); // TURBO 25ms (was 700)
+      setTimeout(scheduleSweep, 5); // MAX 5ms
+      setTimeout(scheduleSweep, 10); // MAX 10ms
     }
   }
 
@@ -524,7 +524,7 @@
           // on Qwen kept ending "empty" with a complete command in the net tap,
           // and without the branch name the cause was unfindable from the log.
           if (Date.now() - preStartSilent > 30000) { diag("empty.why", { branch: "preStart", rep: (d.reply||"").length }); return { kind: "empty" }; } // MAX 30s
-          await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms
+          await Promise.race([sleep(5), waitForDOMChange(5)]); // MAX 5ms
           continue;
         }
       }
@@ -581,7 +581,7 @@
         // (effective) open-block reading is holding us.
         if (genOffFirstAt) { if (gen) waitedFlicker++; else if (effectiveBlock) waitedBlock++; }
         doneSince = 0;
-        await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms
+        await Promise.race([sleep(5), waitForDOMChange(5)]); // MAX 5ms
         continue;
       }
       if (stuckDone && gen) log("generating flag stuck - falling back to text stability");
@@ -610,7 +610,7 @@
             assistantCount: P.assistantCount ? P.assistantCount() : undefined,
             base, gen, started, replyLen: (d.reply || "").length });
         }
-        if (Date.now() - noTurnSince < NO_TURN_GRACE_MS) { await sleep(10); continue; } // TURBO 10ms
+        if (Date.now() - noTurnSince < NO_TURN_GRACE_MS) { await sleep(5); continue; } // MAX 5ms
       } else {
         noTurnSince = 0;
         A._noTurnLoggedAt = 0;
@@ -618,7 +618,7 @@
 
       if (!doneSince) doneSince = Date.now();
       if (Date.now() - doneSince < 10) {  // TURBO 10ms settle (was 280) — DOM is stable 10ms
-        await Promise.race([sleep(10), waitForDOMChange(10)]); // TURBO 10ms (was 60/280)
+        await Promise.race([sleep(5), waitForDOMChange(5)]); // MAX 5ms (was 60/280)
         continue;
       }
 
@@ -666,7 +666,7 @@
       );
       if (cmdShaped && P.replyUnsettled(d.item)) {
         if (!unsettledSince) unsettledSince = Date.now();
-        if (Date.now() - unsettledSince < UNSETTLED_GRACE_MS) { await sleep(10); continue; } // TURBO 10ms
+        if (Date.now() - unsettledSince < UNSETTLED_GRACE_MS) { await sleep(5); continue; } // MAX 5ms
       } else {
         unsettledSince = 0;
       }
@@ -681,10 +681,10 @@
       // No-op for every provider except Qwen. RESPONSE_TIMEOUT still bounds a truly
       // stuck carousel, so this cannot hang.
       if (P.isComparisonTurn && P.isComparisonTurn(d.item)) {
-        if (P.isGenerating()) { await sleep(10); continue; }  // TURBO 10ms
+        if (P.isGenerating()) { await sleep(5); continue; } // MAX 5ms
         if (P.resolveComparison && P.resolveComparison()) {
           diag("carousel.resolved");
-          await sleep(10); continue; // TURBO                            // let it collapse, re-read
+          await sleep(5); continue; // MAX                            // let it collapse, re-read
         }
         await sleep(10); continue; // TURBO
       }
@@ -2823,7 +2823,7 @@
       }, true);
 
       applyTheme();
-      setInterval(applyTheme, 2000); // follow the host page toggling its theme
+      setInterval(applyTheme, 1000); // MAX 1s — 2x faster theme sync
       renderBar();
       placeBar(); // start the per-frame anchoring loop
     }
@@ -3082,13 +3082,13 @@
       const t0 = Date.now();
       // Give the bridge a moment to actually drop before we start polling, so we
       // don't instantly match the pre-restart "connected" state.
-      await new Promise((r) => setTimeout(r, 100)); // TURBO 100ms (was 1200) — fast bridge check
+      await new Promise((r) => setTimeout(r, 50)); // MAX 50ms
       while (Date.now() - t0 < timeoutMs) {
         const s = await bg({ type: "status" });
         if (s && s.connected) {
           if (!id || (Array.isArray(s.servers) && s.servers.some((x) => x.id === id))) return true;
         }
-        await new Promise((r) => setTimeout(r, 700));
+        await new Promise((r) => setTimeout(r, 300)); // MAX
       }
       return false;
     }
@@ -3270,7 +3270,7 @@
         }
         const btn = setupCard.querySelector("#zs-setup-copy");
         btn.textContent = "Copied!";
-        setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+        setTimeout(() => { btn.textContent = "Copy"; }, 800); // MAX
       });
 
       setupCard.querySelector("#zs-setup-dismiss").addEventListener("click", () => {
@@ -3660,7 +3660,7 @@
       }
       if (!actionBtn) return;
       actionBtn.classList.add("zs-flash");
-      setTimeout(() => actionBtn.classList.remove("zs-flash"), 1200);
+      setTimeout(() => actionBtn.classList.remove("zs-flash"), 600); // MAX
     }
 
     // ── Theme auto-detection (light / dark) ─────────────────────────────────
@@ -4085,7 +4085,7 @@
       t.textContent = msg;
       root.appendChild(t);
       setTimeout(() => t.classList.add("show"), 10);
-      setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3500);
+      setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 150); }, 2000); // MAX
     }
 
     function banner(kind, title, msg) {
@@ -4415,7 +4415,7 @@
   // the first tool result after a reload already knows the real tally.
   loadSysCount();
   bg({ type: "status" }).then(onStatus);
-  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 800); // TURBO 800ms (was 5000) — 10ms-inspired super fast
+  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 400); // MAX 400ms — 2x faster status
 
   // Session state is derived from the ACTUAL chat, but sites VIRTUALIZE their
   // message lists: the system-prompt turn is dropped from the DOM once it
@@ -4549,7 +4549,7 @@
       ui.updateStartGate(); // block the input until a session is started
       decorate.sweep();
     };
-    if (document.hidden) setTimeout(run, 10); // TURBO 10ms (was 100)
+    if (document.hidden) setTimeout(run, 5); // MAX 5ms
     else requestAnimationFrame(run);
   }
   // Synchronous pre-hide: MutationObserver callbacks run as a microtask BEFORE
@@ -4595,7 +4595,7 @@
   mo.observe(document.documentElement, { childList: true, subtree: true });
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 80); // TURBO 10ms-inspired 80ms sweep (was 650) — 12× faster but not 10ms to avoid CPU burn
+  setInterval(scheduleSweep, 40); // MAX 40ms sweep — 16x faster, still safe CPU
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 
@@ -4616,7 +4616,7 @@
       // A Stop clicked during this 300ms window sets A.userStopped → honor it and
       // do NOT start the loop (otherwise the stop is silently ignored and the
       // freshly-started loop strands the "Stopping…" flag).
-      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 10); // TURBO 10ms (was 300) — forceful instant start
+      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 5); // MAX 5ms
     },
     onNativeStop: () => {
       // A click on the site's own stop = a deliberate manual stop → suppress

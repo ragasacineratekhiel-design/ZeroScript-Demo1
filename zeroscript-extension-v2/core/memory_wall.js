@@ -216,7 +216,7 @@ _One-line what this place is_
     timeline: (n=20)=> (ensureWall().timeline||[]).slice(-n),
     // 10× TURBO buildContext: cached O(1) — instant
     buildContext: ()=>{
-      if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 5000) return _ctxCache;
+      if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 2000) return _ctxCache; // MAX 2s
       return recomputeContext();
     },
     // ── 4.0.0 DYNAMIC TREE-TRIMMING — importance-weighted pruning (keeps 10ms budget) ──
@@ -250,7 +250,7 @@ _One-line what this place is_
     buildTrimmedContext(query, budget=600){
       if(!query || !String(query).trim()) return this.buildContext();
       const trimmedWall = this.trimContextFor(query, budget);
-      if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 5000 && !query) return _ctxCache;
+      if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 2000 && !query) return _ctxCache; // MAX 2s
       const w=ensureWall();
       const lines=[];
       lines.push(`MemoryWall v${w.version} @ ${w.updatedAt} [trimmed ${trimmedWall.length}/${(w.wall||"").length}]`);

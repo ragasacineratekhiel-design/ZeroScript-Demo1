@@ -161,11 +161,11 @@ const ZSAgentStability = (() => {
     } catch(e){ try{ console.log("[zs-ultra] patch failed", e);}catch{} return false; }
   }
   try { setTimeout(tryPatch, 40); } catch {}
-  try { setTimeout(tryPatch, 250); } catch {}
-  try { setTimeout(tryPatch, 300); } catch {}
+  try { setTimeout(tryPatch, 80); } catch {} // MAX
+  try { setTimeout(tryPatch, 120); } catch {} // MAX
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 80);
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 40); // MAX
   } catch {}
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;

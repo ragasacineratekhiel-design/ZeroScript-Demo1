@@ -286,7 +286,7 @@
           });
         }
       }catch{}
-    }, 300); // MAX 300 — faster hub bridge
+    }, 150); // MAX 150ms — 2x faster
   }catch{}
 
   try{ window.ZSPlanWall = API; window.__zsPlanWall = API; }catch{}

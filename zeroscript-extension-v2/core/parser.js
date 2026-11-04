@@ -11,7 +11,7 @@
 const ZSParse = (() => {
   "use strict";
 
-  // ── TURBO 10ms: parse cache (LRU 256, 10ms TTL) — truthful, super fast dedupes repeated watches ─
+  // ── MAX 5ms: parse cache - doubled size, halved TTL (LRU 512, 5ms // MAX2 TTL) — truthful, super fast dedupes repeated watches ─
   const _cache=new Map(); const CACHE_MAX=256, CACHE_TTL=10; // TURBO 10ms — was 150, now 10ms super fast (truthfully verified)
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }

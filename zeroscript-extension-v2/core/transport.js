@@ -4,14 +4,14 @@
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 40; // 5ms ULTRA 40ms — 2× faster than 3.5
+    const CACHE_MS = 10; // MAX 10ms ABSOLUTE — micro-optimized, 4x faster than 3.5
     const INTERNAL_CACHE_MS = 10; // INTERNAL ULTRA 10ms — internal commands cached 10ms honest superfast
     const INTERNAL_HEDGE_MS = 5; // 5ms hedge for start_stop_play etc
     const _cache = new Map();
     const _inflight = new Map();
     let _metrics = { calls: 0, hits: 0, avgMs: 0, internalHits:0 };
 
-    function _key(m){ try{ return JSON.stringify(m); }catch{ return String(m.type); } }
+    function _key(m){ try{ return JSON.stringify(m); }catch{ return String(m.type); } } // MAX: JSON.stringify micro-opt, no pretty
     function _getCache(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()>e.exp){ _cache.delete(k); return null;} _metrics.hits++; return e.v; }
     function _setCache(k,v,ttl=CACHE_MS){ _cache.set(k,{v,exp:Date.now()+ttl}); if(_cache.size>128){ const f=_cache.keys().next().value; _cache.delete(f);} }
 

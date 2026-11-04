@@ -22,11 +22,11 @@ const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","h
 
 const EXT_VERSION = "4.2.0";
 const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
-const RECONNECT_MAX = 300;     // MAX 300 cap — 2× faster than 4.1, still safe
-const HEARTBEAT_MS = 250;    // MAX 250ms — fastest drop, 1.6× faster
-const STALE_SOCKET_MS = 600;// MAX 600ms — instant half-open catch
+const RECONNECT_MAX = 200;     // MAX 200 cap — ABSOLUTE
+const HEARTBEAT_MS = 150;    // MAX 150ms — ABSOLUTE, browser will throttle hidden to 1000
+const STALE_SOCKET_MS = 400;// MAX 400ms — ABSOLUTE
 const REQUEST_TIMEOUT_DEFAULT = 90000;
-const HTTP_TIMEOUT = 800;   // MAX 800ms tight — fastest reliable
+const HTTP_TIMEOUT = 600;   // MAX 600ms — ABSOLUTE, will timeout on slow bridge
 const HEDGE_MS = 5;         // MAX 5ms hedge — perfected matches config
 
 let ws=null, connected=false, wsHealthy=false;
@@ -39,7 +39,7 @@ let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 // ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
 const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
-setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 5000);
+setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 2000); // MAX 2s
 
 let fastestTransport='ws'; // learned
 let httpHealthy=false;
@@ -91,9 +91,9 @@ try{
     }
   };
   // announce leadership attempt
-  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 100);
+  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 50); // MAX 50ms
   // periodic leader ping
-  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 800); // TURBO 800 (was 3000)
+  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 400); // MAX 400ms
   // default: we try to be leader; if another tab already is, we'll be told
   isLeader=true;
 }catch(e){ bc=null; isLeader=true; }
@@ -506,7 +506,7 @@ chrome.runtime.onStartup.addListener(()=>{ fetchToken(); connect(); });
 chrome.runtime.onInstalled.addListener(()=>{ fetchToken(); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
-  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.02}); // MAX 1.2s keepalive — fastest MV3 wake
+  chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.5}); // BRUTAL HONEST: chrome.alarms clamps to 1m minimum — 0.02 ignored, using 30s + setInterval fallback
   chrome.alarms.onAlarm.addListener(()=>{ if(!connected && isLeader) connect(); });
 }catch{}
 // initial
