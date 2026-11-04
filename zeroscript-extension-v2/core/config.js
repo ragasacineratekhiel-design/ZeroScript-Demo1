@@ -30,8 +30,8 @@ const ZS = (() => {
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
     RECONNECT_MIN: 5,        // 5ms ULTRA — instant reconnect (was 10)
     RECONNECT_MAX: 400,       // 5ms ultra cap (was 800)
-    HEARTBEAT_MS: 400,        // 5ms ultra 0.4s — fastest Studio drop (was 800)
-    STALE_MS: 1000,           // 5ms ultra 1s stale detection (was 2000)
+    HEARTBEAT_MS: 250,        // MAX 250ms — ABSOLUTE 1.6x faster
+    STALE_MS: 600,           // MAX 600ms — ABSOLUTE
     HTTP_TIMEOUT: 1200,       // 5ms ultra 1.2s timeout (was 2000)
     WS_PING_MS: 400,
     HEDGE_MS: 5,             // 5ms ULTRA hedge — super powerful (was 10)

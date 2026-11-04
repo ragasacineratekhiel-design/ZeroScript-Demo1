@@ -39,7 +39,7 @@ let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 // ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
 const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
-setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 2000); // MAX 2s
+setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 1000); // MAX 1s — ABSOLUTE
 
 let fastestTransport='ws'; // learned
 let httpHealthy=false;

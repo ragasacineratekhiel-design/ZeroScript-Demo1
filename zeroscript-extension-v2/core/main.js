@@ -436,17 +436,17 @@
     let unsettledSince = 0; // command-shaped reply whose read is not yet stable
     const WARMUP_MS = T.WARMUP_MS;
     const REASON_NOREPLY_MS = T.REASON_NOREPLY_MS;
-    const NO_TURN_GRACE_MS = 20000; // MAX 20s — faster empty detection
+    const NO_TURN_GRACE_MS = 15000; // MAX 15s — ABSOLUTE
     // Upper bound on holding off a parse verdict while a provider reports its
     // read is unsettled (Qwen A/B dual turn still landing). A genuinely stuck
     // read still resolves after this and is parsed as-is.
-    const UNSETTLED_GRACE_MS = 5000; // MAX 5s — faster settle
+    const UNSETTLED_GRACE_MS = 3000; // MAX 3s — ABSOLUTE
     // Once the generating flag has been OFF this long, the model has clearly
     // stopped streaming - so an "open tool block" reading is a DOM-churn/parse
     // artifact, not live output, and must not keep the watcher waiting. Provider
     // -neutral: while a model is genuinely streaming, gen stays true and this is
     // never reached.
-    const GEN_STOP_GRACE_MS = 1500; // MAX 1.5s — faster stop detect
+    const GEN_STOP_GRACE_MS = 1000; // MAX 1s — ABSOLUTE
 
     while (Date.now() - lastActiveAt < TIMEOUT) {
       if (A.stop) return { kind: "stopped" };

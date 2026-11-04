@@ -4,7 +4,7 @@
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 10; // MAX 10ms ABSOLUTE — micro-optimized, 4x faster than 3.5
+    const CACHE_MS = 5; // MAX 5ms ABSOLUTE — floor, 8x faster
     const INTERNAL_CACHE_MS = 10; // INTERNAL ULTRA 10ms — internal commands cached 10ms honest superfast
     const INTERNAL_HEDGE_MS = 5; // 5ms hedge for start_stop_play etc
     const _cache = new Map();

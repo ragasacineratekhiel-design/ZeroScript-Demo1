@@ -10,8 +10,8 @@
 
   const WALL_VERSION = "4.0.0 TELEMETRY 5ms TRIM";
   const WALL_KEY_PREFIX = "zsWall:";
-  const WALL_MAX_ENTRIES = 300;
-  const WALL_PRUNE_AT = 360;
+  const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
+  const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
 
   const WALL_SKELETON = `# Project memory — ZeroScript MAX Wall
 ## Overview
