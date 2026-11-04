@@ -216,6 +216,9 @@
     parked: false,
     // Timestamp of the last successful tool-catalogue refresh (see ensureTools).
     toolsAt: 0,
+    pendingStop: false, // Continuous/Loop: deferred stop — only honors after tool progress
+    lastToolProgressAt: 0,
+    hadProgressSinceStart: false,
   };
 
   async function waitFor(pred, timeout) {
@@ -1308,6 +1311,9 @@
     A.stop = false;
     A.stopping = false; // clean slate: never inherit a stale "Stopping…" from a
                         // Stop click that landed before this loop actually started
+    A.pendingStop = false;
+    A.hadProgressSinceStart = false;
+    A.lastToolProgressAt = 0;
     A.loopKey = null; // pinned by syncSessionState once this chat has an id + content
     let truncCount = 0;
     const MAX_TRUNC = 6;
@@ -1317,9 +1323,12 @@
     ui.showStop(true);
     P.setInputLock(true); // prevent user from typing while the agent is active
     ui.inputCover(true);  // keep the "Agent is working" cover up for the WHOLE loop
-    diag("loop.start", { base });
+    diag("loop.start", { base, exec: currentExec });
     try {
       while (!A.stop) {
+        if (A.pendingStop && !A.toolRunning && A.hadProgressSinceStart) {
+          if (honorPendingStopIfNeeded("idleBoundary")) break;
+        }
         // Gate the WHOLE cycle on tab visibility. We only advance - read the
         // reply, PARSE it, EXECUTE a tool, inject the result - while the AI tab
         // is the FOREGROUND tab of its Edge window. document.visibilityState
@@ -1420,7 +1429,36 @@
           base = await submitAndGetBase(ZS.FEEDBACK.parseError(res.reason, failName));
           continue;
         }
-        if (res.kind === "text") break; // final answer
+        if (res.kind === "text") {
+          // Exec modes: Single stops here (default), Continuous auto-continues until full game, Loop routes via planner↔coder↔checker
+          if (currentExec === "single") break;
+          if (currentExec === "continuous") {
+            // Continuous: one prompt → full game. Don't end on first text answer — push AI to keep building.
+            // Heuristic: if the answer looks like completion (mentions done/complete/finished and no TODO), we truly stop.
+            const txt = (res.text || "").toLowerCase();
+            const looksDone = txt.length>20 && /(game complete|build complete|all .* done|\bfully implemented\b|ready to play|enjoy your game)/.test(txt) && !/todo|remaining|next step|still need|missing/i.test(txt);
+            if (looksDone) { diag("exec.continuous.done"); break; }
+            // Otherwise ask to continue building
+            diag("exec.continuous.continue");
+            // Also publish to hub so other AI tabs (planner/coder) can see the state
+            try{ window.ZSAgentHub && window.ZSAgentHub.write("zsExecState",{mode:"continuous",text:res.text.slice(0,8000),ts:Date.now()},120000); }catch{}
+            base = await submitAndGetBase("Continue building the game — check what is still missing (scripts, UI, game loop, polish) and keep coding with execute_luau/multi_edit. Don\'t stop until the full playable game is done.");
+            continue;
+          }
+          if (currentExec === "loop") {
+            const txt2=(res.text||"").toLowerCase();
+            const loopDone=/\b(done|complete|finished|ready)\b/.test(txt2) && !/todo|next/.test(txt2);
+            if(loopDone) { diag("exec.loop.done"); break; }
+            // Loop: publish to hub and ping plan wall for planner→coder→checker handoff
+            try{
+              window.ZSAgentHub && window.ZSAgentHub.write("zsLoopState",{mode:"loop", text:res.text.slice(0,8000), plan:currentPlan, ts:Date.now()},120000);
+              window.ZSPlanWall && window.ZSPlanWall.send && window.ZSPlanWall.send("planner","coder",{type:"loop_text", text:res.text},"loop");
+            }catch{}
+            base = await submitAndGetBase("Loop turn — Planner reviewed, Coder implements, Checker validates. Continue the loop: build/fix the next piece with execute_luau. Keep the hub (ZSAgentHub) updated via zsLoopState. Stop only when the game is fully playable.");
+            continue;
+          }
+          break;
+        }
 
         if (res.kind === "tool") {
           const calls = res.calls;
@@ -1478,6 +1516,13 @@
             decorate.toolBox(res.item, call.tool, "err", "stopped", true, "", category);
             break;
           }
+          const isProgress = !feedback.startsWith("ERROR") && /^(execute_luau|multi_edit|edit_luau|create_script|create_luau|place_model|insert_script)/.test(call.tool);
+          if (isProgress) { A.hadProgressSinceStart = true; A.lastToolProgressAt = Date.now(); }
+          // If user requested deferred stop (Continuous/Loop), honor only after a successful progress tool
+          if (A.pendingStop && isProgress) {
+            diag("tool.progressBoundary",{tool:call.tool});
+            // Flush result UI already done above? Actually decorate still pending below - but we handle pendingStop after flush
+          }
           const isErr = feedbackIsError(feedback);
           const outBody = stripOutputPrefix(feedback);
           // Trace the chip's DERIVED phase vs summary. Blender (and any MCP whose
@@ -1518,6 +1563,13 @@
             id: P.lastAssistantId ? P.lastAssistantId() : undefined,
           };
 
+          // Continuous/Loop exec mode: honor deferred stop at progress boundary (no half-coded blocks)
+          if (A.pendingStop && isProgress) {
+            // still send the tool feedback so conversation stays consistent, then honor
+            let _toSend = feedback; _toSend = withSysResend(_toSend); const _images = A.pendingImages; A.pendingImages=null; diag("images.consumed",{count:_images? _images.length:0});
+            try{ base = await submitAndGetBase(_toSend, _images); }catch{}
+            honorPendingStopIfNeeded("progressBoundary"); break;
+          }
           // Re-inject the command list every REMIND_TOOLS_EVERY successful calls.
           // Appended UNDER the tool result and clearly marked as a reminder, so a
           // model that has drifted from the exact command names gets re-anchored
@@ -1558,6 +1610,7 @@
     } finally {
       A.running = false;
       A.stop = false;
+      A.pendingStop = false;
       // Keep the "Stopping…" state while the site's stream is still draining
       // after a user stop: the loop often ends BEFORE the native stop takes
       // effect (loop.end fires with gen still true - seen live on DeepSeek),
@@ -1670,8 +1723,40 @@
     } catch { return false; }
   }
   function stopLoop() {
-    if (A.stopping) return; // already winding down - ignore double-clicks
-    diag("stopLoop");
+    if (A.stopping && !A.pendingStop) return; // already winding down - ignore double-clicks (but allow pendingStop re-assert)
+    diag("stopLoop",{exec:currentExec, pending:A.pendingStop});
+    const isDeferred = (currentExec === "continuous" || currentExec === "loop");
+    // Continuous / Loop: defer actual halt until a tool makes progress (no half-coded blocks)
+    if (isDeferred && !A.pendingStop) {
+      // If a tool is currently running, park as pending — do NOT abort mid-execute_luau/multi_edit
+      if (A.toolRunning) {
+        A.pendingStop = true;
+        A.stopping = true;
+        A.stopAt = Date.now();
+        A.stopStreamLen = P.streamLen ? P.streamLen() : 0;
+        ui.markStopping();
+        ui.toast("⏳ Will stop after this tool finishes — no half-coded blocks…");
+        diag("stop.defer.toolRunning");
+        return;
+      }
+      // If no tool running but we are mid-generation, also defer to next progress boundary unless already had progress
+      if (!A.hadProgressSinceStart) {
+        // allow immediate if we already waited one tool? But rule: "only stop when it made progress"
+        // If we never made progress yet, we still defer until one successful tool
+        A.pendingStop = true;
+        A.stopping = true;
+        A.stopAt = Date.now();
+        ui.markStopping();
+        ui.toast("⏳ Will stop after next progress…");
+        diag("stop.defer.noProgressYet");
+        return;
+      }
+      // Had progress already — fall through to immediate stop (still safe boundary)
+    }
+    if (A.pendingStop) { // second click while pending -> force immediate
+      diag("stop.force");
+    }
+    A.pendingStop = false;
     A.stop = true;
     A.stopping = true;
     A.stopAt = Date.now(); // grace anchor for the regenerate-as-resume gates
@@ -1703,6 +1788,21 @@
     ui.markStopping();    // instant feedback: button → "⏳ Stopping…", disabled
     P.stopGeneration();
     ui.toast("Stopping…");
+  }
+  function honorPendingStopIfNeeded(reason){
+    if (!A.pendingStop) return false;
+    diag("stop.honored",{reason});
+    A.pendingStop=false;
+    A.stop=true;
+    A.stopping=true;
+    A.stopAt=Date.now();
+    A.userStopped=true;
+    A.resumeArmed=false;
+    A.injectHideUntil=0;
+    markStoppedTurn();
+    P.stopGeneration();
+    ui.toast("Stopped — progress saved ✓");
+    return true;
   }
 
   // The full system prompt for the CURRENT provider and user settings. One
@@ -2618,6 +2718,11 @@
     let planRoles = {}; // role -> provider name
     try{ chrome.storage.local.get(["zsPlan","zsPlanRoles"], r=>{ if(r.zsPlan) currentPlan=r.zsPlan; if(r.zsPlanRoles) planRoles=r.zsPlanRoles; try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch{} if(planBtn) updatePlanBtn(); }); }catch{}
     try{ chrome.storage.onChanged.addListener((ch,area)=>{ if(area!=="local") return; if(ch.zsPlan) { currentPlan=ch.zsPlan.newValue; try{ window.__zsPlan=currentPlan;}catch{} updatePlanBtn(); } if(ch.zsPlanRoles) { planRoles=ch.zsPlanRoles.newValue||{}; try{ window.__zsPlanRoles=planRoles;}catch{} } }); }catch{}
+    // ── Exec Mode state (Single/Continuous/Loop) ──
+    let currentExec = "single";
+    let execBtn, execMenuEl;
+    try{ chrome.storage.local.get(["zsExecMode"], r=>{ if(r.zsExecMode) currentExec=r.zsExecMode; try{ window.__zsExecMode=currentExec; }catch{} if(execBtn) updateExecBtn(); }); }catch{}
+    try{ chrome.storage.onChanged.addListener((ch,area)=>{ if(area!=="local") return; if(ch.zsExecMode) { currentExec=ch.zsExecMode.newValue; try{ window.__zsExecMode=currentExec; }catch{} updateExecBtn(); } }); }catch{}
 
     function build() {
       root = document.createElement("div");
@@ -2633,6 +2738,7 @@
           <span id="zs-brand">ZeroScript <span class="zs-free">v${EXT_VERSION}</span></span>
           <span id="zs-state"></span>
           <button id="zs-action"></button>
+          <button id="zs-exec" aria-label="Exec Mode" title="Exec Mode — Single / Continuous / Loop"><span id="zs-exec-name">Single</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button id="zs-plan" aria-label="Switch Plan" title="Switch Plan — Direct / Agent / Plan / Checker"><span id="zs-plan-name">Direct</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button id="zs-stop" hidden>■ Stop</button>
           <a id="zs-discord" href="https://discord.gg/D5G2HAzX8z" target="_blank" rel="noopener" title="Need help? Join our Discord"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></a>
@@ -2640,6 +2746,7 @@
           <button id="zs-support" aria-label="Support ZeroScript" title="Support ZeroScript"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
         </div>
         <div id="zs-menu" hidden></div>
+        <div id="zs-exec-menu" hidden></div>
         <div id="zs-plan-menu" hidden></div>
         ${P.unstableWarning ? `<button id="zs-unstable" aria-label="Provider may be unstable" hidden>⚠ unstable</button>` : ""}
       `;
@@ -2652,6 +2759,8 @@
       stopBtn = root.querySelector("#zs-stop");
       planBtn = root.querySelector("#zs-plan");
       planMenuEl = root.querySelector("#zs-plan-menu");
+      execBtn = root.querySelector("#zs-exec");
+      execMenuEl = root.querySelector("#zs-exec-menu");
       switchBtn = root.querySelector("#zs-switch");
       supportBtn = root.querySelector("#zs-support");
       discordEl = root.querySelector("#zs-discord");
@@ -2700,15 +2809,17 @@
         }
       };
       if(planBtn){ planBtn.addEventListener("click", (e)=>{ e.stopPropagation(); togglePlanMenu(); }); updatePlanBtn(); }
+      if(execBtn){ execBtn.addEventListener("click", (e)=>{ e.stopPropagation(); toggleExecMenu(); }); updateExecBtn(); }
       switchBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(false); });
       supportBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(true); });
       openMenuFn = (toSupport) => { if (menuEl.hidden) toggleMenu(toSupport); };
       document.addEventListener("click", (e) => {
-        if (menuEl.hidden) return;
-        if (!menuEl.contains(e.target) && !switchBtn.contains(e.target) && !supportBtn.contains(e.target))
+        if (!menuEl.hidden && !menuEl.contains(e.target) && !switchBtn.contains(e.target) && !supportBtn.contains(e.target))
           menuEl.hidden = true;
         if (planMenuEl && !planMenuEl.hidden && !planMenuEl.contains(e.target) && !planBtn.contains(e.target))
           planMenuEl.hidden = true;
+        if (execMenuEl && !execMenuEl.hidden && !execMenuEl.contains(e.target) && !execBtn.contains(e.target))
+          execMenuEl.hidden = true;
       }, true);
 
       applyTheme();
@@ -2824,9 +2935,55 @@
         }
         planMenuEl.hidden=false;
         if(menuEl) menuEl.hidden=true;
+        if(execMenuEl) execMenuEl.hidden=true;
       } else {
         planMenuEl.hidden=true;
       }
+    }
+    // ── Exec Mode logic (Single/Continuous/Loop) ──
+    const EXEC_META={ single:{label:"Single", hint:"One prompt → build done"}, continuous:{label:"Continuous", hint:"Keeps building until full game done; Stop waits for progress"}, loop:{label:"Loop", hint:"Planner ↔ Coder ↔ Checker loop; Stop waits for progress"} };
+    function updateExecBtn(){
+      if(!execBtn) return;
+      const m=EXEC_META[currentExec]||EXEC_META.single;
+      execBtn.dataset.exec=currentExec;
+      const el=execBtn.querySelector("#zs-exec-name"); if(el) el.textContent=m.label;
+      execBtn.title=`Exec — ${m.label}: ${m.hint} (click to switch)`;
+      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch{}
+    }
+    function buildExecMenu(){
+      if(!execMenuEl) return;
+      execMenuEl.replaceChildren();
+      for(const [k,meta] of Object.entries(EXEC_META)){
+        const b=document.createElement("button"); b.className="zs-exec-row"+(k===currentExec?" active":""); b.dataset.exec=k; b.setAttribute("aria-selected", k===currentExec?"true":"false");
+        const dot=document.createElement("span"); dot.className="zs-exec-dot";
+        const info=document.createElement("span"); info.className="zs-exec-info";
+        const tt=document.createElement("span"); tt.className="zs-exec-title"; tt.textContent=meta.label;
+        const hh=document.createElement("span"); hh.className="zs-exec-hint"; hh.textContent=meta.hint;
+        info.append(tt, hh); b.append(dot, info);
+        b.addEventListener("click",(ev)=>{ ev.stopPropagation(); setExecMode(k); execMenuEl.hidden=true; });
+        execMenuEl.appendChild(b);
+      }
+    }
+    function setExecMode(v){
+      currentExec=v;
+      updateExecBtn(); buildExecMenu();
+      try{ chrome.storage.local.set({zsExecMode: currentExec}); }catch{}
+      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; window.ZSAgentHub && window.ZSAgentHub.write && window.ZSAgentHub.write("__zsExecMode", currentExec, 120000); }catch{}
+      try{ chrome.runtime.sendMessage({kind:"zs_exec_update", exec: currentExec}); }catch{}
+      toast(`Exec: ${EXEC_META[v]?.label||v}`);
+      diag("exec.changed",{exec:v});
+    }
+    function toggleExecMenu(){
+      if(!execMenuEl) return;
+      if(execMenuEl.hidden){
+        buildExecMenu();
+        if(execBtn && execMenuEl){
+          const r=execBtn.getBoundingClientRect();
+          execMenuEl.style.left=Math.max(8, Math.round(r.left - 90))+"px";
+          execMenuEl.style.bottom=Math.max(8, Math.round(window.innerHeight - r.top + 8))+"px";
+        }
+        execMenuEl.hidden=false; if(menuEl) menuEl.hidden=true; if(planMenuEl) planMenuEl.hidden=true;
+      } else execMenuEl.hidden=true;
     }
 
     function onActionClick() {

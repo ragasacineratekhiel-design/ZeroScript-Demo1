@@ -20,14 +20,14 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.1.1";
-const RECONNECT_MIN = 10;    // TURBO 10ms ultra (was 80)
-const RECONNECT_MAX = 800;     // TURBO 800 (was 2500) — faster cap
-const HEARTBEAT_MS = 800;    // TURBO 0.8s — super fast drop (was 2800)
-const STALE_SOCKET_MS = 2000;// TURBO 2s — fast half-open catch (was 5000)
+const EXT_VERSION = "4.2.0";
+const RECONNECT_MIN = 5;    // TURBO 10ms ultra (was 80)
+const RECONNECT_MAX = 400;     // TURBO 800 (was 2500) — faster cap
+const HEARTBEAT_MS = 400;    // TURBO 0.8s — super fast drop (was 2800)
+const STALE_SOCKET_MS = 1000;// TURBO 2s — fast half-open catch (was 5000)
 const REQUEST_TIMEOUT_DEFAULT = 130000;
-const HTTP_TIMEOUT = 2000;   // TURBO 2s tight (was 5000)
-const HEDGE_MS = 10;         // TURBO 10ms hedge — super fast (was 80) matches config TRANSPORT
+const HTTP_TIMEOUT = 1200;   // TURBO 2s tight (was 5000)
+const HEDGE_MS = 5;         // TURBO 10ms hedge — super fast (was 80) matches config TRANSPORT
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -37,6 +37,10 @@ let studioConnected=null, studioApp=null, studioProc=null;
 let bridgeToken=null, bridgeCaps=[];
 let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
+// ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
+const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
+setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 5000);
+
 let fastestTransport='ws'; // learned
 let httpHealthy=false;
 
@@ -468,6 +472,22 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       }
       case "wake_provider_tabs": {
         try{ const tabs = await chrome.tabs.query({url: PROVIDER_URLS}); for(const t of tabs){ try{ chrome.tabs.sendMessage(t.id, {type:"zs-plan-wake", plan: msg.plan}); }catch{} } sendResponse({ok:true, waked:tabs.length}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "agent_temp_write": {
+        try{ const k=String(msg.key||""); const exp=Date.now()+(msg.ttl||120000); agentTemp.set(k,{value:msg.value, from:msg.from||"planner", t:Date.now(), ttl:msg.ttl||120000, exp}); // also propagate to bridge HTTP if available (fire-and-forget)
+        try{ fetch(`${HTTP_BASE}/api/agent_temp`,{method:"POST", headers:{"Content-Type":"application/json", ...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, body:JSON.stringify({key:k, value:msg.value, from:msg.from}), cache:"no-store"}).catch(()=>{}); }catch{}
+        sendResponse({ok:true, key:k}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "agent_temp_read": {
+        try{ const k=String(msg.key||""); let v=agentTemp.get(k); if(v && v.exp && Date.now()>v.exp){ agentTemp.delete(k); v=null; } if(v) sendResponse({ok:true, payload:v}); else { // try HTTP fallback
+        try{ const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"}); if(rr.ok){ const jj=await rr.json(); if(jj && jj.value!==undefined) { agentTemp.set(k,jj); sendResponse({ok:true, payload:jj}); break; } } }catch{}
+        sendResponse({ok:false, error:"not found"}); } }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "agent_temp_list": {
+        try{ const keys=[...agentTemp.keys()]; sendResponse({ok:true, keys}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
       case "reconnect":
