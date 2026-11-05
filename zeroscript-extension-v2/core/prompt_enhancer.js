@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/prompt_enhancer.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
+// core/prompt_enhancer.js — ZeroScript MAX 4.3.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
 // BAD→BEST in <0.5ms enhance + 5ms dry-run + 10ms plan wall — precompiled regex, trimmed wallCtx, spec contract upstream.
 // SWITCH PLAN: Direct/Agent/Plan/Checker orchestrated multi-AI with 10ms BroadcastChannel wall — honest superfast.
 // FACT-CHECK: prompts ALONE don't make Flash==Pro. REAL boost is INTERNAL+EXTERNAL+RUNTIME+PLAN: planner + validator + memory + sandbox + wall.
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated";
+  const ENHANCER_VERSION = "4.4.0";
 
   function getPlanOrchestration(raw){
     try{
@@ -22,7 +22,7 @@
           const logs=wall.getWallLog().slice(-3);
           if(logs.length) wallSnippet=`\nRecent wall (10ms):\n`+logs.map(m=>`[${m.from}→${m.to} ${m.phase} @${new Date(m.t).toISOString().slice(11,19)}] ${JSON.stringify(m.payload).slice(0,120)}`).join("\n");
         }
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.wall", _e); }
       const roleList=planDef.roles.join(" → ");
       const assigned=Object.entries(roles).map(([k,v])=>`${k}:${v}`).join(", ") || "auto";
       return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${planDef.roles.length===3 ? "Planner designs blueprint + file tree, Coder builds (Instance.new + multi_edit), Checker audits + fixes. Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review})." : planDef.roles[0]==="planner" ? "Planner → Coder: Planner outputs blueprint (phases + paths + economy), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff." : "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes fix list to wall 10ms."}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
@@ -65,7 +65,7 @@ With this scaffolding Flash/Sonnet/Mini behave ~20-35% closer to Pro/Opus/Astra 
   function getTestContract(raw, wallCtx, theme){
     try{
       if(window.ZSSandbox && window.ZSSandbox.inferTestContract) return window.ZSSandbox.inferTestContract(raw, wallCtx, theme);
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.getTestContract", _e); }
     // fallback tiny heuristic if sandbox not loaded
     const hasTest = /test|spec|describe\(|expect\(/i.test(wallCtx||"");
     if(!hasTest) return "";
@@ -257,8 +257,8 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
         if (!def) continue;
         combined += (combined ? "\n\n" : "") + def.template(body, theme, wallCtxPlus, placeInfo);
       }
-      try{ (window.__zsPromptStats||(window.__zsPromptStats={})).slash=(window.__zsPromptStats.slash||0)+1; }catch{}
-      try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("slash", `/${slash.cmds.join("+")} "${body.slice(0,40)}" → ${slash.cmds.join("+")} [10ms]`, "prompt_enhancer"); }catch{}
+      try{ (window.__zsPromptStats||(window.__zsPromptStats={})).slash=(window.__zsPromptStats.slash||0)+1; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.enhance", _e); }
+      try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("slash", `/${slash.cmds.join("+")} "${body.slice(0,40)}" → ${slash.cmds.join("+")} [10ms]`, "prompt_enhancer"); }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.enhance", _e); }
       const mode = slash.multi ? slash.cmds.join("+") : slash.cmd;
       return { enhanced: `${body}\n\n${combined}`, changed:true, theme, spec: combined, mode };
     }
@@ -282,7 +282,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
       const contract = getTestContract(raw, wallCtx, theme);
       const proSpec = `${PRO_REASONING_FULL}${contract?"\n\n"+contract:""}\n\n${spec}`;
       const enhanced = `${raw}\n\n${proSpec}`;
-      try{ (window.__zsPromptStats||(window.__zsPromptStats={})).enhanced=(window.__zsPromptStats.enhanced||0)+1; }catch{}
+      try{ (window.__zsPromptStats||(window.__zsPromptStats={})).enhanced=(window.__zsPromptStats.enhanced||0)+1; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.enhance", _e); }
       return { enhanced, changed:true, theme, spec: proSpec, mode:"vague+pro" };
     }
     // Normal prompt — trimmed + contract + runtime-aware boost
@@ -365,7 +365,7 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
             const r = enhance(text, { placeInfo: window.__zsWallPlaceInfo||"" });
             if(r.changed){
               console.log("[zs-prompt] enhanced", { mode: r.mode, rawLen: text.length, enhLen: r.enhanced.length, theme: r.theme.name });
-              try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("prompt", `enhanced "${text.slice(0,40)}" → ${r.theme.name} [${r.mode}] 10ms`, "prompt_enhancer"); }catch{}
+              try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("prompt", `enhanced "${text.slice(0,40)}" → ${r.theme.name} [${r.mode}] 10ms`, "prompt_enhancer"); }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.scoreEnhancement", _e); }
               out = r.enhanced;
             }
           }
@@ -377,7 +377,7 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
     }
   };
 
-  try{ window.ZSPromptEnhancer = PromptEnhancer; }catch{}
-  if(typeof self!=="undefined") try{ self.ZSPromptEnhancer = PromptEnhancer; }catch{}
+  try{ window.ZSPromptEnhancer = PromptEnhancer; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.scoreEnhancement", _e); }
+  if(typeof self!=="undefined") try{ self.ZSPromptEnhancer = PromptEnhancer; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.scoreEnhancement", _e); }
 
 })();

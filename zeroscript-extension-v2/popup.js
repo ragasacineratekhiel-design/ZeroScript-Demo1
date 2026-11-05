@@ -9,13 +9,12 @@ const SUPPORTED_HOSTS = [
   "grok.com", "x.ai", "poe.com", "chat.mistral.ai",
 ];
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
-const LEGACY_WARNING = "⚠ Remove legacy extension `zeroscript-extension` — keep only `zeroscript-extension-v2` (chrome://extensions → Remove old card).";
 
 function safeVer() {
-  try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
+  try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
   return "v"+chrome.runtime.getManifest().version;
 }
-try { document.getElementById("ver").textContent = safeVer(); } catch {}
+try { document.getElementById("ver").textContent = safeVer(); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
 
 function render(s) {
   if (!s) return;
@@ -36,9 +35,32 @@ function render(s) {
         : "Bridge OK · open Roblox Studio")
     : "Bridge offline — run start.bat";
   if (tools) tools.textContent = s.connected ? `${s.tools || 0} tools available` : "Run bridge.py (start.bat)";
+  renderFaults(s);
   if (servers) servers.textContent = s.connected
     ? list.map((x) => `${x.alive ? "●" : "○"} ${x.id} (${x.alive ? x.tools + " tools" : "down"})`).join("\n")
     : "";
+}
+
+// ── faults: make "silently broken" visible without devtools ──────────────
+// Before this, a provider that threw on every poll and a provider that worked
+// both just showed "no tools". Now the user can see it and copy it.
+function renderFaults(s) {
+  const el = document.getElementById("faults");
+  if (!el) return;
+  const n = (s && s.faults) || 0;
+  if (!n) { el.style.display = "none"; el.textContent = ""; return; }
+  const sites = (s.faultSites || []).join(", ");
+  el.style.display = "block";
+  el.textContent = "⚠ " + n + " error" + (n === 1 ? "" : "s") + " recorded" + (sites ? ": " + sites : "");
+  el.onclick = () => {
+    try {
+      chrome.runtime.sendMessage({ type: "zs_faults" }, (r) => {
+        const diag = JSON.stringify({ status: s, faults: r && r.faults, safe: r && r.safe }, null, 2);
+        try { navigator.clipboard.writeText(diag); el.textContent = "✓ diagnostics copied"; }
+        catch (_e) { globalThis.ZSSafe?.seen?.("popup.sites", _e); el.textContent = "⚠ copy failed"; }
+      });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("popup.sites", _e); }
+  };
 }
 
 function refresh() {
@@ -57,7 +79,7 @@ function bind(id, fn) {
 }
 
 bind("reconnect", () => {
-  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 37)); } catch {}
+  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 37)); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 });
 bind("restart", (e) => {
   const t = e.target; t.textContent = "Restarting…";
@@ -83,10 +105,22 @@ bind("settings", () => {
 try {
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === "zs-status") render(msg); });
-} catch {}
+} catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 refresh();
-setInterval(refresh, 125); // MAX 500ms — absolute, popup hidden when closed
+// A popup is open for seconds at a time and its payload changes only when the
+// bridge does (background pushes zs-status anyway). 125ms was 8 round-trips per
+// second to re-render the same text.
+// Paused when the popup is not visible, and cleared on unload — the previous
+// version spun forever with no way to stop it.
+let _refreshTimer = setInterval(() => {
+  if (typeof document !== "undefined" && document.hidden) return;
+  refresh();
+}, 800);
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => { clearInterval(_refreshTimer); }, { once: true });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+}
 
 // If opened as plain file:// HTML (not extension popup), show demo state
-try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch {}
+try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }

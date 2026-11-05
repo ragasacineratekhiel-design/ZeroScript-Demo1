@@ -289,6 +289,7 @@ const ZSProvider = (() => {
       const it = lastAssistant();
       if (!it) return { th: 0, rp: 0 };
       const think = it.querySelector(S.thinking);
+
       return {
         th: think ? (think.textContent || "").trim().length : 0,
         rp: textWithout(it).length,
@@ -312,10 +313,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(30);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ─────────────────────────────────────────────────────────────────
   // Real <textarea> driven by Svelte: set .value via the native prototype setter
@@ -346,7 +347,7 @@ const ZSProvider = (() => {
     // site's binding between the pending upload and the message being sent).
     // submitAndGetBase RETRIES this function; only attach if nothing is staged
     // yet, else each retry uploads ANOTHER duplicate copy.
-    if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch {} }
+    if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.typeAndSend", _e); } }
     // Wait for Svelte to re-enable the send button (proof it registered the text),
     // then click the instant it's clickable. In a LONG conversation the message
     // list is heavy, so Svelte's reactivity to the input event can take well over
@@ -377,7 +378,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.stopGeneration", _e); }
   }
 
   // No site modes to enforce (model / reasoning toggle left to the user).
@@ -396,7 +397,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("glm.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -434,7 +435,7 @@ const ZSProvider = (() => {
   async function attachImages(images) {
     if (!images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.attachImages", _e); } });
     if (!dt.items.length) return false;
     // z.ai keeps a single always-mounted <input type=file> in the composer
     // (accepts png/jpg among others); setting .files + change stages the upload -
@@ -457,9 +458,9 @@ const ZSProvider = (() => {
         // (`invisible text-icon-…`); fall back to the chip's last inner button.
         const inner = [...chip.querySelectorAll("button")];
         const rm = inner.find((b) => /invisible|text-icon/.test(b.className)) || inner[inner.length - 1];
-        if (rm) try { rm.click(); } catch {}
+        if (rm) try { rm.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.clearAttachments", _e); }
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("glm.clearAttachments", _e); }
   }
 
   // /c/<uuid> = a real conversation. "/" = a fresh chat with no id yet → ""
@@ -552,6 +553,14 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "GLM composer not found — open a new chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "glm",
     displayName: "GLM",
@@ -604,7 +613,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
@@ -614,14 +623,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
 
 })();

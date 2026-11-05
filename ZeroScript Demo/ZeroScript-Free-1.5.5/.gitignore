@@ -1,4 +1,4 @@
-﻿# Local-only folders
+# Local-only folders
 Compressed/
 Deprecated/
 ExtensionPresentation/
@@ -19,3 +19,11 @@ Thumbs.db
 desktop.ini
 __pycache__/
 ZeroScript Demo/__pycache__/
+# Secrets + generated state (audit #24: the bridge token and logs must never ship)
+.zs_token
+*.pyc
+__pycache__/
+
+# Node (verification tooling only — the extension itself has no build step)
+node_modules/
+package-lock.json.bak

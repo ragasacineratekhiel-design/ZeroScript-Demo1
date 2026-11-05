@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// background.js — ZeroScript MAX 4.1.0 PLAN 10ms WALL — Switch Plan Direct/Agent/Plan/Checker + instant ready + internal ultra
+// background.js — ZeroScript MAX 4.3.0 — bridge link (WS + HTTP), plan wake, agent-temp hub
 // UPGRADED TO 10ms PLAN WALL: instant connect, internal commands hedge 5ms, enriched info, GUI plugin.
 // Owns all transports to the local bridge. The middle layer is now
 // MULTI-METHOD: WebSocket primary + HTTP REST + SSE + Long-Poll + BroadcastChannel.
@@ -20,14 +20,23 @@ const WS_URL = `ws://127.0.0.1:${PORT_WS}`;
 const HTTP_BASE = `http://127.0.0.1:${PORT_HTTP}`;
 const PROVIDER_URLS = ["https://chat.deepseek.com/*","https://deepseek.com/*","https://chatgpt.com/*","https://chat.openai.com/*","https://gemini.google.com/*","https://claude.ai/*","https://*.claude.ai/*","https://www.kimi.ai/*","https://kimi.ai/*","https://chat.z.ai/*","https://chat.qwen.ai/*","https://arena.ai/*","https://www.meta.ai/*","https://meta.ai/*","https://www.perplexity.ai/*","https://perplexity.ai/*","https://copilot.microsoft.com/*","https://grok.com/*","https://x.ai/*","https://poe.com/*","https://chat.mistral.ai/*","https://*.mistral.ai/*"];
 
-const EXT_VERSION = "4.2.0";
+const EXT_VERSION = "4.4.0"; // shown in the popup/status payload
 const RECONNECT_MIN = 5;    // MAX 5ms ultra — instant (was 80)
 const RECONNECT_MAX = 200;     // MAX 200 cap — ABSOLUTE
-const HEARTBEAT_MS = 150;    // MAX 150ms — ABSOLUTE, browser will throttle hidden to 1000
+const HEARTBEAT_MS = 1000;   // HONEST (audit #28): 150ms bought nothing (MV3 throttles
+                             // hidden workers to ~1s) and cost a message + status broadcast
+                             // every 150ms. 1s keeps the socket warm and the UI live.
 const STALE_SOCKET_MS = 400;// MAX 400ms — ABSOLUTE
 const REQUEST_TIMEOUT_DEFAULT = 90000;
-const HTTP_TIMEOUT = 600;   // MAX 600ms — ABSOLUTE, will timeout on slow bridge
-const HEDGE_MS = 5;         // MAX 5ms hedge — perfected matches config
+// HONEST (this pass): 600ms was a real bug, not a speed-up. `GET /api/status`
+// and `GET /api/tools` use this as their DEFAULT, and /api/status fans out to
+// `_roblox_studio_app_running()` (a PowerShell/tasklist probe that is allowed
+// 8s by bridge.py). With a 600ms budget that read timed out on any cold start,
+// so the popup showed "Bridge offline" while the bridge was healthy, and the
+// tool list silently stayed stale. Localhost round-trips take <1ms; the budget
+// is for the BRIDGE's work, not the network. Keep it generous.
+const HTTP_TIMEOUT = 4000;  // status/tools reads; per-call sites override this
+const HEDGE_MS = 5;         // parallel-hedge window (WS vs HTTP race)
 
 let ws=null, connected=false, wsHealthy=false;
 let reconnectDelay=RECONNECT_MIN, reconnectTimer=null, heartbeatTimer=null, lastMessageAt=0;
@@ -35,11 +44,15 @@ let nextId=1; const pending=new Map();
 let toolsCache=[], mcpAlive=false, serversCache=[];
 let studioConnected=null, studioApp=null, studioProc=null;
 let bridgeToken=null, bridgeCaps=[];
-let sseAbort=null, bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
+let bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 // ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
 const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
 setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 1000); // MAX 1s — ABSOLUTE
+
+// Load the safe-error core first: every `catch` in this worker (and there are
+// 26 of them) reports through it. importScripts is service-worker-only.
+try { importScripts("core/safe.js"); } catch (_e) { globalThis.ZSSafe?.seen?.("background.extId", _e); }
 
 let fastestTransport='ws'; // learned
 let httpHealthy=false;
@@ -47,13 +60,33 @@ let httpHealthy=false;
 function log(...a){ console.log("[zs-bg]",...a); }
 
 // ── token ─────────────────────────────────────────────────────────────
+// The bridge generates its token at startup. This used to be ONE best-effort
+// fetch: if the bridge came up a second after the extension (normal on a cold
+// start) the token stayed empty and every later request 401'd forever with no
+// retry and no visible reason. Now: jittered backoff, and a bounded re-fetch
+// loop that stops as soon as a token arrives.
+let tokenFailures = 0;
 async function fetchToken(){
-  try{
-    const r=await fetch(`${HTTP_BASE}/api/token`,{method:'GET',cache:'no-store'});
-    if(r.ok){ const j=await r.json(); if(j.token) bridgeToken=j.token; }
-  }catch{}
+  const got = await globalThis.ZSSafe?.retry?.("background.fetchToken", async () => {
+    const r = await fetch(`${HTTP_BASE}/api/token`, { method: "GET", cache: "no-store" });
+    if (!r.ok) throw new Error(`token http ${r.status}`);
+    const j = await r.json();
+    if (!j || !j.token) throw new Error("bridge returned no token");
+    bridgeToken = j.token;
+    tokenFailures = 0;
+    return true;
+  }, { tries: 3, baseMs: 200 }) ?? false;
+  if (!got) {
+    tokenFailures++;
+    // keep trying on a slow backoff (bounded: 20 attempts ≈ 5 min) instead of
+    // staying unauthenticated until the user reloads the extension
+    if (tokenFailures <= 20) {
+      setTimeout(fetchToken, Math.min(30000, 500 * tokenFailures));
+    }
+  }
+  return !!got;
 }
-fetchToken();
+Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken", e));
 
 // ── BroadcastChannel leader election (single WS) ──────────────────────
 try{
@@ -84,16 +117,16 @@ try{
     }
     if(m.type==='request' && isLeader){
       // follower asks leader to proxy a tool call
-      handleProxyRequest(m);
+      Promise.resolve().then(() => handleProxyRequest(m)).catch((e) => globalThis.ZSSafe?.seen?.("background.fetchToken", e));
     }
     if(m.type==='response' && !isLeader){
       resolvePending(m.id, m.payload);
     }
   };
   // announce leadership attempt
-  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch{} }, 50); // MAX 50ms
+  setTimeout(()=>{ if(!isLeader) return; try{ bc.postMessage({type:'leader-announce',leaderId,extId}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.fetchToken", _e); } }, 50); // MAX 50ms
   // periodic leader ping
-  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch{} }, 400); // MAX 400ms
+  setInterval(()=>{ if(isLeader) try{ bc.postMessage({type:'leader-ping',leaderId,extId}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.fetchToken", _e); } }, 400); // MAX 400ms
   // default: we try to be leader; if another tab already is, we'll be told
   isLeader=true;
 }catch(e){ bc=null; isLeader=true; }
@@ -114,7 +147,7 @@ function broadcastViaBCStatus(){
   if(!bc) return;
   // leader broadcasts status to followers so they show green without WS
   if(isLeader){
-    try{ bc.postMessage({type:'status-broadcast', mcpAlive, tools:toolsCache, servers:serversCache, studio:studioConnected, studio_app:studioApp, studio_proc:studioProc}); }catch{}
+    try{ bc.postMessage({type:'status-broadcast', mcpAlive, tools:toolsCache, servers:serversCache, studio:studioConnected, studio_app:studioApp, studio_proc:studioProc}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastViaBCStatus", _e); }
   }
 }
 
@@ -125,6 +158,12 @@ async function httpPost(path, body, timeout=HTTP_TIMEOUT){
   try{
     const r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/json', ...(bridgeToken?{'X-ZS-Token':bridgeToken}:{})}, body:JSON.stringify(body), signal:ctrl.signal, cache:'no-store'});
     clearTimeout(t); httpHealthy=r.ok;
+    if(r.status===401){
+      // The token rotated (bridge restart). Refresh and tell the caller the work
+      // was NOT done - retrying a tool call automatically could execute it twice.
+      await fetchToken();
+      return {ok:false, kind:'auth', error:'bridge token refreshed — please retry', retryable:true};
+    }
     if(!r.ok) return {ok:false, kind:'http', error:`http ${r.status}`};
     const j=await r.json(); return j.ok!==false ? {ok:true,...j} : {ok:false, kind:j.kind||'error', error:j.error||'unknown'};
   }catch(e){
@@ -138,6 +177,13 @@ async function httpGet(path, timeout=HTTP_TIMEOUT){
   try{
     const r=await fetch(url,{method:'GET', headers:{...(bridgeToken?{'X-ZS-Token':bridgeToken}:{})}, signal:ctrl.signal, cache:'no-store'});
     clearTimeout(t); httpHealthy=r.ok;
+    if(r.status===401 && await fetchToken()){
+      // GET is idempotent: after refreshing the token, retry exactly once
+      const r2 = await fetch(url,{method:'GET', headers:{...(bridgeToken?{'X-ZS-Token':bridgeToken}:{})}, cache:'no-store'});
+      httpHealthy=r2.ok;
+      if(!r2.ok) return {ok:false, error:`http ${r2.status}`};
+      return await r2.json();
+    }
     if(!r.ok) return {ok:false, error:`http ${r.status}`};
     const j=await r.json(); return j;
   }catch(e){ clearTimeout(t); httpHealthy=false; return {ok:false, error:String(e.message||e)}; }
@@ -160,7 +206,7 @@ async function transportCall(name, args, timeout){
     const res=await Promise.race([wsPromise, hedgePromise]);
     if(res && res.ok) return res;
     // if hedge/WS returned error, try the other still-pending as fallback
-    try{ const a=await wsPromise; if(a && a.ok) return a; }catch{}
+    try{ const a=await wsPromise; if(a && a.ok) return a; }catch (_e) { globalThis.ZSSafe?.seen?.("background.transportCall", _e); }
     return res;
   } else {
     const r=await httpPost('/api/call',{name, arguments:args, timeout}, timeout+10000);
@@ -170,7 +216,7 @@ async function transportCall(name, args, timeout){
 }
 async function transportListTools(){
   if(connected && wsHealthy){
-    try{ const r=await sendWS({type:'list_tools'}, 6000); if(r.ok) return r; }catch{}
+    try{ const r=await sendWS({type:'list_tools'}, 6000); if(r.ok) return r; }catch (_e) { globalThis.ZSSafe?.seen?.("background.transportListTools", _e); }
   }
   const r=await httpGet('/api/tools');
   if(r.ok && Array.isArray(r.tools)) return {ok:true, tools:r.tools};
@@ -178,7 +224,7 @@ async function transportListTools(){
 }
 async function transportStudioStatus(){
   if(connected && wsHealthy){
-    try{ const r=await sendWS({type:'studio_status'}, 4000); if(r.ok) return r; }catch{}
+    try{ const r=await sendWS({type:'studio_status'}, 4000); if(r.ok) return r; }catch (_e) { globalThis.ZSSafe?.seen?.("background.transportStudioStatus", _e); }
   }
   const r=await httpGet('/api/status');
   if(r.ok) return {ok:true, studio:r.studio, studio_app:r.studio_app, studio_proc:r.studio_proc, mcpAlive:r.mcp_alive};
@@ -199,7 +245,7 @@ function connect(){
     log("WS connected", WS_URL, "token", bridgeToken? 'yes':'no');
     startHeartbeat(); broadcastStatus();
     // hello negotiate
-    try{ ws.send(JSON.stringify({type:'hello', id: nextId++, caps:['ws','http','sse','batch','binary']})); }catch{}
+    try{ ws.send(JSON.stringify({type:'hello', id: nextId++, caps:['ws','http','sse','batch','binary']})); }catch (_e) { globalThis.ZSSafe?.seen?.("background.connect", _e); }
     // start SSE as secondary push
     startSSE();
     fastestTransport='ws';
@@ -221,7 +267,7 @@ function connect(){
     connected=false; wsHealthy=false; mcpAlive=false; studioConnected=null; studioApp=null; studioProc=null; serversCache=[];
     stopHeartbeat(); stopSSE(); failAllPending("bridge WS closed"); broadcastStatus(); scheduleReconnect();
   };
-  ws.onerror=()=>{ try{ ws.close(); }catch{} };
+  ws.onerror=()=>{ try{ ws.close(); }catch (_e) { globalThis.ZSSafe?.seen?.("background.connect", _e); } };
 }
 function scheduleReconnect(){
   clearTimeout(reconnectTimer);
@@ -236,11 +282,11 @@ function startHeartbeat(){
     if(connected){
       if(lastMessageAt && Date.now()-lastMessageAt > STALE_SOCKET_MS){
         log("WS stale, forcing reconnect"); wsHealthy=false;
-        try{ ws.close(); }catch{}; return;
+        try{ ws.close(); }catch (_e) { globalThis.ZSSafe?.seen?.("background.startHeartbeat", _e); }; return;
       }
       // adaptive: active vs idle
       sendWS({type:'ping'}, 4000).catch(()=>{});
-      refreshStudioStatus();
+      Promise.resolve().then(refreshStudioStatus).catch((e) => globalThis.ZSSafe?.seen?.("background.startHeartbeat", e));
     }
   }, HEARTBEAT_MS);
 }
@@ -267,15 +313,15 @@ function startSSE(){
               try{
                 const ev=JSON.parse(line.slice(5).trim());
                 handleSSEEvent(ev);
-              }catch{}
+              }catch (_e) { globalThis.ZSSafe?.seen?.("background.startSSE", _e); }
             }
           }
         }
       }
     }).catch(()=>{});
-  }catch{}
+  }catch (_e) { globalThis.ZSSafe?.seen?.("background.startSSE", _e); }
 }
-function stopSSE(){ if(sseCtrl) try{ sseCtrl.abort(); }catch{} sseCtrl=null; }
+function stopSSE(){ if(sseCtrl) try{ sseCtrl.abort(); }catch (_e) { globalThis.ZSSafe?.seen?.("background.stopSSE", _e); } sseCtrl=null; }
 function handleSSEEvent(ev){
   if(ev.type==='status'){
     if(typeof ev.studio==='boolean') studioConnected=ev.studio;
@@ -284,9 +330,9 @@ function handleSSEEvent(ev){
 }
 
 function metricsBytes(data){
-  try{ if(typeof data==='string') metricsBytesIn+=data.length; else if(data instanceof ArrayBuffer) metricsBytesIn+=data.byteLength; }catch{}
+  try{ if(!(typeof data==='string') && !(data instanceof ArrayBuffer)) return; }catch (_e) { globalThis.ZSSafe?.seen?.("background.metricsBytes", _e); }
 }
-let metricsBytesIn=0, metricsBytesOut=0;
+let metricsBytesOut=0; // metricsBytesIn was tracked and never read (audit #35)
 
 function waitForConnection(timeout=4000){
   return new Promise(resolve=>{
@@ -377,11 +423,38 @@ function resolvePending(id,value){ const p=pending.get(id); if(!p) return; clear
 }
 function failAllPending(reason){ for(const [,p] of pending){ clearTimeout(p.timer); p.resolve({ok:false, kind:'disconnected', error:reason}); } pending.clear(); inflightCoalesce.clear(); }
 
-function statusObj(){ return {type:"zs-status", connected:connected||httpHealthy, mcpAlive, studio:studioConnected, studioApp, studioProc, tools:toolsCache.length, servers:serversCache, transport: fastestTransport, caps: bridgeCaps}; }
+// Faults reported by content scripts / popup (core/safe.js report()). Bounded:
+// this is a diagnostic surface, not a log file.
+const pageFaults = [];
+function notePageFault(site, message, level){
+  pageFaults.push({site:String(site||"?"), message:String(message||"").slice(0,200), level:level||"error", at:Date.now()});
+  while(pageFaults.length > 40) pageFaults.shift();
+}
+// hostname → provider id. Mirrors core/peer_wall.js HOST_MAP; background.js
+// cannot read a content script's globals, so the table is duplicated on purpose
+// (tools/verify.js asserts the two stay in sync).
+function providerIdForHost(url){
+  try{
+    const host = (new URL(url)).hostname.toLowerCase().replace(/^www\./,"");
+    const M = [
+      ["deepseek.com","deepseek"],["chatgpt.com","chatgpt"],["openai.com","chatgpt"],
+      ["gemini.google.com","gemini"],["claude.ai","claude"],["kimi.ai","kimi"],
+      ["chat.z.ai","glm"],["z.ai","glm"],["qwen.ai","qwen"],["arena.ai","arena"],
+      ["meta.ai","meta"],["perplexity.ai","perplexity"],["copilot.microsoft.com","copilot"],
+      ["grok.com","grok"],["x.ai","grok"],["poe.com","poe"],["mistral.ai","mistral"],
+    ];
+    for(const [needle,id] of M){ if(host===needle || host.endsWith("."+needle)) return id; }
+  }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
+  return "unknown";
+}
+
+function statusObj(){ return {type:"zs-status", connected:connected||httpHealthy, mcpAlive, studio:studioConnected, studioApp, studioProc, tools:toolsCache.length, servers:serversCache, transport: fastestTransport, caps: bridgeCaps,
+  faults: pageFaults.length, faultSites: [...new Set(pageFaults.map(f=>f.site))].slice(-6),
+  safe: (() => { try { return globalThis.ZSSafe?.stats?.() || null; } catch { return null; } })() }; }
 function broadcastStatus(){
   const s=statusObj();
-  try{ chrome.runtime.sendMessage(s).catch(()=>{}); }catch{}
-  chrome.tabs.query({url: PROVIDER_URLS}, tabs=>{ for(const t of tabs) try{ chrome.tabs.sendMessage(t.id,s).catch(()=>{}); }catch{} });
+  try{ chrome.runtime.sendMessage(s).catch(()=>{}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+  chrome.tabs.query({url: PROVIDER_URLS}, tabs=>{ for(const t of tabs) try{ chrome.tabs.sendMessage(t.id,s).catch(()=>{}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); } });
   broadcastViaBCStatus();
 }
 
@@ -459,12 +532,72 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         if(!r.ok) r=await sendWS({type:'metrics'},4000).catch(()=>({ok:false}));
         sendResponse(r); break;
       }
+      // ── CROSS-AI PEER ROUTING ─────────────────────────────────────────
+      // The missing link. Before this, a wall message was posted on a
+      // BroadcastChannel and written to storage; no tab ever converted one into
+      // an AI turn, and role→AI assignment was by TAB INDEX, so the user's
+      // planner=ChatGPT / coder=Claude choice was ignored. Here the background
+      // resolves provider → tab ids and delivers the envelope INTO the peer's
+      // page, which is what lets one AI's words reach another AI's prompt.
+      case "peer_route": {
+        try{
+          const env = msg.envelope || {};
+          const to = String(env.toProvider || "").toLowerCase();
+          const want = providerIdForHost; // helper below
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          const targets = [];
+          for(const t of tabs){
+            const pid = want(t.url || "");
+            if(to === "__any" || pid === to) targets.push({id:t.id, pid, url:t.url});
+          }
+          // Distinctness gate: never deliver back into the sender's own provider.
+          const filtered = targets.filter(t => {
+            const from = String(env.fromProvider || "").toLowerCase();
+            if(!from || from === "unknown") return true;
+            return t.pid !== from;
+          });
+          let delivered = 0;
+          for(const t of filtered){
+            try{
+              await chrome.tabs.sendMessage(t.id, {type:"zs-peer-inbound", envelope: env});
+              delivered++;
+            }catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+          }
+          if(!delivered && !targets.length){
+            // honest failure: the peer tab is not open. Surface it, do not pretend.
+            sendResponse({ok:false, error:`no open tab for provider "${to}" — open ${to} first`, delivered:0});
+          } else {
+            sendResponse({ok:true, delivered, targets: filtered.map(t=>t.pid)});
+          }
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
+      case "peer_ack": {
+        // A peer confirmed it received an envelope. Nothing to route; log it so
+        // "undelivered" statistics are trustworthy.
+        try { notePageFault("peer.ack", `${msg.fromProvider}→${msg.toProvider} ${msg.id}`, "info"); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+        sendResponse({ok:true});
+        break;
+      }
+      case "peer_whoami": {
+        try{
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          const map = {};
+          for(const t of tabs){
+            const pid = providerIdForHost(t.url || "");
+            (map[pid] = map[pid] || []).push(t.id);
+          }
+          const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
+          sendResponse({ok:true, plan: stored.zsPlan || null, roles: stored.zsPlanRoles || null, openProviders: map});
+        }catch(e){ sendResponse({ok:false, error:String(e)}); }
+        break;
+      }
       case "count_provider_tabs": {
         try{
           const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
           let arena=0; const byProvider={};
           for(const t of tabs){
-            try{ const u=t.url||""; const host=(new URL(u)).hostname.replace(/^www\./,""); byProvider[host]=(byProvider[host]||0)+1; if(u.includes("arena.ai")) arena++; }catch{}
+            try{ const u=t.url||""; const host=(new URL(u)).hostname.replace(/^www\./,""); byProvider[host]=(byProvider[host]||0)+1; if(u.includes("arena.ai")) arena++; }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
           }
           sendResponse({ok:true, total:tabs.length, arena, byProvider, tabs: tabs.map(x=>({id:x.id, url:x.url}))});
         }catch(e){ sendResponse({ok:false, error:String(e)}); }
@@ -482,16 +615,32 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
               let roleForTab = null;
               try{
                 const stored = await chrome.storage.local.get(["zsPlanRoles","zsPlan"]);
-                const roles = stored.zsPlanRoles || {};
-                // map provider detection to role if possible — round-robin tab idx to roles order
+                const roles = stored.zsPlanRoles || {};   // { role: providerName }
                 const planId = msg.plan || stored.zsPlan || "agent";
-                const planRolesOrder = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
-                roleForTab = planRolesOrder[idx % planRolesOrder.length] || null;
-              }catch{}
+                const order = planId==="agent" ? ["planner","coder","checker"] : planId==="plan" ? ["planner","coder"] : planId==="checker" ? ["coder","checker"] : ["planner"];
+                // HONEST FIX: this used to be `order[idx % order.length]`, i.e.
+                // roles were handed out by TAB INDEX and the user's mapping was
+                // ignored — so "planner=ChatGPT, coder=Claude" could silently
+                // become anything. Now the tab's OWN provider decides its role.
+                const myProvider = providerIdForHost(tab.url || "");
+                for(const r of order){
+                  const assigned = String(roles[r] || "").toLowerCase();
+                  // role names in storage may be provider display names ("ChatGPT")
+                  if(assigned && myProvider !== "unknown" &&
+                     (assigned === myProvider || assigned.includes(myProvider))) { roleForTab = r; break; }
+                }
+                // Fallback ONLY if the user never assigned this provider: keep it
+                // deterministic and never duplicate a role already taken.
+                if(!roleForTab){
+                  const taken = new Set(Object.keys(roles).filter(r => roles[r]));
+                  for(const r of order){ if(!roles[r]) { roleForTab = r; break; } }
+                  void taken;
+                }
+              }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
               chrome.tabs.sendMessage(tab.id, {type:"zs-plan-wake", plan: msg.plan, role: roleForTab, staggerMs, idx});
               // Also store wall task for 10ms poll fallback
-              try{ await chrome.storage.local.set({["zs_wall_autostart_"+tab.id]: {plan:msg.plan, role:roleForTab, staggerMs, ts:Date.now()}}); }catch{}
-            }catch{}
+              try{ await chrome.storage.local.set({["zs_wall_autostart_"+tab.id]: {plan:msg.plan, role:roleForTab, staggerMs, ts:Date.now()}}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
+            }catch (_e) { globalThis.ZSSafe?.seen?.("background.host", _e); }
             idx++;
           }
           // Also broadcast wall task for coder handoff (real AI↔AI, not fake)
@@ -501,7 +650,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
             existing.push({type:"broadcast_start", plan: msg.plan, ts:Date.now(), tabs: tabs.length});
             if(existing.length>20) existing.shift();
             await chrome.storage.local.set({[hubKey]: existing});
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("background.existing", _e); }
           sendResponse({ok:true, waked:tabs.length, honest:true, autoStart:true});
         }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
@@ -510,22 +659,27 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         try{
           const tabs2 = await chrome.tabs.query({url: PROVIDER_URLS});
           for(const tab of tabs2){
-            try{ chrome.tabs.sendMessage(tab.id, {type:"zs-wall-task", task: msg.task||msg.payload||msg, from: msg.from||_sender?.tab?.id||"planner"}); }catch{}
+            try{ chrome.tabs.sendMessage(tab.id, {type:"zs-wall-task", task: msg.task||msg.payload||msg, from: msg.from||_sender?.tab?.id||"planner"}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.existing", _e); }
           }
-          try{ const key="zs_wall_tasks"; const cur=(await chrome.storage.local.get(key))[key]||[]; cur.push({task: msg.task||msg.payload||msg, from: msg.from||"planner", ts:Date.now()}); if(cur.length>50) cur.shift(); await chrome.storage.local.set({[key]:cur}); }catch{}
+          try{ const key="zs_wall_tasks"; const cur=(await chrome.storage.local.get(key))[key]||[]; cur.push({task: msg.task||msg.payload||msg, from: msg.from||"planner", ts:Date.now()}); if(cur.length>50) cur.shift(); await chrome.storage.local.set({[key]:cur}); }catch (_e) { globalThis.ZSSafe?.seen?.("background.cur", _e); }
           sendResponse({ok:true, forwarded:tabs2.length, honest:true});
         }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
       case "agent_temp_write": {
         try{ const k=String(msg.key||""); const exp=Date.now()+(msg.ttl||120000); agentTemp.set(k,{value:msg.value, from:msg.from||"planner", t:Date.now(), ttl:msg.ttl||120000, exp}); // also propagate to bridge HTTP if available (fire-and-forget)
-        try{ fetch(`${HTTP_BASE}/api/agent_temp`,{method:"POST", headers:{"Content-Type":"application/json", ...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, body:JSON.stringify({key:k, value:msg.value, from:msg.from}), cache:"no-store"}).catch(()=>{}); }catch{}
+        // Was fire-and-forget with `.catch(()=>{})`: a bridge hiccup silently
+        // dropped a temp-agent value. Now retried, and a persistent failure is a
+        // recorded fault instead of nothing. The in-memory map is still the
+        // source of truth for this tab, so a failure is not fatal — but it is
+        // no longer invisible.
+        globalThis.ZSSafe?.retry?.("background.agentTempPost", () => fetch(`${HTTP_BASE}/api/agent_temp`,{method:"POST", headers:{"Content-Type":"application/json", ...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, body:JSON.stringify({key:k, value:msg.value, from:msg.from}), cache:"no-store"}).then(r=>{ if(!r.ok) throw new Error(`agent_temp http ${r.status}`); return r; }), {tries:3, baseMs:150});
         sendResponse({ok:true, key:k}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
       case "agent_temp_read": {
         try{ const k=String(msg.key||""); let v=agentTemp.get(k); if(v && v.exp && Date.now()>v.exp){ agentTemp.delete(k); v=null; } if(v) sendResponse({ok:true, payload:v}); else { // try HTTP fallback
-        try{ const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"}); if(rr.ok){ const jj=await rr.json(); if(jj && jj.value!==undefined) { agentTemp.set(k,jj); sendResponse({ok:true, payload:jj}); break; } } }catch{}
+        try{ const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"}); if(rr.ok){ const jj=await rr.json(); if(jj && jj.value!==undefined) { agentTemp.set(k,jj); sendResponse({ok:true, payload:jj}); break; } } }catch (_e) { globalThis.ZSSafe?.seen?.("background.cur", _e); }
         sendResponse({ok:false, error:"not found"}); } }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
@@ -533,8 +687,20 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         try{ const keys=[...agentTemp.keys()]; sendResponse({ok:true, keys}); }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
+      case "zs_fault": {
+        // core/safe.js already throttles these, so this is low-volume by design.
+        notePageFault(msg.site, msg.message, msg.level);
+        sendResponse({ok:true});
+        break;
+      }
+      case "zs_faults": {
+        sendResponse({ok:true, faults: pageFaults.slice(-40), safe: statusObj().safe});
+        break;
+      }
       case "reconnect":
-        reconnectDelay=RECONNECT_MIN; httpHealthy=false; connect(); fetchToken(); sendResponse({ok:true}); break;
+        reconnectDelay=RECONNECT_MIN; httpHealthy=false; connect();
+        Promise.resolve().then(fetchToken).catch((e) => globalThis.ZSSafe?.seen?.("background.cur", e));
+        sendResponse({ok:true}); break;
       case "ping":
         // ultra-fast health ping
         if(connected) sendResponse({ok:true, transport:'ws'});
@@ -545,13 +711,13 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   })(); return true;
 });
 
-chrome.runtime.onStartup.addListener(()=>{ fetchToken(); connect(); });
-chrome.runtime.onInstalled.addListener(()=>{ fetchToken(); connect(); });
+chrome.runtime.onStartup.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.cur", e)); connect(); });
+chrome.runtime.onInstalled.addListener(()=>{ Promise.resolve().then(fetchToken).catch((e)=>globalThis.ZSSafe?.seen?.("background.cur", e)); connect(); });
 // keep alive via alarms (MV3 SWS may suspend)
 try{
   chrome.alarms.create('zs-keepalive',{periodInMinutes: 0.5}); // BRUTAL HONEST: chrome.alarms clamps to 1m minimum — 0.02 ignored, using 30s + setInterval fallback
   chrome.alarms.onAlarm.addListener(()=>{ if(!connected && isLeader) connect(); });
-}catch{}
+}catch (_e) { globalThis.ZSSafe?.seen?.("background.cur", _e); }
 // initial
 connect();
 // pre-warm HTTP

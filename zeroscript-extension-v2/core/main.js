@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/main.js — MAX 10ms SUPER FAST v4.0.0 — provider-agnostic agentic loop, 1 prompt 1 response, /force max power
+// core/main.js — ZeroScript MAX 4.3.0 — provider-agnostic agentic loop, bounded exec modes, wall + memory wired
 // Drives any AI chat site through the ZSProvider interface (providers/*.js):
 // waits for the model's reply, parses ZeroScript commands (ZSParse), asks the
 // background worker to execute them on the Roblox MCP bridge, and feeds the
@@ -17,6 +17,71 @@
   const T = P.timings;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (...a) => console.log("[zeroscript]", ...a);
+
+  // ── SESSION STATE (module scope — single source of truth) ────────────────
+  // HONEST FIX (audit #1/#2): `currentExec` and `currentPlan` used to be declared
+  // INSIDE ui() further down this file, while agentLoop()/stopLoop() read them.
+  // That is a ReferenceError on the very first statement of the loop
+  // (diag("loop.start", {exec: currentExec})), so no session could ever start.
+  // The state now lives here, is mirrored onto window.__zsExecMode / __zsPlan /
+  // __zsPlanRoles (which config.js and plan_wall.js already read), and is kept in
+  // sync with chrome.storage in both directions.
+  const SESSION = { exec: "single", plan: "direct", roles: {} };
+  const _sessionSubs = [];
+  function onSessionChange(fn){ if(typeof fn === "function") _sessionSubs.push(fn); }
+  function emitSession(){
+    for(const fn of _sessionSubs){ try{ fn(SESSION); }catch (_e) { globalThis.ZSSafe?.seen?.("main.emitSession", _e); } }
+  }
+  function setExecModeState(v){
+    SESSION.exec = EXEC_MODES.includes(v) ? v : "single";
+    mirrorSession(); emitSession();
+    // A mode that does not persist silently reverts on the next page load, so
+    // this is a real fault, not a probe: wrap() records it and surfaces it.
+    globalThis.ZSSafe?.wrap?.("main.setExecModeState", () => chrome.storage.local.set({ zsExecMode: SESSION.exec }), () => {
+      // in-memory state is still correct for THIS page; only durability is lost
+      globalThis.ZSSafe?.record?.("main.setExecModeState", "exec mode not persisted", "warn");
+    });
+    return SESSION.exec;
+  }
+  function setPlanState(plan, roles){
+    if(plan) SESSION.plan = plan;
+    if(roles && typeof roles === "object") SESSION.roles = roles;
+    mirrorSession(); emitSession();
+    globalThis.ZSSafe?.wrap?.("main.setPlanState", () => chrome.storage.local.set({ zsPlan: SESSION.plan, zsPlanRoles: SESSION.roles }));
+    return { plan: SESSION.plan, roles: SESSION.roles };
+  }
+  const EXEC_MODES = ["single", "continuous", "loop"];
+  const execMode = () => (EXEC_MODES.includes(SESSION.exec) ? SESSION.exec : "single");
+  const planNow = () => SESSION.plan || "direct";
+  function mirrorSession(){
+    try{
+      window.__zsExecMode = SESSION.exec;
+      window.__zsPlan = SESSION.plan;
+      window.__zsPlanRoles = SESSION.roles;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.mirrorSession", _e); }
+  }
+  function loadSessionState(){
+    try{
+      chrome.storage.local.get(["zsExecMode", "zsPlan", "zsPlanRoles"], (r) => {
+        if(r){
+          if(r.zsExecMode && EXEC_MODES.includes(r.zsExecMode)) SESSION.exec = r.zsExecMode;
+          if(r.zsPlan) SESSION.plan = r.zsPlan;
+          if(r.zsPlanRoles && typeof r.zsPlanRoles === "object") SESSION.roles = r.zsPlanRoles;
+        }
+        mirrorSession(); emitSession();
+      });
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.loadSessionState", _e); }
+    try{
+      chrome.storage.onChanged.addListener((ch, area) => {
+        if(area !== "local" || !ch) return;
+        if(ch.zsExecMode) SESSION.exec = EXEC_MODES.includes(ch.zsExecMode.newValue) ? ch.zsExecMode.newValue : "single";
+        if(ch.zsPlan) SESSION.plan = ch.zsPlan.newValue || "direct";
+        if(ch.zsPlanRoles) SESSION.roles = ch.zsPlanRoles.newValue || {};
+        mirrorSession(); emitSession();
+      });
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.loadSessionState", _e); }
+  }
+  loadSessionState();
 
   // ── Anti-bot mitigation (EXPERIMENTAL) ──────────────────────────────────
   // Suspected contributor to Arena's captcha: the agentic loop sends turns
@@ -46,13 +111,13 @@
                 data: data || null, snap };
     _diag.push(e);
     if (_diag.length > ZS_DIAG_MAX) _diag.shift();
-    try { console.log("[zs-diag]", e.iso, event, JSON.stringify({ ...data, ...snap })); } catch {}
+    try { console.log("[zs-diag]", e.iso, event, JSON.stringify({ ...data, ...snap })); } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
     try {
       let n = document.getElementById("zs-diag-log");
       if (!n) { n = document.createElement("script"); n.type = "application/json"; n.id = "zs-diag-log"; (document.body || document.documentElement).appendChild(n); }
       n.textContent = JSON.stringify(_diag);
-    } catch {}
-    try { window.__zsDiag = _diag; } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
+    try { window.__zsDiag = _diag; } catch (_e) { globalThis.ZSSafe?.seen?.("main.diag", _e); }
   }
   P.init({ diag });
 
@@ -80,7 +145,7 @@
 
   // ── ULTRA: metrics + transport awareness ─────────────────────────────────
   const ULTRA = {
-    version: (ZS.APP_VERSION||"4.0.0"),
+    version: (ZS.APP_VERSION||"4.3.0"),
     transport: (ZS.TRANSPORT||{PORT_WS:17613, PORT_HTTP:17614, RECONNECT_MIN:100, HEARTBEAT_MS:2500}),
     metrics:{ sends:0, tools:0, avgMs:0, p95Ms:0, lastToolMs:0 },
     // micro-cache for bg status (avoid hammering bridge)
@@ -91,9 +156,9 @@
   function ensureMO(){
     if(_mo) return;
     try{
-      _mo=new MutationObserver(()=>{ const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch{} });
+      _mo=new MutationObserver(()=>{ if (document.hidden) return; const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
       _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); }
   }
   function waitForDOMChange(timeout=250){
     ensureMO();
@@ -245,7 +310,7 @@
   async function waitVisible() {
     if (!document.hidden || A.stop) return !A.stop;
     A.parked = true;
-    try { ui.setStarting(); } catch {}
+    try { ui.setStarting(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.waitVisible", _e); }
     try {
       await new Promise((resolve) => {
         const done = () => {
@@ -261,7 +326,7 @@
       });
     } finally {
       A.parked = false;
-      try { ui.setStarting(); } catch {}
+      try { ui.setStarting(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.onVis", _e); }
     }
     return !A.stop;
   }
@@ -292,12 +357,61 @@
   // virtualize the message list, where the count stays flat as a new
   // turn appears and old ones detach. Captured at every send site (tool feedback,
   // user message, bootstrap). Providers without lastAssistantId fall back to count.
+  // Wait for a specific peer's reply, resolved through the peer channel.
+  // Returns the message or null on timeout. Never throws.
+  async function waitForPeerReply(provider, timeoutMs) {
+    const PW = typeof window !== "undefined" ? window.ZSPeerWall : null;
+    if (!PW || !PW.onInbound) return null;
+    return await new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; try { off(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.finish", _e); } clearTimeout(t); resolve(v); };
+      const off = PW.onInbound((m) => {
+        if (m && String(m.fromProvider) === String(provider)) finish(m);
+      }) || (() => {});
+      const t = setTimeout(() => finish(null), Math.max(1000, timeoutMs || 45000));
+    });
+  }
+
   function captureSendToken() {
     A.sendToken = P.lastAssistantId ? P.lastAssistantId() : undefined;
   }
 
+  // ── peer context: fold inbound peer messages into the next prompt ──────
+  // Declared BEFORE submitAndGetBase because it is called from there: a
+  // const arrow is not hoisted, and using it earlier is the exact 4.2.0
+  // ReferenceError class this file has been bitten by twice.
+    // Called on EVERY turn. Returns "" when nothing arrived, so a single-AI run
+    // is completely unaffected. When a peer HAS spoken, this is what makes the
+    // other model's reasoning part of this model's context instead of noise.
+    const peerContext = () => {
+      try {
+        const PW = window.ZSPeerWall;
+        if (!PW || !PW.takeInbound) return "";
+        const msgs = PW.takeInbound(5);
+        if (!msgs || !msgs.length) return "";
+        diag("peer.context", { n: msgs.length, from: msgs.map((m) => m.fromProvider) });
+        try { window.ZSAgentHub && window.ZSAgentHub.pushTemp &&
+          window.ZSAgentHub.pushTemp({ type: "peer_context", n: msgs.length, from: msgs.map(m => m.fromProvider), ts: Date.now() }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); }
+        return PW.formatForPrompt(msgs);
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); return ""; }
+    };
+
+    try {
+      if (window.ZSPeerWall && window.ZSPeerWall.self && window.ZSPeerWall.self !== "unknown") {
+        window.__zsProviderName = window.__zsProviderName || window.ZSPeerWall.self;
+        window.__zsPeerId = window.ZSPeerWall.self;
+      }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); }
+
   async function submitAndGetBase(text, images) {
     captureSendToken();
+    // Peer messages that arrived since the last turn are prepended here, so the
+    // OTHER AI's words are in this AI's context for exactly one turn. Empty
+    // string when no peer spoke, so a solo run is byte-identical to before.
+    {
+      const peer = (typeof peerContext === "function") ? peerContext() : "";
+      if (peer) text = peer + "\n\n" + text;
+    }
     diag("send", { text: String(text).slice(0, 60), busy: P.isBusyNow() });
     A.injecting = true;
     ui.inputCover(true);
@@ -339,6 +453,23 @@
         }
         await jitterBeforeSend();
         diag("submit.typeAndSend", { hasImages: !!(images && images.length) });
+        // ── MEMORY WALL CONTEXT (HONEST FIX, audit #16) ──────────────────────
+        // memory_wall.js was fully implemented but nothing in the agent loop ever
+        // read it, so the "persistent project memory" never reached the model.
+        // Every agent-issued turn now carries a budgeted, query-trimmed digest of
+        // the wall (skipped for tool-result feedback and system re-injections so
+        // the context does not balloon).
+        try{
+          const isFeedback = /Output of '|^ERROR|⟦ZS-/.test(String(text||""));
+          const isSystem = String(text||"").startsWith((ZS.SYS_MARKER||"⟦ZS-SYS⟧"));
+          if(!isFeedback && !isSystem && window.ZSMemoryWall && window.ZSMemoryWall.buildTrimmedContext){
+            const digest = window.ZSMemoryWall.buildTrimmedContext(String(text||"").slice(0,300), 700);
+            if(digest && digest.length > 40){
+              text = `${digest}\n\n${text}`;
+              diag("wall.context", { len: digest.length });
+            }
+          }
+        }catch (_e) { globalThis.ZSSafe?.seen?.("main.landed", _e); }
         await P.typeAndSend(text, images);
         // Re-arm the pre-hide window NOW that typeAndSend has returned (the send
         // was just clicked, so our result turn is about to render). The initial
@@ -822,7 +953,6 @@
 
   // ── ULTRA bg wrapper: dedupe, cache, retry, metrics ───────────────────
   const _bgInflight=new Map(); // msg.type+name -> promise (coalesce identical calls within 100ms)
-  const _bgCache=new Map(); // cache 250ms — 2× faster
   function bgKey(m){ try{ return m.type+":"+(m.name||m.server_id||"")+":"+JSON.stringify(m.arguments||""); }catch{ return m.type; } }
   function bg(msg) {
     // short cache for status/list_tools so rapid UI polls don't flood bridge
@@ -862,10 +992,32 @@
     // cache eviction for status already via TTL above
     return p;
   }
-  // Batch helper — new in ULTRA (uses bridge /api/batch if available)
-  function bgBatch(calls){
-    return bg({type:"call_batch", calls});
+  // ── TRANSPORT TELEMETRY (honest, audit #17) ───────────────────────────────
+  // core/transport.js was a second, never-called implementation of this same
+  // wrapper. It has been deleted; these are the numbers from the path that
+  // actually runs, exposed for the console / diagnostics node.
+  function transportStats(){
+    const m = ULTRA.metrics;
+    return {
+      version: ZS.APP_VERSION,
+      calls: m.tools,
+      avgMs: m.avgMs,
+      lastMs: m.lastToolMs,
+      inflight: _bgInflight.size,
+      statusCached: !!ULTRA._statusCache,
+      cacheAgeMs: ULTRA._statusAt ? Date.now() - ULTRA._statusAt : null,
+      sockets: "ws://127.0.0.1:17613 + http://127.0.0.1:17614/api/call (fallback)",
+      note: "no long-poll, no WebTransport — see audit",
+    };
   }
+  try { window.__zsTransportStats = transportStats; } catch (_e) { globalThis.ZSSafe?.seen?.("main.transportStats", _e); }
+
+  // NOTE (audit #33): there used to be a `bgBatch()` helper here that nothing ever
+  // called, which implied a batching path that did not exist. It is gone on
+  // purpose: the agent protocol allows exactly ONE command per reply (see
+  // ZS.FEEDBACK.multiTool), so batching several calls in one turn is not
+  // reachable by design. The bridge still exposes POST /api/batch for the wall
+  // executor and for future use, and background.js still implements call_batch.
 
   // 'subagent' is always blocked (long-running, hangs the loop). 'screen_capture'
   // is only blocked on providers whose underlying model can't see images
@@ -914,14 +1066,14 @@
     if (!bare || A.imageTools.has(bare)) return;
     A.imageTools.add(bare);
     diag("imageTool.remember", { name: bare, total: A.imageTools.size });
-    try { chrome.storage.local.set({ zsImageTools: [...A.imageTools].slice(-200) }); } catch {}
+    try { chrome.storage.local.set({ zsImageTools: [...A.imageTools].slice(-200) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberImageTool", _e); }
   }
   try {
     chrome.storage.local.get("zsImageTools", (r) => {
       if (r && Array.isArray(r.zsImageTools)) for (const n of r.zsImageTools) A.imageTools.add(n);
       diag("imageTool.loaded", { tools: [...A.imageTools] });
     });
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberImageTool", _e); }
 
   // How long a fetched catalogue stays good enough to reuse without a round trip.
   // ULTRA: shorter TTL (8s vs 30s) so Studio MCP attach is seen ~4× faster,
@@ -1082,7 +1234,9 @@
     // write the JSON form without it - default to "Edit" so the call never
     // soft-fails with "datamodel_type is required".
     if (bareName === "execute_luau" && !args.datamodel_type) args.datamodel_type = "Edit";
-    // ── 4.0.0 5ms DRY-RUN SANDBOX — intercept BEFORE bridge (saves ~20s round-trip on runtime errors) ──
+    // ── STATIC LUAU PRE-CHECK — reject unparseable code BEFORE the bridge round trip ──
+    // NOTE (audit #13): this is static analysis, never execution. Only hard syntax
+    // failures block; warnings are surfaced to the model, not enforced.
     if (bareName === "execute_luau" && typeof window.ZSSandbox !== "undefined" && window.ZSSandbox.dryRunLuau) {
       try{
         const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
@@ -1091,7 +1245,7 @@
           return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by 5ms dry-run sandbox BEFORE Studio — no Studio load spent)`;
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
-      }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch{} }
+      }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
     }
     // The player-input tools only run against the Client datamodel (play mode) and
     // "Client" is the sole allowed value, so default it when the model omits it -
@@ -1317,13 +1471,28 @@
     A.loopKey = null; // pinned by syncSessionState once this chat has an id + content
     let truncCount = 0;
     const MAX_TRUNC = 6;
+    // Exec-mode budget (HONEST: bounded, so a stuck model can never spin forever).
+    const EXEC_MAX_TURNS = { single: 1, continuous: 24, loop: 40 };
+    let execTurns = 0;
+
+    const loopRolePrompt = (role, turn, maxTurns) => {
+      const head = `[ZeroScript loop ${turn}/${maxTurns} — you are the ${role.toUpperCase()}]`;
+      if (role === "planner") return `${head} Produce the NEXT piece of the blueprint only: file tree, exact ` +
+        `instance paths, economy numbers, and the single most important blocker. No code yet. ` +
+        `Write it to the agent hub with ZSAgentHub.write("plan", …) and end with "PLAN READY".`;
+      if (role === "checker") return `${head} Audit what exists NOW with get_studio_state / script_read / ` +
+        `inspect_instance. List concrete defects with file paths, then fix the top defect via multi_edit. ` +
+        `If nothing is broken, reply exactly "LOOP DONE".`;
+      return `${head} Implement the pending plan with execute_luau / multi_edit. Bulk payloads, no TODO, ` +
+        `no placeholder. Verify with get_studio_state when done, then reply "CODE READY".`;
+    };
     // Re-send the command list after this many successful tool calls. Kept high
     // so the reminder does not bloat the context too often.
     const REMIND_TOOLS_EVERY = 20;
     ui.showStop(true);
     P.setInputLock(true); // prevent user from typing while the agent is active
     ui.inputCover(true);  // keep the "Agent is working" cover up for the WHOLE loop
-    diag("loop.start", { base, exec: currentExec });
+    diag("loop.start", { base, exec: execMode() });
     try {
       while (!A.stop) {
         if (A.pendingStop && !A.toolRunning && A.hadProgressSinceStart) {
@@ -1430,34 +1599,94 @@
           continue;
         }
         if (res.kind === "text") {
-          // Exec modes: Single stops here (default), Continuous auto-continues until full game, Loop routes via planner↔coder↔checker
-          if (currentExec === "single") break;
-          if (currentExec === "continuous") {
-            // Continuous: one prompt → full game. Don't end on first text answer — push AI to keep building.
-            // Heuristic: if the answer looks like completion (mentions done/complete/finished and no TODO), we truly stop.
-            const txt = (res.text || "").toLowerCase();
-            const looksDone = txt.length>20 && /(game complete|build complete|all .* done|\bfully implemented\b|ready to play|enjoy your game)/.test(txt) && !/todo|remaining|next step|still need|missing/i.test(txt);
-            if (looksDone) { diag("exec.continuous.done"); break; }
-            // Otherwise ask to continue building
-            diag("exec.continuous.continue");
-            // Also publish to hub so other AI tabs (planner/coder) can see the state
-            try{ window.ZSAgentHub && window.ZSAgentHub.write("zsExecState",{mode:"continuous",text:res.text.slice(0,8000),ts:Date.now()},120000); }catch{}
-            base = await submitAndGetBase("Continue building the game — check what is still missing (scripts, UI, game loop, polish) and keep coding with execute_luau/multi_edit. Don\'t stop until the full playable game is done.");
+          // ── EXEC MODES — real engine, not prose ─────────────────────────
+          // HONEST FIX (audit #2): Continuous / Loop were previously an unbounded
+          // `continue` that relied on the model saying "I'm done". They now have
+          // (a) an explicit iteration budget, (b) a progress watchdog, and (c) a
+          // real planner→coder→checker handoff through the wall + agent hub.
+          const mode = execMode();
+          if (mode === "single") break;
+          const txt = (res.text || "").toLowerCase();
+          const saidDone = txt.length > 20
+            && /(game complete|build complete|all .* done|\bfully implemented\b|ready to play|enjoy your game|nothing (else|more) to (do|add))/.test(txt)
+            && !/todo|remaining|next step|still need|missing|incomplete|not yet/i.test(txt);
+          execTurns++;
+          const maxTurns = mode === "loop" ? EXEC_MAX_TURNS.loop : EXEC_MAX_TURNS.continuous;
+          if (saidDone) { diag("exec.done", { mode, turn: execTurns }); break; }
+          if (execTurns >= maxTurns) {
+            diag("exec.budget", { mode, turn: execTurns, maxTurns });
+            ui.banner("warn", `${mode === "loop" ? "Loop" : "Continuous"} budget reached`,
+              `Stopped after ${execTurns} turns. Switch Exec mode to Single (or press Start again) to continue.`);
+            break;
+          }
+          if (A.stop || A.pendingStop) break;
+          try { window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
+            `${mode} turn ${execTurns}/${maxTurns} — ${String(res.text||"").slice(0,120)}`, "agent_loop"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.txt", _e); }
+
+          if (mode === "continuous") {
+            diag("exec.continuous.continue", { turn: execTurns, maxTurns });
+            try { window.ZSAgentHub && window.ZSAgentHub.write("zsExecState",
+              { mode, turn: execTurns, maxTurns, text: String(res.text||"").slice(0,8000), ts: Date.now() }, 120000); } catch (_e) { globalThis.ZSSafe?.seen?.("main.txt", _e); }
+            base = await submitAndGetBase(
+              `[ZeroScript continuous ${execTurns}/${maxTurns}] Keep building. Read the wall/hub state, ` +
+              `then find what is still missing (scripts, UI, data, polish) and implement it with ` +
+              `execute_luau / multi_edit. Do not restate a plan you already executed. ` +
+              `When the game is genuinely complete, reply with the single line GAME COMPLETE.`);
             continue;
           }
-          if (currentExec === "loop") {
-            const txt2=(res.text||"").toLowerCase();
-            const loopDone=/\b(done|complete|finished|ready)\b/.test(txt2) && !/todo|next/.test(txt2);
-            if(loopDone) { diag("exec.loop.done"); break; }
-            // Loop: publish to hub and ping plan wall for planner→coder→checker handoff
-            try{
-              window.ZSAgentHub && window.ZSAgentHub.write("zsLoopState",{mode:"loop", text:res.text.slice(0,8000), plan:currentPlan, ts:Date.now()},120000);
-              window.ZSPlanWall && window.ZSPlanWall.send && window.ZSPlanWall.send("planner","coder",{type:"loop_text", text:res.text},"loop");
-            }catch{}
-            base = await submitAndGetBase("Loop turn — Planner reviewed, Coder implements, Checker validates. Continue the loop: build/fix the next piece with execute_luau. Keep the hub (ZSAgentHub) updated via zsLoopState. Stop only when the game is fully playable.");
-            continue;
-          }
-          break;
+
+          // mode === "loop" — planner → coder → checker, one role per turn.
+          // Deterministic rotation in canonical order, limited to the roles the
+          // ACTIVE PLAN actually uses (Direct has one role, Agent three).
+          const planRoles = (ZS.PLANS && ZS.PLANS[planNow()] && ZS.PLANS[planNow()].roles) || ["planner", "coder", "checker"];
+          const role = planRoles[(execTurns - 1) % planRoles.length];
+          diag("exec.loop.turn", { turn: execTurns, maxTurns, role });
+          // ── distribute the turn to the REAL peer AI ────────────────────
+          // Loop mode runs planner→coder→checker inside ONE tab, which means one
+          // model plays all three roles — the exact thing the peer channel
+          // exists to prevent. When the active plan assigns this role to a
+          // DIFFERENT provider, the turn is handed to that tab and we wait for
+          // its answer instead of impersonating it.
+          try {
+            const PW = window.ZSPeerWall;
+            const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[planNow()]) || null;
+            const roleNames = (def && def.roles) || ["planner", "coder", "checker"];
+            const assigned = String((planRoles[role] || "")).toLowerCase();
+            if (PW && assigned && assigned !== "unknown" && !PW.sameProvider(assigned, PW.self)) {
+              const sent = PW.sendToRole(planRoles, role, "task", {
+                turn: execTurns, maxTurns, plan: planNow(),
+                text: `[turn ${execTurns}/${maxTurns}] You are the ${role.toUpperCase()}. ` +
+                      `Continue the build from the shared state and reply with your result.`,
+              });
+              if (sent && sent.ok) {
+                diag("exec.peer.handoff", { role, to: assigned, turn: execTurns });
+                ui.banner("info", `Turn ${execTurns}: handed to ${assigned} (${role})`,
+                  `The ${role} role belongs to a different AI — waiting for its reply instead of playing it here.`);
+                // The peer answers through the peer channel, which becomes our
+                // next context. We do not submit a prompt locally for this role.
+                const got = await waitForPeerReply(assigned, 45000);
+                if (got) {
+                  base = await submitAndGetBase(`[ZeroScript loop ${execTurns}/${maxTurns} — ${role.toUpperCase()} replied via ${assigned}]
+
+` +
+                    String(got.payload && (got.payload.text || got.payload.output) || "").slice(0, 6000));
+                  continue;
+                }
+                diag("exec.peer.timeout", { role, to: assigned });
+                ui.banner("warn", `No reply from ${assigned}`, `Is its tab open? Falling back to this AI for the ${role} turn.`);
+              }
+            }
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
+          try {
+            window.ZSAgentHub && window.ZSAgentHub.write("zsLoopState",
+              { mode, role, turn: execTurns, maxTurns, plan: planNow(), text: String(res.text||"").slice(0,8000), ts: Date.now() }, 120000);
+            window.ZSPlanWall && window.ZSPlanWall.send && window.ZSPlanWall.send(
+              role, "__all", { type: "loop_text", role, turn: execTurns, text: String(res.text||"") }, "loop");
+            window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
+              `loop ${role} turn ${execTurns}`, "agent_loop");
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
+          base = await submitAndGetBase(loopRolePrompt(role, execTurns, maxTurns));
+          continue;
         }
 
         if (res.kind === "tool") {
@@ -1567,7 +1796,7 @@
           if (A.pendingStop && isProgress) {
             // still send the tool feedback so conversation stays consistent, then honor
             let _toSend = feedback; _toSend = withSysResend(_toSend); const _images = A.pendingImages; A.pendingImages=null; diag("images.consumed",{count:_images? _images.length:0});
-            try{ base = await submitAndGetBase(_toSend, _images); }catch{}
+            try{ base = await submitAndGetBase(_toSend, _images); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
             honorPendingStopIfNeeded("progressBoundary"); break;
           }
           // Re-inject the command list every REMIND_TOOLS_EVERY successful calls.
@@ -1669,11 +1898,11 @@
       // spot). Too little text to identify → rely on the dataset marker only.
       if (pref.trim().length < 12) return;
       halted.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function forgetHalted(item) {
     if (!item || !halted.size) return;
-    try { halted.delete(`${P.conversationKey()}|${turnKey(item)}`); } catch {}
+    try { halted.delete(`${P.conversationKey()}|${turnKey(item)}`); } catch (_e) { globalThis.ZSSafe?.seen?.("main.forgetHalted", _e); }
   }
   // The halt was recorded MID-stream, so the stored text is a PREFIX of the
   // turn's final text - match on startsWith, never equality.
@@ -1713,7 +1942,7 @@
       // index. Fall back to the dataset marker until there is enough text.
       if (pref.trim().length < 12) return;
       executed.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function isRememberedExecuted(item, txt) {
     if (!executed.size) return false;
@@ -1724,8 +1953,8 @@
   }
   function stopLoop() {
     if (A.stopping && !A.pendingStop) return; // already winding down - ignore double-clicks (but allow pendingStop re-assert)
-    diag("stopLoop",{exec:currentExec, pending:A.pendingStop});
-    const isDeferred = (currentExec === "continuous" || currentExec === "loop");
+    diag("stopLoop",{exec:execMode(), pending:A.pendingStop});
+    const isDeferred = (execMode() === "continuous" || execMode() === "loop");
     // Continuous / Loop: defer actual halt until a tool makes progress (no half-coded blocks)
     if (isDeferred && !A.pendingStop) {
       // If a tool is currently running, park as pending — do NOT abort mid-execute_luau/multi_edit
@@ -1808,11 +2037,38 @@
   // The full system prompt for the CURRENT provider and user settings. One
   // definition, used both by the bootstrap and by the periodic re-injection, so
   // the two can never drift apart.
+  // ── SLASH / PROMPT ENHANCER — ALL PROVIDERS (HONEST FIX, audit #15) ────────
+  // prompt_enhancer.js was only ever wrapped onto Claude's typeAndSend, so
+  // /truth /code /prompt reached 1 of 15 sites and the README claim "works on ALL
+  // AIs, parsed locally" was false. We now wrap the provider's typeAndSend once,
+  // here, which applies to every provider including the thin generic wrappers.
+  // Feedback turns (tool output) and system re-injections are never enhanced.
+  (function installPromptEnhancer(){
+    try{
+      if(!window.ZSPromptEnhancer || !window.ZSPromptEnhancer.wrapTypeAndSend) return;
+      if(P._zsCorePromptWrapped) return;
+      window.ZSPromptEnhancer.wrapTypeAndSend(P);
+      P._zsCorePromptWrapped = true;
+      diag("enhancer.wrapped", { provider: P.displayName });
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.installPromptEnhancer", _e); }
+  })();
+
   function systemPrompt() {
+    // Project memory is part of the system prompt from turn one (audit #16).
+    let wallDigest = "";
+    try{
+      if(window.ZSMemoryWall && window.ZSMemoryWall.buildContext){
+        const full = window.ZSMemoryWall.buildContext();
+        const stats = window.ZSMemoryWall.stats ? window.ZSMemoryWall.stats() : null;
+        // Only inject once there is real content — the skeleton alone is noise.
+        if(full && stats && stats.wallLen > 400) wallDigest = full.slice(0, 1400);
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.systemPrompt", _e); }
     return ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
       providerNotes: P.promptExtra || "",
+      memoryDigest: wallDigest,
     });
   }
 
@@ -1867,18 +2123,25 @@
     sysCountKey = k;
     const local = sysCount;
     sysCount = { users: 0, results: 0 };
-    try {
-      const r = await new Promise((res) => chrome.storage.local.get(k, res));
-      const saved = r && r[k];
-      if (saved) sysCount = {
+    // A failed read must NOT look like "no saved counters": resetting to
+    // {0,0} here is what made the counters appear to reset. Keep the in-memory
+    // numbers on any failure, and record it as a real fault.
+    const r = await globalThis.ZSSafe?.wrapAsync?.("main.loadSysCount",
+      () => new Promise((res) => chrome.storage.local.get(k, res)));
+    const saved = r && r[k];
+    if (saved) {
+      sysCount = {
         users: Math.max(saved.users || 0, local.users || 0),
         results: Math.max(saved.results || 0, local.results || 0),
       };
-    } catch {}
+    } else if (!r) {
+      // read failed (not "empty") — restore rather than zero out
+      sysCount = local;
+    }
     return sysCount;
   }
   function saveSysCount() {
-    try { chrome.storage.local.set({ [sysCountKey]: sysCount }); } catch {}
+    try { chrome.storage.local.set({ [sysCountKey]: sysCount }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.saveSysCount", _e); }
   }
   // Increment SYNCHRONOUSLY, persist asynchronously. sysResendDue() reads
   // sysCount in the same tick as the bump that should trip it, so deferring the
@@ -2006,7 +2269,7 @@
     try{
       if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll){
         window.ZSPlanWall.broadcastStartAll().then(st=>{
-          try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+          try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch (_e) { globalThis.ZSSafe?.seen?.("main.alive", _e); }
           // inject magic word into system prompt re-read (next submit uses window.__zsPlan*)
           // also send via wall so other tabs wake
         });
@@ -2016,45 +2279,80 @@
       chrome.runtime.onMessage.addListener((m, sender, sendResp)=>{
         if(!m) return;
         if(m.type==="zs-plan-wake"){
-          try{ window.__zsPlanConnected=true; }catch{}
+          try{ window.__zsPlanConnected=true; }catch (_e) { globalThis.ZSSafe?.seen?.("main.alive", _e); }
           // REAL auto-start: if this tab hasn't started, start it now (one Start → ALL auto-start)
           try{
             const delay = (m.staggerMs!=null?m.staggerMs: 300 + Math.floor(Math.random()*400));
             setTimeout(()=>{
               try{
-                // If state is idle/stopped, trigger startSession like user clicked Start in this tab
-                if(typeof P!=='undefined' && P.startSession){
-                  const st = (P.state||'').toLowerCase();
-                  const idle = !st || st==='idle' || st==='stopped' || st==='ready' || st==='error';
-                  if(idle){
-                    console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
-                    P.startSession();
-                    try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch{}
-                  }
+                // HONEST FIX (audit #7): this used to test `P.startSession`, which
+                // lives in THIS closure, not on the provider object — so the guard
+                // was always false and "one Start → ALL tabs start" never started
+                // anything. It now calls the real module-level startSession().
+                const idle = !A.running && !A.starting;
+                if(idle){
+                  console.log('[ZeroScript] zs-plan-wake auto-starting session', m.plan||'', 'delay', delay);
+                  try{ window.__zsAssignedRole = m.role || null; }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
+                  Promise.resolve().then(() => startSession()).catch((e) => {
+                    globalThis.ZSSafe?.seen?.("main.delay", e);
+                    try { ui.banner("warn", "Could not auto-start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
+                  });
+                  try{ chrome.runtime.sendMessage({type:'zs_auto_started', plan:m.plan, role:m.role}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
                 }
               }catch(e){ console.warn('[ZeroScript] auto-start failed', e); }
             }, delay);
             if(sendResp) sendResp({ok:true, willAutoStart:true});
             return true;
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.delay", _e); }
+        }
+        // ── CROSS-AI PEER INBOUND ──────────────────────────────────────
+        // A DIFFERENT AI sent us a message. This is the part that was missing:
+        // the old wall only executed code silently, so no AI ever READ another
+        // AI. Here we accept the envelope into ZSPeerWall's mailbox, and the
+        // next prompt on this tab carries the peer's actual words (see
+        // peerContext() below, called from submitAndGetBase).
+        if(m.type==="zs-peer-inbound"){
+          try{
+            const env = m.envelope;
+            const r = window.ZSPeerWall && window.ZSPeerWall.receive
+              ? window.ZSPeerWall.receive(env, "runtime")
+              : { ok:false, reason:"peer-wall-missing" };
+            if(r && r.ok){
+              // show it in the log so the user can SEE two AIs talking
+              try{
+                const who = (env.fromProvider || "peer").toUpperCase();
+                const text = String((env.payload && (env.payload.text || env.payload.output || env.payload.code)) || "").slice(0, 160);
+                diag("peer.inbound", { from: env.fromProvider, kind: env.kind, chars: text.length });
+                console.log(`[ZeroScript] peer message from ${who}: ${text}`);
+              }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
+            } else {
+              diag("peer.inbound.rejected", { reason: r && r.reason, from: env && env.fromProvider });
+            }
+            if(sendResp) sendResp({ok: !!(r && r.ok)});
+            return true;
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
         }
         // Real AI↔AI wall handoff: when planner posts spec, coder executes it
         if(m.type==="zs-wall-task" || m.type==="zs-wall-exec"){
           try{
-            handleWallTask(m);
+            Promise.resolve().then(() => handleWallTask(m)).catch((e) => globalThis.ZSSafe?.seen?.("main.who", e));
             if(sendResp) sendResp({ok:true});
             return true;
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.who", _e); }
         }
       });
       // Real wall task handler — coder actually executes planner spec via execute_luau
-      async function handleWallTask(m){
+      // NOT async: every `await` in here lives inside the deferred setTimeout
+      // below, so `async` only wrapped a promise that resolved before any work
+      // started. Callers `await handleWallTask(...)` and still return as soon as
+      // the task is *queued*, which is the intended non-blocking behaviour.
+      function handleWallTask(m){
         try{
           const task = m.task || m.payload || m;
           if(!task || !task.code) return;
           console.log('[ZeroScript] wall task received', task.from, '→', task.to, task.code.slice(0,80));
           // Store in hub temp for audit trail
-          try{ if(window.ZSAgentHub) window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, code:task.code.slice(0,500), ts:Date.now()}); }catch{}
+          try{ window.ZSAgentHub && window.ZSAgentHub.pushTemp && window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, to:task.to, code:String(task.code||'').slice(0,500), ts:Date.now()}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.handleWallTask", _e); }
           // Actually execute if we are the coder/checker target
           const myRole = (window.__zsAssignedRole || (window.ZSPlanWall && window.ZSPlanWall.magicForCurrentTab && window.ZSPlanWall.magicForCurrentTab()) || '').toLowerCase();
           const isTarget = !task.to || task.to==='__all' || myRole.includes((task.to||'').toLowerCase()) || /coder|checker|executor/.test(myRole);
@@ -2062,17 +2360,28 @@
             // Defer execution slightly to let UI settle
             setTimeout(async ()=>{
               try{
-                if(window.ZSSandbox && window.ZSSandbox.executeLuau){
-                  const res = await window.ZSSandbox.executeLuau(task.code, {wall:true, from:task.from});
-                  console.log('[ZeroScript] wall exec result', res);
-                  // Post result back to wall so planner can see it
-                  try{
-                    if(window.ZSPlanWall) window.ZSPlanWall.send('executor', task.from||'planner', {type:'wall_result', ok:!!res?.ok, output:(res?.output||res?.error||'').slice(0,800), ts:Date.now()}, 'wall');
-                  }catch{}
-                } else if(window.execute_luau){
-                  const res = await window.execute_luau(task.code);
-                  console.log('[ZeroScript] wall exec via execute_luau', res);
+                // HONEST FIX (audit #5): the old branch called
+                // window.ZSSandbox.executeLuau(), which was never implemented, so a
+                // wall task could never be executed. Static-check first, then run the
+                // REAL execute_luau tool through the normal background path (bg()).
+                const staticCheck = window.ZSSandbox && window.ZSSandbox.analyseLuau
+                  ? window.ZSSandbox.analyseLuau(task.code) : { ok: true };
+                if(!staticCheck.ok){
+                  console.warn('[ZeroScript] wall task rejected by static check', staticCheck.error);
+                  try{ window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
+                    { type: "wall_result", ok: false, output: "static check: " + staticCheck.error, ts: Date.now() }, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
+                  return;
                 }
+                const res = await bg({ type: "call_tool", name: "execute_luau",
+                  arguments: { code: task.code, datamodel_type: task.datamodel || "Edit" }, timeout: 20000 });
+                console.log('[ZeroScript] wall exec result', res);
+                try{
+                  window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
+                    { type: "wall_result", ok: !!res && !!res.ok,
+                      output: String((res && (res.text || res.error)) || "").slice(0, 800), ts: Date.now() }, "wall");
+                }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
+                try{ window.ZSMemoryWall && window.ZSMemoryWall.remember("decisions",
+                  `wall exec from ${task.from || "planner"} → ${res && res.ok ? "ok" : "failed"}`, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
               }catch(e){ console.warn('[ZeroScript] wall exec failed', e); }
             }, 120);
           }
@@ -2100,7 +2409,7 @@
                 }
               }
             }
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
         }, 5000);
         // Also hub temp store poll for cross-tab handoff (10ms wall already handles storage)
         setInterval(async ()=>{
@@ -2115,10 +2424,10 @@
                 await handleWallTask({task:t});
               }
             }
-          }catch{}
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
         }, 2500);
       })();
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
     P.setInputLock(true); // block user input during bootstrap
     ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
     try {
@@ -2813,21 +3122,26 @@
   //  UI  (control panel, onboarding, stop button, banners, toast, input cover)
   // ════════════════════════════════════════════════════════════════════════
   const ui = (() => {
-    let root, bar, dot, brandEl, stateEl, actionBtn, stopBtn, switchBtn, supportBtn, discordEl, menuEl, unstableEl, planBtn, planMenuEl;
+    let root, bar, dot, stateEl, actionBtn, stopBtn, switchBtn, supportBtn, menuEl, unstableEl, planBtn, planMenuEl;
     let cover, coverRaf, barRaf;
     let openMenuFn = null; // set by build(); lets the popup force the panel open via runtime message
     let bridgeOk = false, studioDown = false, placeDown = false, appDown = false, addonOk = false, studioProcUp = false;
     let wasConnected = false, bridgeBannerEl = null;
-    // ── Switch Plan state ──
-    let currentPlan = "direct";
-    let planRoles = {}; // role -> provider name
-    try{ chrome.storage.local.get(["zsPlan","zsPlanRoles"], r=>{ if(r.zsPlan) currentPlan=r.zsPlan; if(r.zsPlanRoles) planRoles=r.zsPlanRoles; try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch{} if(planBtn) updatePlanBtn(); }); }catch{}
-    try{ chrome.storage.onChanged.addListener((ch,area)=>{ if(area!=="local") return; if(ch.zsPlan) { currentPlan=ch.zsPlan.newValue; try{ window.__zsPlan=currentPlan;}catch{} updatePlanBtn(); } if(ch.zsPlanRoles) { planRoles=ch.zsPlanRoles.newValue||{}; try{ window.__zsPlanRoles=planRoles;}catch{} } }); }catch{}
-    // ── Exec Mode state (Single/Continuous/Loop) ──
-    let currentExec = "single";
+    // ── Switch Plan + Exec Mode state ───────────────────────────────────────
+    // HONEST FIX (audit #1/#2): ui() no longer owns a second copy of this state.
+    // It mirrors the module-scope SESSION object, so the agent loop and the UI can
+    // never disagree about which exec mode / plan is active.
+    let currentPlan = SESSION.plan;
+    let planRoles = SESSION.roles;
+    let currentExec = SESSION.exec;
     let execBtn, execMenuEl;
-    try{ chrome.storage.local.get(["zsExecMode"], r=>{ if(r.zsExecMode) currentExec=r.zsExecMode; try{ window.__zsExecMode=currentExec; }catch{} if(execBtn) updateExecBtn(); }); }catch{}
-    try{ chrome.storage.onChanged.addListener((ch,area)=>{ if(area!=="local") return; if(ch.zsExecMode) { currentExec=ch.zsExecMode.newValue; try{ window.__zsExecMode=currentExec; }catch{} updateExecBtn(); } }); }catch{}
+    onSessionChange(() => {
+      currentPlan = SESSION.plan;
+      planRoles = SESSION.roles;
+      currentExec = SESSION.exec;
+      try{ if(planBtn) updatePlanBtn(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.ui", _e); }
+      try{ if(execBtn) updateExecBtn(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.ui", _e); }
+    });
 
     function build() {
       root = document.createElement("div");
@@ -2840,7 +3154,7 @@
       root.innerHTML = `
         <div id="zs-bar">
           <span id="zs-dot" class="off" title=""></span>
-          <span id="zs-brand">ZeroScript <span class="zs-free">v${EXT_VERSION}</span></span>
+          <span id="zs-brand">ZeroScript <span class="zs-free" id="zs-brand-ver"></span></span>
           <span id="zs-state"></span>
           <button id="zs-action"></button>
           <button id="zs-exec" aria-label="Exec Mode" title="Exec Mode — Single / Continuous / Loop"><span id="zs-exec-name">Single</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -2857,8 +3171,9 @@
       `;
       document.documentElement.appendChild(root);
       bar = root.querySelector("#zs-bar");
+      const brandVer = root.querySelector("#zs-brand-ver");
+      if (brandVer) brandVer.textContent = "v" + EXT_VERSION;
       dot = root.querySelector("#zs-dot");
-      brandEl = root.querySelector("#zs-brand");
       stateEl = root.querySelector("#zs-state");
       actionBtn = root.querySelector("#zs-action");
       stopBtn = root.querySelector("#zs-stop");
@@ -2868,7 +3183,6 @@
       execMenuEl = root.querySelector("#zs-exec-menu");
       switchBtn = root.querySelector("#zs-switch");
       supportBtn = root.querySelector("#zs-support");
-      discordEl = root.querySelector("#zs-discord");
       const swName = root.querySelector("#zs-switch-name");
       if (swName) swName.textContent = P.displayName || P.id;
       menuEl = root.querySelector("#zs-menu");
@@ -2928,7 +3242,9 @@
       }, true);
 
       applyTheme();
-      setInterval(applyTheme, 250); // MAX 1s — 2x faster theme sync
+      // Theme is a colour swap, not a hot path: 250ms was 4 storage reads/second
+      // for a value that changes when the user edits settings.
+      setInterval(applyTheme, 800);
       renderBar();
       placeBar(); // start the per-frame anchoring loop
     }
@@ -2941,9 +3257,31 @@
       const names={direct:"Direct",agent:"Agent",plan:"Plan",checker:"Checker"};
       const name = names[currentPlan] || "Direct";
       const el = planBtn.querySelector("#zs-plan-name");
-      if(el) el.textContent = name;
+      // Show the truth, not the wish: if every role points at the same AI (or an
+      // unassigned provider sits on this tab) the label says so, because the
+      // "2 AI" badge is worthless if both are the same model.
+      let label = name;
+      try {
+        const PW = window.ZSPeerWall;
+        const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[currentPlan]) || null;
+        const roleNames = (def && def.roles) || ["planner"];
+        if (PW && PW.auditPlan) {
+          const a = PW.auditPlan(PW.self, planRoles, roleNames);
+          if (!a.ok) label = name + " ⚠";
+          else label = name + " · " + a.distinctProviders + " AI";
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
+      if(el) el.textContent = label;
+      try { planBtn.title = (function(){
+        const PW = window.ZSPeerWall;
+        if (!PW || !PW.auditPlan) return "";
+        const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[currentPlan]) || null;
+        const a = PW.auditPlan(PW.self, planRoles, (def && def.roles) || ["planner"]);
+        return a.ok ? `Roles: ${((def && def.roles) || []).map(r => r + "=" + (planRoles[r] || "?")).join(", ")}`
+                    : "⚠ " + a.problems.join("; ");
+      })(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.def", _e); }
       planBtn.dataset.plan = currentPlan;
-      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch{}
+      try{ window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; }catch (_e) { globalThis.ZSSafe?.seen?.("main.def", _e); }
       // also sync to prompt enhancer via global
     }
     function buildPlanMenu(){
@@ -2975,6 +3313,10 @@
         }
         // tab count warning placeholder — filled async
         html+=`<div id="zs-plan-warn" class="zs-plan-warn" hidden></div>`;
+        // distinctness warning (a model cannot review itself)
+        html+=`<div class="zs-plan-audit" style="margin-top:6px;color:#f59e0b;font-size:10px;line-height:1.35" hidden></div>`;
+        // honest statement of what the peer channel actually does
+        html+=`<div class="zs-plan-note" style="margin-top:6px;opacity:.65">Peer channel: each AI receives the others' messages in its own context (peer_wall.js). Same-AI plans are refused at delivery.</div>`;
         html+=`</div>`;
       }
       html+=`<button class="zs-plan-save">Save Plan</button>`;
@@ -2997,35 +3339,53 @@
               }
             }
             // store for prompt injection
-            try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch{}
+            try{ window.__zsTabInfo={total:st.have, arena:st.arena||0, byProvider:(st.info&&st.info.byProvider)||{}}; window.__zsPlanConnected=st.connected; }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
           });
         }
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("main.buildPlanMenu", _e); }
       // bind
+      // A visible, non-blocking warning when the chosen roles are not distinct.
+      // Placing this next to the role selectors is the only place the user can
+      // act on it before starting a run.
+      try {
+        const PW = window.ZSPeerWall;
+        const def = PLANS_DEF[currentPlan];
+        const roleNames = (def && def.roles) || ["planner"];
+        const a = PW && PW.auditPlan ? PW.auditPlan(PW.self, planRoles, roleNames) : null;
+        const warnEl = planMenuEl.querySelector(".zs-plan-audit");
+        if (warnEl && a) {
+          warnEl.hidden = a.ok;
+          warnEl.textContent = a.ok
+            ? ""
+            : "⚠ " + a.problems.join(" • ") + " — pick a different AI for each role";
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       planMenuEl.querySelectorAll(".zs-plan-opt").forEach(b=>b.addEventListener("click",()=>{
         const pid=b.dataset.plan;
-        currentPlan=pid;
-        // set default roles for new plan
         const def=PLANS_DEF[pid];
-        for(const r of def.roles) if(!planRoles[r]) planRoles[r]=providers[0];
-        try{ chrome.storage.local.set({zsPlan:currentPlan, zsPlanRoles:planRoles}); window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch{}
+        const nextRoles={...planRoles};
+        for(const r of def.roles) if(!nextRoles[r]) nextRoles[r]=providers[0];
+        currentPlan=pid; planRoles=nextRoles;
+        setPlanState(pid, nextRoles);
+        try{ window.ZSPlanWall && window.ZSPlanWall.setPlan && window.ZSPlanWall.setPlan(pid, nextRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
         updatePlanBtn();
         buildPlanMenu();
         // re-inject system prompt via notifying prompt enhancer
-        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch{}
+        try{ window.__zsPlanWallUpdate && window.__zsPlanWallUpdate(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       }));
       planMenuEl.querySelectorAll("select[data-role]").forEach(sel=>sel.addEventListener("change",()=>{
-        planRoles[sel.dataset.role]=sel.value;
-        try{ chrome.storage.local.set({zsPlanRoles:planRoles}); window.__zsPlanRoles=planRoles; }catch{}
+        planRoles={...planRoles, [sel.dataset.role]:sel.value};
+        setPlanState(currentPlan, planRoles);
       }));
       const save=planMenuEl.querySelector(".zs-plan-save");
       if(save) save.addEventListener("click",()=>{
-        try{ chrome.storage.local.set({zsPlan:currentPlan, zsPlanRoles:planRoles}); window.__zsPlan=currentPlan; window.__zsPlanRoles=planRoles; window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch{}
+        setPlanState(currentPlan, planRoles);
+        try{ window.ZSPlanWall&&window.ZSPlanWall.setPlan(currentPlan, planRoles); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
         updatePlanBtn();
         planMenuEl.hidden=true;
         toast(`Plan saved: ${PLANS_DEF[currentPlan].name} (${PLANS_DEF[currentPlan].ais} AI) — wall 10ms`);
         // send ready hint via wall + magic word broadcast
-        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch{}
+        try{ window.ZSPlanWall && window.ZSPlanWall.send("ui","__all",{type:"plan_saved", plan:currentPlan, roles:planRoles}, "plan"); if(window.ZSPlanWall && window.ZSPlanWall.broadcastStartAll) window.ZSPlanWall.broadcastStartAll(); }catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
       });
     }
     function togglePlanMenu(){
@@ -3053,7 +3413,7 @@
       execBtn.dataset.exec=currentExec;
       const el=execBtn.querySelector("#zs-exec-name"); if(el) el.textContent=m.label;
       execBtn.title=`Exec — ${m.label}: ${m.hint} (click to switch)`;
-      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch{}
+      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; }catch (_e) { globalThis.ZSSafe?.seen?.("main.updateExecBtn", _e); }
     }
     // BRUTALLY HONEST: Exec menu now SAME card design as Agent/Plan/Checker — single uses zs-plan-opt
     function buildExecMenu(){
@@ -3085,11 +3445,10 @@
       execMenuEl.appendChild(saveHint);
     }
     function setExecMode(v){
-      currentExec=v;
+      currentExec=setExecModeState(v);
       updateExecBtn(); buildExecMenu();
-      try{ chrome.storage.local.set({zsExecMode: currentExec}); }catch{}
-      try{ window.__zsExecMode=currentExec; window.__zsExec=currentExec; window.ZSAgentHub && window.ZSAgentHub.write && window.ZSAgentHub.write("__zsExecMode", currentExec, 120000); }catch{}
-      try{ chrome.runtime.sendMessage({kind:"zs_exec_update", exec: currentExec}); }catch{}
+      try{ window.__zsExec=currentExec; window.ZSAgentHub && window.ZSAgentHub.write && window.ZSAgentHub.write("__zsExecMode", currentExec, 120000); }catch (_e) { globalThis.ZSSafe?.seen?.("main.setExecMode", _e); }
+      try{ chrome.runtime.sendMessage({kind:"zs_exec_update", exec: currentExec}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.setExecMode", _e); }
       toast(`Exec: ${EXEC_META[v]?.label||v}`);
       diag("exec.changed",{exec:v});
     }
@@ -3108,7 +3467,13 @@
 
     function onActionClick() {
       const kind = actionBtn.dataset.kind;
-      if (kind === "start" || kind === "start-degraded") startSession();
+      if (kind === "start" || kind === "start-degraded") {
+        // startSession is async; a rejection used to leave the bar in "Starting…"
+        Promise.resolve().then(() => startSession()).catch((e) => {
+          globalThis.ZSSafe?.seen?.("main.onActionClick", e);
+          try { ui.banner("warn", "Could not start", String((e && e.message) || e).slice(0, 140)); } catch (_e) { globalThis.ZSSafe?.seen?.("main.onActionClick", _e); }
+        });
+      }
     }
 
     // ── Custom prompt (persisted) ───────────────────────────────────────────
@@ -3123,7 +3488,7 @@
           syncMenuPrompt();
         }
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.onActionClick", _e); }
     function getCustomPrompt() { return customPrompt; }
     // Reflect the saved value back into the menu textarea (unless being edited).
     function syncMenuPrompt() {
@@ -3146,10 +3511,10 @@
           if (!menuEl.hidden) buildMenu();
         }
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.syncMenuPrompt", _e); }
     function getCustomMcpServers() { return customMcpServers; }
     function saveCustomMcpServers() {
-      try { chrome.storage.local.set({ zsCustomMcpServers: customMcpServers }); } catch {}
+      try { chrome.storage.local.set({ zsCustomMcpServers: customMcpServers }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.saveCustomMcpServers", _e); }
     }
     // The bridge (config.json + live health) is the SOURCE OF TRUTH for which
     // addon servers actually exist - chrome.storage.local is just a display-name
@@ -3246,7 +3611,7 @@
         mcpList += `<div class="zs-mcp-item"><span class="zs-mcp-health zs-mcp-health-${healthClass}" title="${healthTitle}"></span><div class="zs-mcp-info"><span class="zs-mcp-name">${esc(s.name)}</span><span class="zs-mcp-url">${esc(s.command || s.id)}</span></div><button class="zs-mcp-remove" data-id="${esc(s.id)}" title="Remove">✕</button></div>`;
       });
       menuEl.innerHTML =
-        `<div class="zs-menu-head"><span class="zs-menu-logo">ZeroScript</span><span class="zs-menu-tag">v${EXT_VERSION}</span></div>
+        `<div class="zs-menu-head"><span class="zs-menu-logo">ZeroScript</span><span class="zs-menu-tag" id="zs-menu-ver"></span></div>
          <section class="zs-menu-sec">
            <div class="zs-sec-label"><span>Switch AI</span></div>
            ${sites}
@@ -3277,7 +3642,9 @@
            <input id="zs-mcp-url" class="zs-mcp-field" placeholder="Start command, e.g. npx -y @some/mcp-server" />
            <div class="zs-set-row"><button id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
          </section>`;
-      const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch {} menuEl.hidden = true; };
+      const menuVer = menuEl.querySelector("#zs-menu-ver");
+      if (menuVer) menuVer.textContent = "v" + EXT_VERSION;
+      const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.open", _e); } menuEl.hidden = true; };
       menuEl.querySelectorAll("button.zs-site-opt, .zs-tip-opt").forEach((b) =>
         b.addEventListener("click", () => open(b.dataset.u)));
       const ta = menuEl.querySelector("#zs-set-text");
@@ -3286,7 +3653,7 @@
       ta.value = customPrompt;
       saveBtn.addEventListener("click", () => {
         customPrompt = ta.value;
-        try { chrome.storage.local.set({ zsCustomPrompt: customPrompt }); } catch {}
+        try { chrome.storage.local.set({ zsCustomPrompt: customPrompt }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.open", _e); }
         status.textContent = "Saved ✓";
         setTimeout(() => { status.textContent = ""; }, 400);
       });
@@ -3302,9 +3669,16 @@
         mcpBusy = on;
         mcpAddBtn.disabled = on;
         menuEl.querySelectorAll(".zs-mcp-remove").forEach((b) => (b.disabled = on));
-        mcpStatus.innerHTML = on
-          ? `<span class="zs-mcp-spin-row"><span class="zs-mcp-spin"></span>${label || "Restarting bridge…"}</span>`
-          : "";
+        // Build the row as nodes: `label` is a parameter, so interpolating it
+        // into innerHTML would let a future caller pass markup through. Every
+        // current caller passes a literal, but the signature does not say so.
+        if (!on) { mcpStatus.textContent = ""; return; }
+        const row = document.createElement("span");
+        row.className = "zs-mcp-spin-row";
+        const spin = document.createElement("span");
+        spin.className = "zs-mcp-spin";
+        row.append(spin, document.createTextNode(label || "Restarting bridge…"));
+        mcpStatus.replaceChildren(row);
       }
 
       menuEl.querySelectorAll(".zs-mcp-remove").forEach((b) =>
@@ -3358,7 +3732,7 @@
       chrome.storage.local.get("zsSetupSeen", (r) => {
         if (r && r.zsSetupSeen) setupSeen = true;
       });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.setMcpBusy", _e); }
 
     function buildSetup() {
       setupCard = document.createElement("div");
@@ -3386,7 +3760,7 @@
       setupCard.querySelector("#zs-setup-copy").addEventListener("click", () => {
         try { navigator.clipboard.writeText(GITHUB_URL); } catch {
           const inp = setupCard.querySelector("#zs-setup-link");
-          inp.select(); try { document.execCommand("copy"); } catch {}
+          inp.select(); try { document.execCommand("copy"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.buildSetup", _e); }
         }
         const btn = setupCard.querySelector("#zs-setup-copy");
         btn.textContent = "Copied!";
@@ -3395,7 +3769,7 @@
 
       setupCard.querySelector("#zs-setup-dismiss").addEventListener("click", () => {
         setupSeen = true;
-        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch {}
+        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.buildSetup", _e); }
         hideSetup();
       });
     }
@@ -3436,6 +3810,16 @@
     //  • session active   → live dot, "Agent active · N tools" (no action)
     //  • fresh blank chat → "Standby…" (or a bridge/Studio warning), action = Start
     //  • existing chat    → "No agent in this chat" (informs only, no action)
+    // Allow only the handful of tags/plain text our own templates use. Anything
+    // else is HTML-escaped, so provider text can never inject elements, event
+    // handlers or a <script> into a third-party page.
+    const sanitizeBarMarkup = (raw) => {
+      const s0 = String(raw == null ? "" : raw);
+      // escape everything first, then re-enable the exact tags we emit ourselves
+      let out = s0.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      out = out.replace(/&lt;(\/?)(b|strong|br)\s*\/?&gt;/g, "<$1$2>");
+      return out;
+    };
     function renderBar() {
       if (!bar) return;
       // indicator = an optional leading dot/spinner; msg = the wrappable text.
@@ -3593,7 +3977,17 @@
       // layout, making the bar fall back to fixed positioning and overlap).
       bar.classList.remove("tone-standby", "tone-active", "tone-warn", "tone-noagent", "tone-starting");
       bar.classList.add(`tone-${toneClass}`);
-      stateEl.innerHTML = indicator + `<span class="zs-state-txt">${msg}</span>`;
+      // SECURITY: `msg` is mostly hand-written markup (<b>…</b>) but at least one
+      // path feeds it provider/DOM text (modeWarn = P.modeWarning()). Interpolating
+      // that into innerHTML means site-controlled text becomes markup inside this
+      // page. Build the node and assign untrusted values via textContent instead.
+      stateEl.innerHTML = indicator + `<span class="zs-state-txt"></span>`;
+      const stateTxt = stateEl.querySelector(".zs-state-txt");
+      if (stateTxt) {
+        // trusted templates still render their <b> tags; anything that is not one
+        // of our own literals is escaped first
+        stateTxt.innerHTML = sanitizeBarMarkup(msg);
+      }
       stateEl.classList.toggle("zs-state-warn", warn);
       actionBtn.textContent = label;
       actionBtn.dataset.kind = kind;
@@ -3684,7 +4078,7 @@
       // bridge later drops, it would reappear on top of the bridge-lost banner).
       if (s.connected && !setupSeen) {
         setupSeen = true;
-        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch {}
+        try { chrome.storage.local.set({ zsSetupSeen: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.setStatus", _e); }
       }
       renderBar();
       refreshSetup(s.connected);
@@ -3852,7 +4246,7 @@
     // leave anchored mode so the site's composer returns to its normal layout.
     let anchorPadEl = null;
     function clearAnchorPad() {
-      if (anchorPadEl) { try { anchorPadEl.style.paddingTop = ""; } catch {} anchorPadEl = null; }
+      if (anchorPadEl) { try { anchorPadEl.style.paddingTop = ""; } catch (_e) { globalThis.ZSSafe?.seen?.("main.clearAnchorPad", _e); } anchorPadEl = null; }
     }
 
     // Position the floating "⚠ unstable" pill just above the bar's left edge.
@@ -3869,6 +4263,7 @@
     }
 
     function placeBar() {
+      cancelAnimationFrame(barRaf);   // coalesce re-places instead of queueing them
       barRaf = requestAnimationFrame(placeBar);
       if (!bar) return;
 
@@ -3879,7 +4274,7 @@
       // rAF loop is resilient (its next frame is scheduled before any body code),
       // so the panel reappears on the very next frame.
       if (root && !root.isConnected) {
-        try { document.documentElement.appendChild(root); } catch {}
+        try { document.documentElement.appendChild(root); } catch (_e) { globalThis.ZSSafe?.seen?.("main.placeBar", _e); }
       }
 
       // The instability warning floats just ABOVE the bar (not inside it), so it
@@ -3909,7 +4304,7 @@
       if (mount) {
         clearAnchorPad();
         if (bar.parentElement !== mount.parent || bar.nextElementSibling !== mount.before) {
-          try { mount.parent.insertBefore(bar, mount.before || null); } catch {}
+          try { mount.parent.insertBefore(bar, mount.before || null); } catch (_e) { globalThis.ZSSafe?.seen?.("main.placeBar", _e); }
         }
         if (!bar.classList.contains("zs-bar-inline")) {
           bar.classList.add("zs-bar-inline");
@@ -4404,7 +4799,7 @@
           try {
             it.dataset.zRegenLen = String(P.classifyText(it, ".zs-chip").length);
             it.dataset.zRegenAt = String(Date.now());
-          } catch {}
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.elapsedOn", _e); }
         }
         // Bridge the gap until the auto-resume watchdog (1s interval) re-owns the
         // tool: regenResume only CLEARS the stop latch, it does not start the loop
@@ -4460,7 +4855,7 @@
         if (grown && Date.now() - (A.stopRetryAt || 0) > 800) {
           A.stopRetryAt = Date.now();
           A.stopStreamLen = P.streamLen ? P.streamLen() : 0;
-          try { P.stopGeneration(); } catch {}
+          try { P.stopGeneration(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.grown", _e); }
           diag("stop.retry");
         } else if (!grown && Date.now() - (A.stopAt || 0) > 2500) {
           // Wedged stop button on a dead stream (text frozen since the stop):
@@ -4533,9 +4928,15 @@
   }
   // Hydrate the persisted re-statement budget for this conversation up front, so
   // the first tool result after a reload already knows the real tally.
-  loadSysCount();
+  Promise.resolve().then(() => loadSysCount()).catch((e) => globalThis.ZSSafe?.seen?.("main.onStatus", e));
   bg({ type: "status" }).then(onStatus);
-  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 100); // MAX 400ms — 2x faster status
+  // HONEST (max-speed pass): this polled `status` 10x/second — but the payload
+  // only changes when the socket does, and background already PUSHES
+  // `zs-status` on every change (chrome.runtime.onMessage below). Polling at
+  // 100ms was ~600 wake-ups/minute per tab for data we were already being sent.
+  // 800ms is the "is it still alive" tier; real changes arrive instantly via the
+  // push. Values that must be instant are event-driven, not polled.
+  statusTimer = setInterval(() => bg({ type: "status" }).then(onStatus), 800);
 
   // Session state is derived from the ACTUAL chat, but sites VIRTUALIZE their
   // message lists: the system-prompt turn is dropped from the DOM once it
@@ -4552,7 +4953,7 @@
     if (!path) return;
     if (startedSessions.has(path)) return;
     startedSessions.add(path);
-    try { chrome.storage.local.set({ zsStartedSessions: [...startedSessions].slice(-300) }); } catch {}
+    try { chrome.storage.local.set({ zsStartedSessions: [...startedSessions].slice(-300) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberSession", _e); }
   }
   // Load the persisted set once, then re-sync.
   try {
@@ -4562,7 +4963,7 @@
         syncSessionState();
       }
     });
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("main.rememberSession", _e); }
   // A conversation IS a ZeroScript session if any rendered turn carries a
   // telltale artefact: the system-prompt marker, an injected tool-result /
   // system-note turn, or a ZeroScript command an assistant wrote. Works even
@@ -4709,13 +5110,30 @@
     }
   }
   const mo = new MutationObserver(() => {
+    // While the tab is hidden there is nothing to camouflage, and a live
+    // subtree observer on a long conversation still fires for every streamed
+    // character. Suspending it is pure win: reconnected by the visibility
+    // handler below, which already runs a sweep on return.
+    if (document.hidden) return;
     preHideWholeItems();
     scheduleSweep();
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  // Release the observer if this page is being discarded. Content scripts are
+  // torn down with the page, but bfcache/pagehide keeps the realm alive long
+  // enough that a leaked observer keeps a detached document referenced.
+  const _releaseObservers = () => {
+    try { mo.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.mo", _e); }
+    try { if (_mo) { _mo.disconnect(); _mo = null; } } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.fastMo", _e); }
+  };
+  try { window.addEventListener("pagehide", _releaseObservers, { once: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.hook", _e); }
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
-  setInterval(scheduleSweep, 10); // MAX 40ms sweep — 16x faster, still safe CPU
+  // HONEST: this was 10ms — 100 sweeps/second — stacked on top of a full-document
+  // MutationObserver that already fires on every relevant change, i.e. the two
+  // were doing the same work and the interval was the expensive redundant one.
+  // It stays as a convergence net, but at a rate that costs nothing when idle.
+  setInterval(scheduleSweep, 400);
   // When the user returns to the tab, immediately refresh camouflage/state.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSweep(); });
 
@@ -4736,7 +5154,27 @@
       // A Stop clicked during this 300ms window sets A.userStopped → honor it and
       // do NOT start the loop (otherwise the stop is silently ignored and the
       // freshly-started loop strands the "Stopping…" flag).
-      setTimeout(() => { if (!A.running && !A.userStopped) agentLoop(base); }, 5); // MAX 5ms
+      setTimeout(() => {
+        if (!A.running && !A.userStopped) {
+          // agentLoop is async and used to be called bare: one rejection anywhere
+          // inside it killed the session silently, leaving the input cover up and
+          // the user staring at a frozen bar. Now the failure is surfaced through
+          // ZSSafe AND shown in the UI, so "it just stopped" becomes actionable.
+          Promise.resolve()
+            .then(() => agentLoop(base))
+            .catch((e) => {
+              globalThis.ZSSafe?.seen?.("main.preHideWholeItems", e);
+              try {
+                A.running = false;
+                ui.showStop(false);
+                ui.inputCover(false);
+                P.setInputLock(false);
+                ui.banner("warn", "Agent loop stopped on an error",
+                  String((e && e.message) || e).slice(0, 160) + " — press Start to continue.");
+              } catch (_e) { globalThis.ZSSafe?.seen?.("main.preHideWholeItems", _e); }
+            });
+        }
+      }, 5);
     },
     onNativeStop: () => {
       // A click on the site's own stop = a deliberate manual stop → suppress
@@ -4850,7 +5288,8 @@
     // The reply turn is ALREADY present - act on it immediately. Null token makes
     // the identity-based newReply test unconditionally true (any current id != null).
     A.sendToken = null;
-    agentLoop(P.assistantCount() - 1);
+    Promise.resolve().then(() => agentLoop(P.assistantCount() - 1))
+      .catch((e) => globalThis.ZSSafe?.seen?.("main.preHideWholeItems", e));
   }, 1000);
 
   // ── System-prompt re-injection fallback ───────────────────────────────────

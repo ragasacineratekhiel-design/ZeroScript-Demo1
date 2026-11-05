@@ -1,4 +1,4 @@
-# ZeroScript MAX — Claude Connect Tutorial (3.3 ULTRA)
+# ZeroScript MAX — Claude Connect Tutorial (4.4.0)
 
 This guide proves Claude **is fully wired** to Roblox Studio, exactly like DeepSeek+Gemini — same speed, same power.
 
