@@ -106,7 +106,16 @@ const ZSParse = (() => {
         if (c === '"') inStr = true;
         out += c;
       }
-      return JSON.parse(out);
+      // The repair pass exists BECAUSE the raw text was not valid JSON, so a
+      // second bare parse is a throw waiting to happen — callers only got away
+      // with it because each happened to wrap the call. Return null instead:
+      // parseLoose now either returns a value or returns null, never throws.
+      try {
+        return JSON.parse(out);
+      } catch (_e) {
+        globalThis.ZSSafe?.seen?.("parser.parseLoose", _e);
+        return null;
+      }
     }
   }
   function extractJson(raw) {

@@ -12,10 +12,13 @@
 const fs = require("fs");
 const path = require("path");
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT = process.env.ZS_AUDIT_ROOT ? path.resolve(process.env.ZS_AUDIT_ROOT) : path.resolve(__dirname, "..");
 const EXT = path.join(ROOT, "zeroscript-extension-v2");
+// Vendored acorn lives next to this tool, not next to the audited tree — a
+// sandbox root must not need its own copy just to self-test the checker.
+const TOOL_ROOT = path.resolve(__dirname, "..");
 const ACORN = (() => {
-  for (const c of [path.join(ROOT, "tools", "vendor", "acorn", "acorn.js"), "acorn"]) {
+  for (const c of [path.join(TOOL_ROOT, "tools", "vendor", "acorn", "acorn.js"), "acorn"]) {
     try { return require(c); } catch (_e) { /* next */ }
   }
   return null;
@@ -214,6 +217,278 @@ for (const [name, variants] of bodyIndex) {
   }
 }
 
+// ── 4g. OBSERVER LEAKS: observe() with no way to disconnect() ─────────────
+// A MutationObserver on document.documentElement with subtree:true keeps firing
+// for the life of the page. If nothing can ever call disconnect(), the observer
+// (and the detached nodes it references in bfcache) cannot be released.
+for (const { file, src } of allFiles) {
+  const observes = (src.match(/\.observe\(/g) || []).length;
+  const disconnects = (src.match(/\.disconnect\(\)/g) || []).length;
+  if (observes > disconnects) {
+    add("observer-leak", "P1", file, 0,
+      `${observes} observe() call(s) but only ${disconnects} disconnect() — at least one observer can never be released`,
+      "hook pagehide → disconnect()");
+  }
+  // Scope matters. An observer bound to one composer element and disconnected
+  // when that feature turns off (kimi's input lock) has a complete lifecycle and
+  // needs no unload hook — the first version of this check flagged exactly that,
+  // which was wrong. A DOCUMENT-WIDE observer (document.body / documentElement)
+  // is the one that outlives its purpose: it keeps firing for the life of the
+  // tab and is never released on navigation.
+  const wholeDoc = /\.observe\(\s*document(\.body|\.documentElement)?\s*[,)]/.test(src);
+  const hasUnloadHook = /(pagehide|beforeunload)/.test(src);
+  if (wholeDoc && !hasUnloadHook) {
+    add("observer-release", "P2", file, 0,
+      "document-wide MutationObserver with no pagehide/beforeunload release path — " +
+      "it keeps firing for the life of the tab and is never released on navigation",
+      "register a pagehide → disconnect() hook");
+  }
+  // Observers that rescan the whole document on every mutation are the other
+  // half of this class: that is what made one streamed reply cost hundreds of
+  // full-document queries. The fix is coalescing, which shows up as a timer.
+  const observeCalls = src.match(/\.observe\(/g) || [];
+  if (observeCalls.length > 0) {
+    const hasWholeDoc = /\{[^}]*subtree\s*:\s*true/.test(src);
+    const hasCoalesce = /(clearTimeout|setTimeout\(\s*\(\)\s*=>)/.test(src);
+    const observerCb = /new\s+MutationObserver\(\s*\(?[\w,\s]*\)?\s*=>/.test(src);
+    if (hasWholeDoc && observerCb && !hasCoalesce) {
+      add("observer-storm", "P2", file, 0,
+        "subtree observer calls its scan directly from the callback with no coalescing — " +
+        "a streamed reply turns every DOM mutation into a full-document scan",
+        "batch through a 0ms timer and skip while document.hidden");
+    }
+  }
+}
+
+// ── 4h. innerHTML fed by a NON-LITERAL value ──────────────────────────────
+// Rules that keep this honest rather than noisy:
+//   * a template literal whose first chunk starts with "<" is our own markup;
+//   * a concatenation/literal is fine if every interpolated identifier resolves
+//     to a same-file `const NAME = "<…"` literal (icon constants, SVG strings);
+//   * a local function CALL is resolved one level: if its body only ever returns
+//     literals/constants, it is safe.
+// Anything else is a real injection surface, because content scripts run inside
+// third-party pages and at least one path feeds provider text here.
+// Declarations and assignments for the file under inspection. Rebuilt per file
+// by setCurrentAst(); the name->node maps keep the literal check honest for
+// multi-declarator statements and for names that are reassigned later.
+let CUR_AST = null;
+let DECL_MAP = null;
+let ASSIGN_MAP = null;
+let ALIAS_MAP = null;
+function setCurrentAst(ast) {
+  CUR_AST = ast;
+  DECL_MAP = new Map();
+  ASSIGN_MAP = new Map();
+  ALIAS_MAP = new Map();
+  if (!ast) return;
+  walkNodes(ast, (n) => {
+    if (n.type === "VariableDeclarator" && n.id && n.id.type === "Identifier") {
+      if (!DECL_MAP.has(n.id.name)) DECL_MAP.set(n.id.name, n);
+    }
+    // `for (const meta of Object.entries(EXEC_META))`: the loop variable carries
+    // the table's values, so the table decides whether it is safe.
+    if ((n.type === "ForOfStatement" || n.type === "ForInStatement")) {
+      const left = n.left;
+      const decl = left && left.type === "VariableDeclaration" && left.declarations[0];
+      const id = decl && decl.id;
+      const srcName = forOfSourceName(n.right);
+      if (id && id.type === "Identifier") {
+        ALIAS_MAP.set(id.name, srcName);
+      } else if (id && (id.type === "ArrayPattern" || id.type === "ObjectPattern")) {
+        // `const [k, meta] of Object.entries(T)` — every bound name carries a
+        // literal from the same table.
+        const elems = id.type === "ArrayPattern" ? id.elements : id.properties.map((x) => x.value);
+        for (const el of elems) if (el && el.type === "Identifier") ALIAS_MAP.set(el.name, srcName);
+      }
+    }
+    if (n.type === "AssignmentExpression" && n.left && n.left.type === "Identifier") {
+      if (!ASSIGN_MAP.has(n.left.name)) ASSIGN_MAP.set(n.left.name, []);
+      ASSIGN_MAP.get(n.left.name).push(n.right);
+    }
+  });
+}
+function findDeclarator(name) {
+  return DECL_MAP ? DECL_MAP.get(name) || null : null;
+}
+// Only `Object.entries(X)` / `Object.values(X)` / plain `X` yields a table whose
+// elements we can reason about. Anything else returns null and stays suspicious.
+function forOfSourceName(right) {
+  if (!right) return null;
+  if (right.type === "Identifier") return right.name;
+  if (right.type === "CallExpression" && right.callee.type === "MemberExpression" &&
+      right.callee.object.name === "Object" &&
+      (right.callee.property.name === "entries" || right.callee.property.name === "values") &&
+      right.arguments[0] && right.arguments[0].type === "Identifier") {
+    return right.arguments[0].name;
+  }
+  return null;
+}
+function objectIsAllLiterals(name) {
+  const d = findDeclarator(name);
+  if (!d || !d.init || d.init.type !== "ObjectExpression") return false;
+  return d.init.properties.every((prop) => {
+    if (prop.type !== "Property") return false;
+    const probe = (v) => {
+      if (!v) return true;
+      if (v.type === "Literal") return typeof v.value === "string" || typeof v.value === "number";
+      if (v.type === "ObjectExpression") return v.properties.every((q) => q.type === "Property" && probe(q.value));
+      if (v.type === "MemberExpression") return true; // ICONS.x style
+      return false;
+    };
+    return probe(prop.value);
+  });
+}
+function findAssignments(name) {
+  return ASSIGN_MAP ? ASSIGN_MAP.get(name) || [] : [];
+}
+function isLiteralish(node, src, depth = 0) {
+  if (!node) return false;
+  if (node.type === "Literal" && typeof node.value === "string") return true;
+  if (node.type === "TemplateLiteral") {
+    // The quasi text is written by us, so it is markup we own. Every
+    // interpolation, however, is data — and provider text can reach it.
+    // Leading-"<" is NOT a safety signal: `<b onclick="${P.text()}">` starts
+    // with "<" and is still an injection.
+    return node.expressions.every((e) => isLiteralish(e, src, depth));
+  }
+  if (node.type === "BinaryExpression") return isLiteralish(node.left, src, depth) && isLiteralish(node.right, src, depth);
+  if (node.type === "Identifier") {
+    if (depth > 3) return false; // the chain must terminate
+    // Prefer a real declarator walk: `let a = "", b = `x`, c = 1` has more than
+    // one declarator per statement, and a first-match regex sees only the first.
+    const aliasSrc = ALIAS_MAP ? ALIAS_MAP.get(node.name) : null;
+    if (aliasSrc) {
+      // `Object.entries(EXEC_META)` destructured into `meta`: safe iff the table
+      // is all literals. `entries()` gives [k, v] pairs, so both are literals.
+      return objectIsAllLiterals(aliasSrc);
+    }
+    const decl = findDeclarator(node.name);
+    if (decl) {
+      if (decl.init && isLiteralish(decl.init, src, depth + 1)) return true;
+      // No initialiser: safe only if every later assignment is itself literal-ish.
+      const assigns = findAssignments(node.name);
+      if (!assigns.length) return false;
+      return assigns.every((a) => isLiteralish(a, src, depth + 1));
+    }
+    // NOTE: "\\b" in the source, NOT "\\\\b". A double-escaped word
+    // boundary silently matches a literal backslash and the check cries wolf.
+    const pat = "\\b(?:const|let|var)\\s+" + node.name + "\\s*=\\s*(\\S[^\\n;]*)";
+    const m = new RegExp(pat).exec(src);
+    if (!m) return false;
+    const init = m[1].trim();
+    // Hoisted constant: `const A = "https://…"` / `const A = `…`` — our own string.
+    if (/^[`\"\']/.test(init)) return true;
+    // Aliased constant: `const videoBtn = VIDEO_URL ? `…` : ""` — follow the name
+    // so a ternary over constants still resolves instead of crying wolf.
+    const alias = /^([A-Za-z_$][\w$]*)\s*(?:[?:.\[]|$)/.exec(init);
+    if (alias && alias[1] !== node.name) {
+      return isLiteralish({ type: "Identifier", name: alias[1] }, src, depth + 1);
+    }
+    return false;
+  }
+  if (node.type === "MemberExpression" && node.object.type === "Identifier") {
+    // `meta.label` where `meta` came from `Object.entries(EXEC_META)`
+    const owner = ALIAS_MAP ? ALIAS_MAP.get(node.object.name) : null;
+    if (owner) return objectIsAllLiterals(owner);
+    // ICONS.check / SPIN style constant tables: accept when the object is a
+    // same-file const object of string literals
+    return new RegExp("\\b(?:const|let|var)\\s+" + node.object.name + "\\s*=\\s*\\{").test(src);
+  }
+  // `hasBody ? "<div>" : ""` — a ternary of our own literals is still our markup.
+  if (node.type === "ConditionalExpression") {
+    return isLiteralish(node.consequent, src, depth) && isLiteralish(node.alternate, src, depth);
+  }
+  if (node.type === "LogicalExpression") {
+    return isLiteralish(node.left, src, depth) && isLiteralish(node.right, src, depth);
+  }
+  if (node.type === "CallExpression" && node.callee.type === "Identifier" && node.callee.name === "SVG") return true;
+  if (node.type === "CallExpression" && node.callee.type === "Identifier") {
+    // A sanitizer is a function whose BODY escapes & and < before returning.
+    // Proven from the code, not from its name — an allowlist of "safe" names is
+    // the same blindness this tool exists to catch.
+    const sanName = node.callee.name;
+    const defIdx = src.search(new RegExp("(?:const|let|var|function)\\s+" + sanName + "\\b"));
+    if (defIdx !== -1) {
+      const braceIdx = src.indexOf("{", defIdx);
+      if (braceIdx !== -1 && braceIdx - defIdx < 120) {
+        let depthB = 0, end = -1;
+        for (let i = braceIdx; i < src.length; i++) {
+          if (src[i] === "{") depthB++;
+          else if (src[i] === "}") { depthB--; if (depthB === 0) { end = i; break; } }
+        }
+        if (end > braceIdx) {
+          const body = src.slice(braceIdx, end);
+          // Plain string probes: a regex literal containing "</" is a
+          // quoting hazard, and this check does not need regex at all.
+          const escAmp = body.indexOf("&amp;") !== -1;
+          const escLt = body.indexOf("&lt;") !== -1;
+          const doesReplace = body.indexOf(".replace(") !== -1;
+          if (doesReplace && escAmp && escLt) return true;
+          if (escAmp && escLt) return true;
+        }
+      }
+    }
+  }
+  if (node.type === "CallExpression" && node.callee.type === "Identifier") {
+    // resolve one level: does the function body only return literals?
+    const name = node.callee.name;
+    const re = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{([\\s\\S]{0,1200}?)\\n  \\}`);
+    const m = re.exec(src);
+    if (m) {
+      const body = m[1];
+      const returns = [...body.matchAll(/return\s+([^;]+);/g)].map((x) => x[1].trim());
+      if (returns.length && returns.length <= 12) {
+        // Every returned expression must be a literal or a constant-table lookup.
+        // `ICONS[category] || ICONS.tool` counts: both sides are table reads.
+        return returns.every((r) => r.split("||").every((part) => {
+          const t = part.trim();
+          return /^[`'"]/.test(t) || /^ICONS\./.test(t) || /^[A-Z_]+$/.test(t) ||
+                 /^SVG\(/.test(t) || /^ICONS\[/.test(t);
+        }));
+      }
+    }
+  }
+  return false;
+}
+for (const { file, ast, src } of allFiles) {
+  setCurrentAst(ast); // declarator/assignment maps are per-file
+  walkNodes(ast, (n) => {
+    if (n.type !== "AssignmentExpression" || n.operator !== "=") return;
+    const L = n.left;
+    if (!L || L.type !== "MemberExpression") return;
+    if (L.property.type !== "Identifier" || L.property.name !== "innerHTML") return;
+    if (isLiteralish(n.right, src)) return;
+    add("dom-injection", "P1", file, n.loc.start.line,
+      "innerHTML assigned from a value that is not provably our own literal — provider/DOM text can inject markup into the host page",
+      src.slice(n.start, Math.min(n.end, n.start + 70)).replace(/\s+/g, " "));
+  });
+}
+
+// ---- 4i. try/catch around an async call with no await (cannot catch) ----
+// `try { someAsyncFn(); } catch {}` catches nothing: the rejection happens after
+// the try block has already exited. This shipped twice in this repo.
+for (const { file, ast, src } of allFiles) {
+  const asyncNames = new Set();
+  walkNodes(ast, (n) => {
+    if (n.type === "FunctionDeclaration" && n.id && n.async) asyncNames.add(n.id.name);
+    if (n.type === "VariableDeclarator" && n.id && n.init && n.init.async) asyncNames.add(n.id.name);
+  });
+  walkNodes(ast, (n) => {
+    if (n.type !== "TryStatement") return;
+    for (const stmt of (n.block.body || [])) {
+      if (stmt.type !== "ExpressionStatement" || stmt.expression.type !== "CallExpression") continue;
+      const c = stmt.expression.callee;
+      const name = c.type === "Identifier" ? c.name : null;
+      if (name && asyncNames.has(name)) {
+        add("try-async-trap", "P1", file, stmt.loc.start.line,
+          `try { ${name}(); } catch — \`${name}\` is async, so the catch can never see its rejection`,
+          src.slice(stmt.start, Math.min(stmt.end, stmt.start + 60)).replace(/\s+/g, " "));
+      }
+    }
+  });
+}
+
 // ── 5. HARDCODED MAGIC that should be a constant ─────────────────────────
 for (const { file, src } of allFiles) {
   const hits = [...src.matchAll(/setTimeout\([^,]+,\s*(\d{2,6})\)/g)].map((m) => m[1]);
@@ -250,6 +525,15 @@ for (const { file, ast, src } of allFiles) {
     const span = enclosingSpan(ast, n);
     const scopeSrc = src.slice(span.start === 0 ? 0 : span.start, span.end === Infinity ? src.length : span.end);
     const count = (scopeSrc.match(new RegExp("\\b" + name + "\\b", "g")) || []).length;
+    // A module-level binding with a leading uppercase name is a cross-file global:
+    // parser.js declares `const ZSParse = (…)()` and main.js reads it directly,
+    // which is the whole point of the classic-script load order. Counting
+    // references inside this file only would flag every one of them.
+    const isModuleScope = span.start === 0;
+    if (isModuleScope && /^[A-Z]/.test(name)) {
+      const everywhere = (globalSrc.match(new RegExp("\\b" + name + "\\b", "g")) || []).length;
+      if (everywhere > 1) return;   // some other file reads it
+    }
     // 1 = the declaration itself
     if (count <= 1) {
       add("unused-var", "P3", file, n.loc.start.line, `"${name}" is assigned and never read in its scope`, `${count} ref(s)`);
@@ -282,6 +566,11 @@ for (const { file, ast } of allFiles) {
     if (n.type === "FunctionDeclaration" && n.async) { body = n.body; label = n.id && n.id.name; }
     if (n.type === "VariableDeclarator" && n.init && n.init.async) { body = n.init.body; label = n.id && n.id.name; }
     if (!body || !label) return;
+    // An exported provider method is part of a uniform async interface: callers
+    // `await P.ensureComposerReady(...)` for every provider, and one provider
+    // legitimately answers synchronously. Reporting that as "makes callers wait
+    // for nothing" is true of one microtask and useless as a defect.
+    if (isExportedProperty(ast, label) && !containsAwait(body)) return;
     if (!containsAwait(body)) {
       add("async-no-await", "P3", file, n.loc.start.line,
         `"${label}" is async but contains no await`, "makes callers wait for nothing");
@@ -289,43 +578,96 @@ for (const { file, ast } of allFiles) {
   });
 }
 
+// Is the code at `offset` inside a `try` block that actually has a catch or
+// finally handler? Derived from the AST — a character scan desynchronises on
+// regex literals (parser.js has `/[["}\]]/`) and reports nonsense.
+let TRY_RANGES = []; // [blockStart, blockEnd] of guarded try blocks, per file
+function collectGuardedTries(ast) {
+  TRY_RANGES = [];
+  walkNodes(ast, (n) => {
+    if (n.type === "TryStatement" && (n.handler || n.finalizer) && n.block) {
+      TRY_RANGES.push([n.block.start, n.block.end]);
+    }
+  });
+}
+function hasGuardingTry(src, offset) {
+  return TRY_RANGES.some(([a, b]) => offset >= a && offset < b);
+}
+
+// Is `name` returned as a property of an object literal (`return { …, name, … }`)?
+function isExportedProperty(ast, name) {
+  let found = false;
+  walkNodes(ast, (n) => {
+    if (found || n.type !== "ReturnStatement" || !n.argument) return;
+    if (n.argument.type !== "ObjectExpression") return;
+    for (const prop of n.argument.properties) {
+      if (prop.type !== "Property") continue;
+      const k = prop.key;
+      const keyName = k.type === "Identifier" ? k.name : k.type === "Literal" ? String(k.value) : null;
+      if (keyName === name) { found = true; return; }
+    }
+  });
+  return found;
+}
 // ── 8. UNGUARDED JSON.parse ──────────────────────────────────────────────
 // JSON.parse throws on malformed input. Inside a catch-less path on a page that
 // must never die, that is a hard failure.
 for (const { file, ast, src } of allFiles) {
+  collectGuardedTries(ast);
   walkNodes(ast, (n) => {
     if (n.type !== "CallExpression") return;
     const c = n.callee;
     if (c.type !== "MemberExpression" || c.object.type !== "Identifier" || c.object.name !== "JSON") return;
     if (c.property.type !== "Identifier" || c.property.name !== "parse") return;
-    // find whether any ancestor is a TryStatement block
+    // Actually look for a guarding try/catch. The previous version just said
+    // "find whether any ancestor is a TryStatement block" and then reported
+    // every JSON.parse unconditionally — advice in a comment, no code behind it.
+    if (hasGuardingTry(src, n.start)) return;
     add("unguarded-json", "P3", file, n.loc.start.line, "JSON.parse without a local try/catch",
       src.slice(n.start, Math.min(n.end, n.start + 60)).replace(/\s+/g, " "));
   });
 }
 
-// ── 9. IDENTICAL FUNCTION BODIES ACROSS FILES (copy-paste that will drift) ─
-const seenBodies = new Map();
+// ── 9. BYTE-IDENTICAL HELPER BODIES ACROSS PROVIDER FILES ────────────────
+// Providers here are deliberately self-contained: manifest.json tells the reader
+// to delete a provider file to disable that site, so a shared common.js would
+// re-couple them. Byte-identical copies of a small pure DOM helper are therefore
+// expected, and the honest report is ONE aggregated P3 line, not seven.
+//
+// Tried and rejected: reporting "same function name, different body" as drift.
+// It produced 34 findings — every provider's typeAndSend/readAssistant differs
+// because each site's DOM differs. That is the interface, not a defect. A check
+// that fires on all 10 providers carries no information, so it is not shipped.
+const identicalGroups = new Map(); // hash -> { text, sites: [{file,line,rel}] }
 for (const { file, ast, src } of allFiles) {
   walkNodes(ast, (n) => {
     let body = null, name = null;
     if (n.type === "FunctionDeclaration" && n.id) { body = n.body; name = n.id.name; }
-    if (n.type === "VariableDeclarator" && n.id && n.id.type === "Identifier" && n.init && n.init.body) { body = n.init.body; name = n.id.name; }
-    if (!body) return;
+    if (n.type === "VariableDeclarator" && n.id && n.id.type === "Identifier" && n.init && n.init.body) {
+      body = n.init.body; name = n.id.name;
+    }
+    if (!body || !name) return;
     const text = src.slice(body.start, body.end).replace(/\s+/g, " ");
     if (text.length < 200) return;
     const h = hash(text);
-    if (!seenBodies.has(h)) seenBodies.set(h, { text, sites: [] });
-    seenBodies.get(h).sites.push(`${path.relative(EXT, file)}:${name}`);
+    if (!identicalGroups.has(h)) identicalGroups.set(h, { text, name, sites: [] });
+    identicalGroups.get(h).sites.push({ file, line: n.loc.start.line, rel: path.relative(EXT, file) });
   });
 }
-for (const [, v] of seenBodies) {
-  const filesInvolved = new Set(v.sites.map((s) => s.split(":")[0]));
-  if (filesInvolved.size >= 2) {
-    add("duplicate-logic", "P2", allFiles[0].file, 0,
-      `identical ${v.text.length}-char body in ${filesInvolved.size} files: ${v.sites.slice(0, 5).join(", ")}`,
-      "extract or they will drift");
-  }
+const dupes = [];
+for (const [, v] of identicalGroups) {
+  const filesInvolved = new Set(v.sites.map((x) => x.file));
+  if (filesInvolved.size >= 2) dupes.push({ ...v, n: filesInvolved.size });
+}
+if (dupes.length) {
+  const first = dupes[0].sites[0];
+  dupes.sort((a, b) => b.n - a.n);
+  add("duplicate-logic", "P3", first.file, first.line,
+    `${dupes.length} helper(s) byte-identical across provider files (expected for ` +
+    `self-contained providers): ` +
+    dupes.slice(0, 6).map((d) => `${d.name}×${d.n}`).join(", ") +
+    (dupes.length > 6 ? `, +${dupes.length - 6} more` : ""),
+    "keep them identical; divergence is what would hurt");
 }
 
 // ── report ───────────────────────────────────────────────────────────────

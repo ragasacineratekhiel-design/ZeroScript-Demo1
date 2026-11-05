@@ -156,7 +156,7 @@
   function ensureMO(){
     if(_mo) return;
     try{
-      _mo=new MutationObserver(()=>{ const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
+      _mo=new MutationObserver(()=>{ if (document.hidden) return; const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
       _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
     }catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); }
   }
@@ -2342,7 +2342,11 @@
         }
       });
       // Real wall task handler — coder actually executes planner spec via execute_luau
-      async function handleWallTask(m){
+      // NOT async: every `await` in here lives inside the deferred setTimeout
+      // below, so `async` only wrapped a promise that resolved before any work
+      // started. Callers `await handleWallTask(...)` and still return as soon as
+      // the task is *queued*, which is the intended non-blocking behaviour.
+      function handleWallTask(m){
         try{
           const task = m.task || m.payload || m;
           if(!task || !task.code) return;
@@ -3150,7 +3154,7 @@
       root.innerHTML = `
         <div id="zs-bar">
           <span id="zs-dot" class="off" title=""></span>
-          <span id="zs-brand">ZeroScript <span class="zs-free">v${EXT_VERSION}</span></span>
+          <span id="zs-brand">ZeroScript <span class="zs-free" id="zs-brand-ver"></span></span>
           <span id="zs-state"></span>
           <button id="zs-action"></button>
           <button id="zs-exec" aria-label="Exec Mode" title="Exec Mode — Single / Continuous / Loop"><span id="zs-exec-name">Single</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -3167,6 +3171,8 @@
       `;
       document.documentElement.appendChild(root);
       bar = root.querySelector("#zs-bar");
+      const brandVer = root.querySelector("#zs-brand-ver");
+      if (brandVer) brandVer.textContent = "v" + EXT_VERSION;
       dot = root.querySelector("#zs-dot");
       stateEl = root.querySelector("#zs-state");
       actionBtn = root.querySelector("#zs-action");
@@ -3605,7 +3611,7 @@
         mcpList += `<div class="zs-mcp-item"><span class="zs-mcp-health zs-mcp-health-${healthClass}" title="${healthTitle}"></span><div class="zs-mcp-info"><span class="zs-mcp-name">${esc(s.name)}</span><span class="zs-mcp-url">${esc(s.command || s.id)}</span></div><button class="zs-mcp-remove" data-id="${esc(s.id)}" title="Remove">✕</button></div>`;
       });
       menuEl.innerHTML =
-        `<div class="zs-menu-head"><span class="zs-menu-logo">ZeroScript</span><span class="zs-menu-tag">v${EXT_VERSION}</span></div>
+        `<div class="zs-menu-head"><span class="zs-menu-logo">ZeroScript</span><span class="zs-menu-tag" id="zs-menu-ver"></span></div>
          <section class="zs-menu-sec">
            <div class="zs-sec-label"><span>Switch AI</span></div>
            ${sites}
@@ -3636,6 +3642,8 @@
            <input id="zs-mcp-url" class="zs-mcp-field" placeholder="Start command, e.g. npx -y @some/mcp-server" />
            <div class="zs-set-row"><button id="zs-mcp-add">Add server</button><span id="zs-mcp-status"></span></div>
          </section>`;
+      const menuVer = menuEl.querySelector("#zs-menu-ver");
+      if (menuVer) menuVer.textContent = "v" + EXT_VERSION;
       const open = (url) => { try { window.open(url, "_blank", "noopener"); } catch (_e) { globalThis.ZSSafe?.seen?.("main.open", _e); } menuEl.hidden = true; };
       menuEl.querySelectorAll("button.zs-site-opt, .zs-tip-opt").forEach((b) =>
         b.addEventListener("click", () => open(b.dataset.u)));
@@ -3661,9 +3669,16 @@
         mcpBusy = on;
         mcpAddBtn.disabled = on;
         menuEl.querySelectorAll(".zs-mcp-remove").forEach((b) => (b.disabled = on));
-        mcpStatus.innerHTML = on
-          ? `<span class="zs-mcp-spin-row"><span class="zs-mcp-spin"></span>${label || "Restarting bridge…"}</span>`
-          : "";
+        // Build the row as nodes: `label` is a parameter, so interpolating it
+        // into innerHTML would let a future caller pass markup through. Every
+        // current caller passes a literal, but the signature does not say so.
+        if (!on) { mcpStatus.textContent = ""; return; }
+        const row = document.createElement("span");
+        row.className = "zs-mcp-spin-row";
+        const spin = document.createElement("span");
+        spin.className = "zs-mcp-spin";
+        row.append(spin, document.createTextNode(label || "Restarting bridge…"));
+        mcpStatus.replaceChildren(row);
       }
 
       menuEl.querySelectorAll(".zs-mcp-remove").forEach((b) =>
@@ -3795,6 +3810,16 @@
     //  • session active   → live dot, "Agent active · N tools" (no action)
     //  • fresh blank chat → "Standby…" (or a bridge/Studio warning), action = Start
     //  • existing chat    → "No agent in this chat" (informs only, no action)
+    // Allow only the handful of tags/plain text our own templates use. Anything
+    // else is HTML-escaped, so provider text can never inject elements, event
+    // handlers or a <script> into a third-party page.
+    const sanitizeBarMarkup = (raw) => {
+      const s0 = String(raw == null ? "" : raw);
+      // escape everything first, then re-enable the exact tags we emit ourselves
+      let out = s0.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      out = out.replace(/&lt;(\/?)(b|strong|br)\s*\/?&gt;/g, "<$1$2>");
+      return out;
+    };
     function renderBar() {
       if (!bar) return;
       // indicator = an optional leading dot/spinner; msg = the wrappable text.
@@ -3952,7 +3977,17 @@
       // layout, making the bar fall back to fixed positioning and overlap).
       bar.classList.remove("tone-standby", "tone-active", "tone-warn", "tone-noagent", "tone-starting");
       bar.classList.add(`tone-${toneClass}`);
-      stateEl.innerHTML = indicator + `<span class="zs-state-txt">${msg}</span>`;
+      // SECURITY: `msg` is mostly hand-written markup (<b>…</b>) but at least one
+      // path feeds it provider/DOM text (modeWarn = P.modeWarning()). Interpolating
+      // that into innerHTML means site-controlled text becomes markup inside this
+      // page. Build the node and assign untrusted values via textContent instead.
+      stateEl.innerHTML = indicator + `<span class="zs-state-txt"></span>`;
+      const stateTxt = stateEl.querySelector(".zs-state-txt");
+      if (stateTxt) {
+        // trusted templates still render their <b> tags; anything that is not one
+        // of our own literals is escaped first
+        stateTxt.innerHTML = sanitizeBarMarkup(msg);
+      }
       stateEl.classList.toggle("zs-state-warn", warn);
       actionBtn.textContent = label;
       actionBtn.dataset.kind = kind;
@@ -5075,10 +5110,23 @@
     }
   }
   const mo = new MutationObserver(() => {
+    // While the tab is hidden there is nothing to camouflage, and a live
+    // subtree observer on a long conversation still fires for every streamed
+    // character. Suspending it is pure win: reconnected by the visibility
+    // handler below, which already runs a sweep on return.
+    if (document.hidden) return;
     preHideWholeItems();
     scheduleSweep();
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  // Release the observer if this page is being discarded. Content scripts are
+  // torn down with the page, but bfcache/pagehide keeps the realm alive long
+  // enough that a leaked observer keeps a detached document referenced.
+  const _releaseObservers = () => {
+    try { mo.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.mo", _e); }
+    try { if (_mo) { _mo.disconnect(); _mo = null; } } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.fastMo", _e); }
+  };
+  try { window.addEventListener("pagehide", _releaseObservers, { once: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.hook", _e); }
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or
   // mutation timing, so camouflage always converges.
   // HONEST: this was 10ms — 100 sweeps/second — stacked on top of a full-document

@@ -125,16 +125,14 @@ const ZSClaudeConnector = (() => {
   try{
     let tries=0; const iv=setInterval(()=>{ if(attachToProvider() || ++tries>40) clearInterval(iv); }, 50);
   }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
-  // Watch future redefine
-  try{
-    let watched=window.ZSProvider;
-    Object.defineProperty(window,"ZSProvider",{
-      get(){ return watched; },
-      set(v){ watched=v; setTimeout(attachToProvider, 7); return true; },
-      configurable:true
-    });
-    if(typeof ZSProvider!=="undefined" && ZSProvider!==watched) watched=ZSProvider;
-  }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
+  // REMOVED: a `Object.defineProperty(window, "ZSProvider", …)` watcher used to
+  // live here to catch "future redefine". It could never fire: every provider
+  // declares `const ZSProvider = (() => …)()` at content-script top level, which
+  // is a LEXICAL binding — it does not create a window property and does not
+  // invoke a window setter. Proven by loading this file plus claude.js into one
+  // VM realm: the setter fires zero times and `typeof window.ZSProvider` stays
+  // "undefined" while the provider attaches fine. The retry timers above and the
+  // 50ms/40-try interval below are what actually attach the connector.
 
   // Public
   return { version: CONNECTOR_VERSION, id: CONNECTOR_ID, handshake, pingBridge, ensureStudioReady, attachToProvider };

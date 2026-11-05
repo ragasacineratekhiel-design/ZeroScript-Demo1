@@ -138,7 +138,6 @@ const ZSGenericProvider = (() => {
   const clickContinueBtn=()=>{ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch{return false;}};
   const snapshot=()=>{ try{ const it=lastAssistant(); return {rp:(it?.textContent||"").length}; }catch{return {};}};
   const readAssistant=()=>{ const it=lastAssistant(); if(!it) return{present:false,reply:"",thinking:"",item:null}; return{present:true, reply:textWithout(it).trim(), thinking:"", item:it}; };
-  const waitFor=async(pred,timeout)=>{ const t0=Date.now(); while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(8);} return false; };
   const SEND_MAX_CHARS=100000;
   const truncateForSend=(t)=> t&&t.length>SEND_MAX_CHARS ? t.slice(0,SEND_MAX_CHARS-500)+"\n\n[…truncated…]\n\n"+t.slice(-500) : t;
 
@@ -160,7 +159,7 @@ const ZSGenericProvider = (() => {
     const ed=getEditor(); if(!ed) throw new Error("Input not found");
     text=truncateForSend(text);
     await setEditorText(ed, text);
-    if(images && images.length){ try{ const dt=new DataTransfer(); images.forEach((img,i)=>{ try{ const bin=atob(img.data); const arr=new Uint8Array(bin.length); for(let j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j); const f=new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}); dt.items.add(f);}catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); }}); ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true})); }catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); } }
+    if(images && images.length){ try{ ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:_imagesToDataTransfer(images),bubbles:true})); }catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); } }
     await sleep(8);  // recovery poll (was 62ms)
     const btn=sendButton();
     if(btn){ try{ btn.click(); return; }catch (_e) { globalThis.ZSSafe?.seen?.("generic.typeAndSend", _e); } }
@@ -191,7 +190,31 @@ const ZSGenericProvider = (() => {
   const scanError=()=>{ const t=document.body.innerText; if(/rate limit|too many requests|quota exceeded/i.test(t.slice(-2000))) return "Rate limited"; if(!getEditor()) return "Input disappeared"; return null; };
   const isTooLongMsg=(t)=>/conversation too long/i.test(t);
   const isBusyMsg=(t)=>/something went wrong|try again|temporarily unavailable/i.test(t);
-  const attachImages=async()=>false, clearAttachments=()=>{};
+  // Images: typeAndSend() below already stages attachments by dispatching a
+  // synthetic paste carrying the files, and the core only ever asks for images
+  // through typeAndSend(text, images). This used to be `async()=>false`, which a
+  // caller would read as "attachment failed" while nothing was attempted. Share
+  // the working paste path instead of keeping a stub that reports failure.
+  const _imagesToDataTransfer=(images)=>{
+    const dt=new DataTransfer();
+    images.forEach((img,i)=>{
+      try{
+        const bin=atob(img.data); const arr=new Uint8Array(bin.length);
+        for(let j=0;j<bin.length;j++) arr[j]=bin.charCodeAt(j);
+        dt.items.add(new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}));
+      }catch (_e) { globalThis.ZSSafe?.seen?.("generic.attachImages", _e); }
+    });
+    return dt;
+  };
+  const attachImages=async(images)=>{
+    if(!images || !images.length) return true;   // nothing to attach is not a failure
+    const ed=getEditor(); if(!ed) return false;
+    try{
+      ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:_imagesToDataTransfer(images),bubbles:true}));
+      return true;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("generic.attachImages", _e); return false; }
+  };
+  const clearAttachments=()=>{};
   const conversationKey=()=> location.pathname + location.search;
   const installSendHooks=(handlers)=>{
     document.addEventListener("keydown",e=>{ if(e.key!=="Enter"||e.shiftKey) return; const ed=getEditor(); if(!ed||!ed.contains(e.target)) return; if(editorText().trim()==="") return; if(handlers.isBlocked()) return; if(!handlers.isStarted()){ if(!chatIsEmpty()) return; handlers.onBlockedAttempt(); return;} handlers.onUserMessage(assistantCount()); },true);

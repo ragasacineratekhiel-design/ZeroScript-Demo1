@@ -114,9 +114,28 @@ const ZSProvider = (() => {
     const best = cached.length >= live.length ? cached : live;
     return best || pre.textContent || "";
   }
+  // Every long-lived observer in this provider registers its own teardown here,
+  // so the page can never accumulate observers it cannot release. `pagehide`
+  // fires on navigation and bfcache entry; `once` keeps the listener from
+  // outliving its purpose.
+  const scanHooks = [];
+  let _hooksBound = false;
+  function bindObserverRelease() {
+    if (_hooksBound) return;
+    _hooksBound = true;
+    const release = () => {
+      while (scanHooks.length) {
+        const fn = scanHooks.pop();
+        try { fn(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.releaseObserver", _e); }
+      }
+      _hooksBound = false;
+    };
+    try { window.addEventListener("pagehide", release, { once: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.pagehideHook", _e); }
+  }
   let _codeObs = null;
   function ensureCodeObserver() {
     if (_codeObs) return;
+    bindObserverRelease();
     // [TRACE] Suspect #1 for the "15-20s freeze after N tools": this observer
     // fires on EVERY characterData/childList mutation across document.body and
     // re-scans EVERY code block in the whole conversation. Cost grows with the
@@ -141,10 +160,31 @@ const ZSProvider = (() => {
         _snCount = 0; _snMaxMs = 0; _snMaxBlocks = 0; _snWinStart = now;
       }
     };
-    _codeObs = new MutationObserver(snapAll);
+    // COALESCING: `snapAll` re-queries and re-walks every code block, and Monaco
+    // mutates its DOM many times per streamed token. Running it per mutation is
+    // what the trace comment above suspected as the freeze source. Run at most
+    // once per task instead - a 0ms timeout collapses a burst into one pass and
+    // still lands before Monaco can dispose a block.
+    let _pending = 0;
+    const scheduleSnap = () => {
+      if (_pending) return;
+      _pending = setTimeout(() => { _pending = 0; if (!document.hidden) snapAll(); }, 0);
+    };
+    // A hidden tab renders no code; skipping saves the whole walk. Coming back
+    // visible runs one immediate pass so nothing that changed while hidden is
+    // left un-cached.
+    const onVis = () => { if (!document.hidden) snapAll(); };
+    _codeObs = new MutationObserver(scheduleSnap);
     try {
       _codeObs.observe(document.body, { subtree: true, childList: true, characterData: true });
     } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.ms", _e); }
+    try { document.addEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeVis", _e); }
+    scanHooks.push(() => {
+      try { _codeObs && _codeObs.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeObsRelease", _e); }
+      try { if (_pending) clearTimeout(_pending); _pending = 0; } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeObsTimer", _e); }
+      try { document.removeEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeVisRelease", _e); }
+      _codeObs = null;
+    });
     snapAll(); // seed any blocks already present
   }
 
@@ -961,6 +1001,11 @@ const ZSProvider = (() => {
       }
     });
     try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.startModelCapWatch", _e); }
+    bindObserverRelease();
+    scanHooks.push(() => {
+      try { _modelCapObs && _modelCapObs.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.modelCapObsRelease", _e); }
+      _modelCapObs = null;
+    });
   }
 
   // Site-specific pre-session warning (main.js renders it in the bar).

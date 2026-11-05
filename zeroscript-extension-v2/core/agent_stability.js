@@ -167,18 +167,14 @@ const ZSAgentStability = (() => {
     let tries=0;
     const iv=setInterval(()=>{ if (tryPatch() || ++tries>45) clearInterval(iv); }, 10); // MAX
   } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.tryPatch", _e); }
-  try {
-    let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;
-    if (typeof Object.defineProperty === "function" && typeof window !== "undefined") {
-      let watched = window.ZSProvider;
-      Object.defineProperty(window, "ZSProvider", {
-        get(){ return watched; },
-        set(v){ watched = v; _patched=false; setTimeout(tryPatch, 5); return true; },
-        configurable: true
-      });
-      if (_ZS) watched=_ZS;
-    }
-  } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.tryPatch", _e); }
+  // REMOVED: an `Object.defineProperty(window, "ZSProvider", …)` watcher set
+  // `_patched = false` on assignment so the next provider could be re-patched.
+  // It could never fire. This file runs BEFORE the provider file in every
+  // content_scripts block, and providers declare `const ZSProvider = …` at top
+  // level — a lexical binding that never touches a window property or setter
+  // (verified in a VM realm: setter fired 0 times, window.ZSProvider stayed
+  // undefined, while tryPatch still hardened the provider). The three setTimeout
+  // retries and the 10ms/45-try interval above are the real re-patch path.
 
   return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.4.0" };
 })();

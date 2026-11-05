@@ -506,11 +506,16 @@ function checkProviderContract() {
 
   const files = walk(path.join(EXT, "providers")).filter((f) => f.endsWith(".js"));
   let bad = 0, checked = 0;
+  // Comments must never decide what a gate checks: a comment mentioning
+  // `const ZSProvider = ` made claude-connector.js look like a provider and
+  // failed the gate on a file that exports no provider at all.
+  const stripComments = (str) => str.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const file of files) {
     const src = fs.readFileSync(file, "utf8");
+    const codeOnly = stripComments(src);
     const baseName = path.basename(file);
     // Only actual providers: they assign the ZSProvider global.
-    if (!/const\s+ZSProvider\s*=/.test(src)) continue;
+    if (!/const\s+ZSProvider\s*=/.test(codeOnly)) continue;
     checked++;
     let ast;
     try { ast = acorn.parse(src, { ecmaVersion: "latest" }); } catch { continue; }
@@ -756,7 +761,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);
