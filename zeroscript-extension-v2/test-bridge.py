@@ -151,5 +151,48 @@ mgr.stop_all()
 check("stop_all() releases every configured server", not child_pids(),
       "leftover: " + str(child_pids()))
 
+# -- 5. the Studio MCP launcher ---------------------------------------------
+# It exists to find StudioMCP.exe across Studio's versioned folders. Its failure
+# mode is the one users actually hit ("bridge offline"), so its diagnostics are
+# part of the contract: they go to stderr and never onto the JSON-RPC stream.
+import importlib.util
+import tempfile
+
+SPEC = os.path.join(os.path.abspath(BRIDGE_DIR), "launch_studio_mcp.py")
+spec = importlib.util.spec_from_file_location("zs_launcher", SPEC)
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+
+saved_override = os.environ.get("ZS_STUDIO_MCP_PATH")
+os.environ["ZS_STUDIO_MCP_PATH"] = "/nonexistent/StudioMCP"
+_err, sys.stderr = sys.stderr, __import__("io").StringIO()
+try:
+    launcher.find_studio_mcp()
+finally:
+    captured, sys.stderr = sys.stderr, _err
+check("a bad ZS_STUDIO_MCP_PATH warns instead of silently ignoring it",
+      "does not point to a valid" in captured.getvalue(), captured.getvalue()[:80])
+
+with tempfile.TemporaryDirectory() as d:
+    exe = os.path.join(d, "StudioMCP.exe")
+    open(exe, "wb").write(b"")
+    os.environ["ZS_STUDIO_MCP_PATH"] = d
+    got = launcher.find_studio_mcp()
+    check("override accepting a directory resolves to the binary inside",
+          got is not None and os.path.basename(str(got)).startswith("StudioMCP"), repr(got))
+
+if saved_override is None:
+    os.environ.pop("ZS_STUDIO_MCP_PATH", None)
+else:
+    os.environ["ZS_STUDIO_MCP_PATH"] = saved_override
+
+r = subprocess.run([sys.executable, SPEC], capture_output=True, text=True, timeout=30,
+                   env={**os.environ, "LOCALAPPDATA": "/nonexistent"})
+if r.returncode != 0:
+    check("launcher reports a missing StudioMCP with a fixable message",
+          "MCP" in ((r.stdout or "") + (r.stderr or "")), "")
+    check("launcher never writes diagnostics to stdout (it carries JSON-RPC)",
+          (r.stdout or "").strip() == "", "stdout: " + repr((r.stdout or "")[:100]))
+
 print("\n%d passed, %d failed" % (pass_n, fail_n))
 sys.exit(1 if fail_n else 0)
