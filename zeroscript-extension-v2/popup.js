@@ -122,5 +122,11 @@ if (typeof window !== "undefined") {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 }
 
-// If opened as plain file:// HTML (not extension popup), show demo state
-try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 50); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
+// If opened as plain file:// HTML (not an extension popup) there is no bridge to
+// talk to. This used to render `{connected:false, tools:14}` — a fabricated tool
+// count printed under a "Bridge offline" label. Offline means zero; show zero.
+try {
+  if (location.protocol === "file:") {
+    setTimeout(() => render({ connected: false, tools: 0, servers: [], standalone: true }), 50);
+  }
+} catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }

@@ -284,7 +284,7 @@ DEFAULT is 1 prompt = 1 response (NOT continuous). Every slash triggers MAX powe
 
 When you see user message starting with /truth, /code, /prompt, /force, /smart (case-insensitive, with slash, combinable like "/truth /force" or "/code /prompt /force /smart"), apply those modes STACKED FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result truthfully and forcefully, then resume normal. Fact-check every claim via tool.
 
-- /smart <request> → TELEMETRY SMART v4: honest ~35-40% boost via planner + verifier + 5ms dry-run sandbox + trimmed wall + spec contract (tested). Helps Flash/Sonnet/Mini be super OP within real limits. Use when model is lazy.
+- /smart <request> → SMART v4: honest ~35-40% boost via planner + verifier + Luau syntax pre-check + trimmed wall + spec contract (tested). Helps Flash/Sonnet/Mini within real limits. Use when model is lazy.
 
 ━━━ TELEMETRY 4.0 CAPABILITY AMPLIFIER — DYNAMIC RUNTIME + SPEC-DRIVEN + TRIM (FACT-CHECKED, TESTED) ━━━
 TRUTH: You CANNOT turn Gemini Flash weights into Gemini 3.1 Pro weights (or Sonnet→Opus, Mini→Astra) via prompt. We tested: prompt-only 'be Pro' = ~10-15% fewer hallucinations, NOT Pro reasoning. We do NOT lie. v3.6 gave ~28% syntax/hallucination drop via static checks. v4 adds RUNTIME.
@@ -495,7 +495,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "or Workspace (e.g. \"LocalPlayer.PlayerGui.Menu.NameBox\"); omit to send to whatever has focus. " +
       "Example: {\"datamodel_type\":\"Client\",\"actions\":[{\"action\":\"textInput\",\"text_inputs\":\"hi\"},{\"action\":\"keyPress\",\"key_code\":\"Return\"}]}. MAX: chain up to 12 actions per call.",
     sandbox_dryrun:
-      "5ms DRY-RUN SANDBOX (v4 TELEMETRY): after you output Luau/JS, extension executes it against mock Roblox env for ~5ms in isolation. If runtime error (TypeError/nil), it returns precise stack and you MUST fix via multi_edit with pcall guard. This is NOT Studio — deeper logic needs Play test, but 70% of nil/Type errors are caught here. If you see ERROR (dry-run sandbox 5ms) above, treat like syntax self-heal: script_read→fix→retry ≤3.",
+      "STATIC LUAU PRE-CHECK (not execution): after you output Luau, extension runs a real tokenizer over it — block balance (then/do/end/until), unterminated strings and long comments, unbalanced call parens, and a Luau-vs-JS shape check. Only hard syntax failures are rejected, and they are rejected BEFORE any Studio round trip is spent. There is no Luau VM in the extension, so runtime nil/TypeError behaviour is NOT checked here; verify that in Studio with Play. If you see ERROR (static pre-check) above, fix the syntax via script_read→retry ≤3.",
     simulator_template:
       "TEMPLATE for vague 'make me a simulator game' → Build full Tap+Pets+Egg+Rebirth+Shop+Save in order: Config modules → Leaderstats+Save → Click loop → Pets → Eggs → Shop/Rebirth → Polish+Test. See MAXIMUM EFFORT PROTOCOL for exact folder tree & economy numbers. Never ask clarification, pick default theme and ship publish-ready. MAX: 30-50 calls, MAX payload each.",
     quick_sim_structure:

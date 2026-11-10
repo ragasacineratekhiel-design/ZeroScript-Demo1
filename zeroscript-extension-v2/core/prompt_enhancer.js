@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // core/prompt_enhancer.js — ZeroScript MAX 4.3.0 PLAN 10ms WALL — Switch Plan orchestrated + 10ms honest wall
-// BAD→BEST in <0.5ms enhance + 5ms dry-run + 10ms plan wall — precompiled regex, trimmed wallCtx, spec contract upstream.
+// BAD→BEST in <0.5ms enhance + Luau syntax pre-check + 10ms plan wall — precompiled regex, trimmed wallCtx, spec contract upstream.
 // SWITCH PLAN: Direct/Agent/Plan/Checker orchestrated multi-AI with 10ms BroadcastChannel wall — honest superfast.
 // FACT-CHECK: prompts ALONE don't make Flash==Pro. REAL boost is INTERNAL+EXTERNAL+RUNTIME+PLAN: planner + validator + memory + sandbox + wall.
 (() => {
@@ -33,16 +33,18 @@
   // TRUTH: No prompt can turn Flash weights into Pro weights. What WORKS (tested):
   // INTERNAL: decompose into checklist + inject concrete file-tree + spec contract upstream (TEST_CONTRACT).
   // EXTERNAL: agentic loop verifies via tools, retries with precise fix, grounds via trimmed memory_wall.
-  // RUNTIME: 5ms dry-run sandbox executes snippet against mock Roblox env, intercepts TypeError before user sees it.
+  // STATIC: a Luau tokenizer rejects hard syntax errors before they cost a Studio round trip.
+  //         It does NOT execute anything — there is no Luau VM here, so runtime TypeErrors
+  //         are caught in Studio, not by this extension. (Earlier text here claimed otherwise.)
   // This boost is ~20-35% quality gain on Flash (tested 3.6), v4 targets ~40-50% Pro proximity via runtime + trim — honest, measured not magic.
-  const PRO_BOOST_LIGHT = `\n\n[INTELLIGENCE AMPLIFIER v4 (internal+external+runtime, FACT-CHECKED): Decompose into phases (Discovery→Foundation→Core→Polish→Verify), inject TEST_CONTRACT if found, verify via 5ms dry-run sandbox + inspect before mutate. Uses trimmed wallCtx to stay lean. Helps Flash act ~35-40% closer to Pro via scaffolding, not weights.]`;
+  const PRO_BOOST_LIGHT = `\n\n[INTELLIGENCE AMPLIFIER v4 (internal+external+runtime, FACT-CHECKED): Decompose into phases (Discovery→Foundation→Core→Polish→Verify), inject TEST_CONTRACT if found, verify statically (Luau syntax pre-check; runtime still needs Studio) + inspect before mutate. Uses trimmed wallCtx to stay lean. Helps Flash act ~35-40% closer to Pro via scaffolding, not weights.]`;
 
   const PRO_REASONING_FULL = `━━━ FACT-CHECKED INTELLIGENCE PROTOCOL v4 — INTERNAL+EXTERNAL+RUNTIME — HOW WE HELP FLASH/Sonnet/Mini ━━━
 TRUTH: Prompt alone does NOT make Gemini Flash = Gemini 3.1 Pro (or Sonnet=Opus, Mini=Astra). Weights fixed. Tested: prompt-only ~10-15% fewer hallucinations, not Pro reasoning.
 WHAT ACTUALLY WORKS (v4 telemetry, model-agnostic, tested):
 1. INTERNAL PLANNER (JS, upstream): before your call, extension decomposed task into 5-7 phases with concrete paths + upstreamed TEST_CONTRACT (hidden) — follow it.
 2. DYNAMIC TREE-TRIMMING: wallCtx is now trimmed by importance-weighting (relevant sections only) — keeps context lean, avoids hallucination from clutter.
-3. 5ms DRY-RUN SANDBOX (runtime): after you output, extension executes snippet against mock Roblox env for 5ms — if TypeError, it feeds stack back via /force_fix before user sees it. You get immediate runtime feedback, not just syntax.
+3. STATIC LUAU ANALYSIS (not execution): after you output Luau, a real tokenizer checks block balance, unterminated strings/comments and obvious shape errors, and rejects only hard syntax failures before they cost a Studio round trip. There is NO Luau VM in the extension, so runtime TypeErrors cannot be caught here — they surface in Studio. Do not rely on this for behavioural correctness.
 4. DECOMPOSE: break ANY request into 5-7 ordered phases (Discovery→Foundation→Core→Polish→Verify) before writing code.
 5. PLAN FIRST: write 3-line plan in mind (what to build, where, verification) — then execute, never code blind.
 6. REASON STEP-BY-STEP: chain-of-thought internally (consider edge cases, anti-exploit, mobile, save, performance) — don't jump to answer.
@@ -272,7 +274,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     if(detailed && !opts.force){
       const wallCtx = getWallCtx(raw);
       const contract = getTestContract(raw, wallCtx, theme);
-      const footer = `\n\n${PRO_REASONING_FULL}\n${contract?"\n"+contract:""}\n${wallCtx?`\nTrimmedMemory:\n${wallCtx.slice(0,500)}` : ""}\n\n[ZeroScript MAX v4 TELEMETRY — 5ms dry-run sandbox will verify your code before user sees it + trimmed context + TEST_CONTRACT upstream. 1 prompt = 1 response, MAX power truthfully.]`;
+      const footer = `\n\n${PRO_REASONING_FULL}\n${contract?"\n"+contract:""}\n${wallCtx?`\nTrimmedMemory:\n${wallCtx.slice(0,500)}` : ""}\n\n[ZeroScript MAX v4 — a Luau syntax pre-check runs on your output before it reaches Studio (syntax only; runtime needs Play) + trimmed context + TEST_CONTRACT upstream. 1 prompt = 1 response.]`;
       if(raw.includes("MAX") || raw.includes("publish")) return { enhanced: raw + PRO_BOOST_LIGHT, changed:true, theme, spec: PRO_BOOST_LIGHT, mode:"pro-polished" };
       return { enhanced: raw + footer, changed:true, theme, spec:"polished+pro", mode:"polished" };
     }
@@ -288,7 +290,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     // Normal prompt — trimmed + contract + runtime-aware boost
     const wallCtx2 = getWallCtx(raw);
     const contract2 = getTestContract(raw, wallCtx2, theme);
-    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[5ms dry-run will check your output before user sees it; trimmed context keeps you lean; Switch Plan wall 10ms active]";
+    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[Luau syntax pre-check runs before your output reaches Studio (syntax only); trimmed context keeps you lean; Switch Plan wall active]";
     return { enhanced: raw + lightPlus, changed:true, theme, spec: lightPlus, mode:"pro-boost-v4" };
   }
 
@@ -326,7 +328,7 @@ Performance: no while true without task.wait(1), debounce, connections cleanup
 Truth: inspect before mutate, verify after — never hallucinate path/API. Return proof via return.
 
 ${contract ? contract+"\n\n" : ""}${wallCtx ? `MemoryWall context (trimmed 600, 5ms):\n${wallCtx}\n` : ""}${placeInfo ? `Place context:\n${placeInfo}\n` : ""}
-Runtime: 5ms dry-run sandbox will execute your Luau against mock env — if TypeError it returns stack to you via ERROR, fix before Studio sees it.
+Runtime: a Luau syntax pre-check runs on your output — hard syntax errors come back as ERROR before Studio sees them. There is no Luau VM here, so nil/TypeError behaviour is NOT pre-checked; verify that in Studio with Play.
 Execution: list_commands FIRST, then MAX payload per call. One execute_luau block = entire folder tree via loops. After each mutate, return {ok=true, created=...} as proof. NEVER hallucinate Instance path — inspect before mutate.
 
 Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at end. 1 prompt = 1 response, use all power truthfully.

@@ -1242,7 +1242,7 @@
         const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
         if(!dry.ok && dry.kind==="syntax"){
           diag("sandbox.block", { name, error: dry.error });
-          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by 5ms dry-run sandbox BEFORE Studio — no Studio load spent)`;
+          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
       }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }

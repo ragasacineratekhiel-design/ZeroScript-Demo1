@@ -670,6 +670,47 @@ if (dupes.length) {
     "keep them identical; divergence is what would hurt");
 }
 
+// ── 10. PROMPT TEXT THAT PROMISES SOMETHING THE CODE CANNOT DO ───────────
+// The model reads these strings and plans around them. A false capability claim
+// is not a cosmetic wart: it changes model behaviour and hides the real gap.
+// Each entry below is a claim that was live in this tree, with the reason it is
+// false. The check is deliberately narrow — it looks for the specific promise,
+// not for prose that merely mentions a sandbox.
+const FALSE_PROMISES = [
+  {
+    re: /(executes?|execute|runs?)\s+(?:it\s+)?(?:against|in)\s+(?:a\s+)?mock\s+Roblox/i,
+    why: "there is no Luau VM in the extension; core/sandbox.js is static analysis",
+  },
+  {
+    re: /runtime\s+TypeErrors?\s+are\s+intercepted/i,
+    why: "nothing intercepts runtime errors; they surface in Studio",
+  },
+  {
+    re: /(returns?|feeds?)\s+(?:the\s+)?(?:precise\s+)?stack/i,
+    why: "a stack requires execution, which never happens here",
+  },
+  {
+    re: /(\d{2})\s*%\s+of\s+(?:nil|TypeError|Type errors?)/i,
+    why: "a hit rate for runtime errors cannot be measured without running code",
+  },
+];
+const stripComments = (str) => str.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+for (const { file, src } of allFiles) {
+  // Comments are where this project records what it USED to claim. Matching them
+  // would flag the honesty notes themselves — sandbox.js says 'the old version
+  // claimed to "run against a mock Roblox env", which it never did'. Only live
+  // prompt text and user-facing strings can mislead a model.
+  const live = stripComments(src);
+  for (const p of FALSE_PROMISES) {
+    const m = p.re.exec(live);
+    if (!m) continue;
+    const line = live.slice(0, m.index).split("\n").length;
+    add("false-claim", "P2", file, line,
+      `prompt/docs promise a capability the code lacks: "${m[0]}" — ${p.why}`,
+      "state what the code actually does");
+  }
+}
+
 // ── report ───────────────────────────────────────────────────────────────
 const bySev = { P0: [], P1: [], P2: [], P3: [] };
 for (const f of findings) bySev[f.sev].push(f);
