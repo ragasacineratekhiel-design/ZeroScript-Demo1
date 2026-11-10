@@ -16,6 +16,7 @@ and types the result back so the model can continue.
 | Area | Reality |
 |---|---|
 | Agent loop | Starts reliably. Session state (`SESSION`) is module scope; exec mode + plan are mirrored to `window.__zsExecMode/__zsPlan` and `chrome.storage`. |
+| **Composer stays yours** | The extension never locks, covers or masks the chat box. The old "Agent is working…" panel and its transparent-text mask are deleted, not disabled. If you are typing when the agent wants to send, it waits for you (up to 20 s) and shows "Holding your draft" rather than overwriting your message. |
 | Exec modes | **Single** (1 turn) · **Continuous** (≤24 turns) · **Loop** (≤40 turns, planner→coder→checker rotation). All bounded; a budget banner stops a runaway model. |
 | Command protocol | **One command per reply.** `execute_luau` uses `###LUA### … ###END_LUA###`; everything else is one JSON object. `core/parser.js` salvages truncated JSON. |
 | Static Luau check | `core/sandbox.js` tokenises Luau and checks block balance before the call leaves the browser. It rejects only unparseable code, with a line number. It does **not** execute Luau. |
@@ -139,7 +140,9 @@ extension **with `core/safe.js` deleted** to prove that, and fails if an empty c
 From the repo root: `npm install && npm run verify` — parse checks, manifest integrity,
 content-script ordering, AST scope analysis (the 4.2.0 ReferenceError class, with a self-test),
 cross-module API contract, version agreement, silent-failure hygiene (no empty catches, no unsafe
-`ZSSafe` calls, load order), six assertion suites (154 assertions), and a stubbed-browser boot of
-all 14 site blocks — including a boot with `core/safe.js` removed.
+`ZSSafe` calls, load order), eleven assertion suites, and a stubbed-browser boot of all site
+blocks — including a boot with `core/safe.js` removed. The count is printed by `npm run verify`;
+it is not repeated here, because a number in prose is the first thing to go stale (it said "six
+suites, 154 assertions" long after that stopped being true).
 
 GPL-3.0-or-later — see `../LICENSE`.
