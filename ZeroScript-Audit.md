@@ -422,3 +422,93 @@ The 37 remaining advisories are real but low-value: duplicated `fileFromImage`
 across providers, `async` functions with no `await`, and single-use globals
 assigned for debugging. They are listed by `node tools/audit-deep.js` rather than
 hidden.
+
+## 11. Leak pass — what the analyser could not see
+
+The previous passes found crashes and lies. They could not find **leaks**, because
+a leak is not a wrong value or a dead function: it is a thing that keeps working
+after its reason is gone. This pass went looking for that class specifically.
+
+### Fixed
+
+| Site | What leaked | Proof it was real |
+|---|---|---|
+| `providers/qwen.js` | two document-wide `MutationObserver`s, `disconnect()` count 0 | `test-observers.js`: old code disconnects 0, new disconnects 2 on `pagehide` |
+| `providers/qwen.js` | code observer re-scanned **every code block on every mutation** | 200 mutations x 2 observers: **200** full-document scans before, **1** after |
+| `bridge.py` `MCPClient.stop()` | killed the child but never `wait()`ed or closed 3 pipes | 19 start/stop cycles: **3** descriptors leaked before, **0** after; child now always reaped |
+| `bridge.py` | `call_tool`/`batch`/status-subscription were unretained `create_task`s | 2 dispatched tool tasks now cancelled on client disconnect (was 0 tracked) |
+| `background.js` | `call_tool` stored the literal `{id:-1}` in the coalesce map, not its promise | a second identical call awaited that object and answered **as if it were the tool result** |
+| `background.js` | `list_tools` could leave a rejected promise in the map forever | caught + `finally` delete |
+| `agent_hub.js`, `plan_wall.js`, `peer_wall.js` | `BroadcastChannel` never closed; `peer_wall.close()` had no caller, `plan_wall` had no close at all | each now releases on `pagehide` |
+
+### Not leaks, after checking (so I did not "fix" them)
+
+| Suspect | Verdict |
+|---|---|
+| `core/main.js` — 11 `setInterval`s with 3 `clearInterval`s | all are page-lifetime pollers; a per-frame loop does not leak, every instance dies with the document. Verified `P.init()` is called once and the intervals are inside it |
+| `bridge.py` status subscription | I wrote that it "polls forever after disconnect". **Wrong** — measured 0 pushes with no client connected. `while ws in clients` already ended it within one 3 s period. Corrected the comment to say what was actually wrong |
+| `popup.js` refresh interval | already paused when hidden and cleared on `pagehide` |
+| `kimi.js` input-lock observer | element-scoped and disconnected on unlock — a complete lifecycle |
+| `background.js` BroadcastChannel | service worker: no `pagehide` exists, and the browser closes it on teardown |
+
+### Honesty fixes (a model plans around what you tell it)
+
+Six live prompt strings promised the model a **runtime sandbox** that does not
+exist — "executes against mock Roblox env", "runtime TypeErrors are intercepted",
+"70% of nil/Type errors are caught", "returns the precise stack". `core/sandbox.js`
+is static analysis and says so in its own header. All six now describe the real
+Luau tokenizer and state that runtime behaviour needs Studio.
+
+Four percentages ("~20-35% quality gain", "~35-40% boost", "~40-50% Pro
+proximity") were labelled "tested"/"measured" with no eval harness, dataset or
+recorded run anywhere in this repository. They are gone; the mechanism is
+described instead.
+
+`popup.js` rendered a fabricated `tools: 14` under a "Bridge offline" label.
+
+### The analyser itself, again
+
+Six checks were lying, and fixing them changed the count more than fixing the
+code did:
+
+| Check | Lie | Consequence |
+|---|---|---|
+| `dom-injection` | template literals assumed safe when they start with `<` | `` `<b onclick="${providerText}">` `` passed — a **false negative**, the dangerous direction |
+| `dom-injection` | identifier lookup saw only the first declarator of `let a=…, b=…` | false positives on `main.js` bar render |
+| `unguarded-json` | comment claimed an ancestor try-search that was never written | reported **every** `JSON.parse` (7 findings) |
+| `unused-var` | ignored cross-file provider globals | 4 false positives on `ZSParse`, `ZSAgentStability`, … |
+| `duplicate-logic` | reported `allFiles[0].file` at line 0 | all 7 findings pointed at `background.js:0`, a location nobody can act on |
+| `async-no-await` | flagged exported provider methods | `await P.ensureComposerReady()` is a uniform async interface; one provider answering synchronously is not a defect |
+
+A "same function name, different body = drift" check was written, produced **34
+findings** across 10 providers that legitimately differ per site, and was
+**deleted rather than shipped** — a check that fires on everything carries no
+information.
+
+`tools/verify.js`'s provider-contract gate keyed on `/const\s+ZSProvider\s*=/`
+against raw source, so **my own comment text** made `claude-connector.js` look
+like a provider and failed the gate. It now strips comments first.
+
+### Two dead watchers removed
+
+`agent_stability.js` and `claude-connector.js` both installed
+`Object.defineProperty(window, "ZSProvider", { set() { … } })` to react to a
+provider appearing later. Providers declare `const ZSProvider = (() => …)()`, a
+**lexical** binding: it never touches a window property or setter. Measured in one
+VM realm — setter fired **0** times, `window.ZSProvider` stayed `undefined`, and
+the provider attached anyway. Both watchers deleted; the retry timers are the
+real attach path (verified: `attachedFlag` true, `ensureComposerReady` wrapper
+present).
+
+### Standing gates added
+
+`observer-release`, `observer-storm`, `channel-leak`, `false-claim`, plus a
+`try`-aware `unguarded-json`. Each was verified against a fixture that *should*
+trip it and a fixture that should not, because a gate nobody has seen fail is a
+gate you cannot trust.
+
+| Suite | Assertions |
+|---|---|
+| `test-observers.js` (new) | 13 — fails 6 against the pre-fix provider |
+| `test-bridge.py` (new) | 9 — fails 2 against the pre-fix `stop()` |
+| all suites | **10 files, 247 assertions** (37+8+36+18+20+35+60+11+13+9) |
