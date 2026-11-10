@@ -1,3 +1,7 @@
+> **ARCHIVED (historical).** This file describes work done before 4.3.0 and contains claims that were
+> later found to be inaccurate (see `/ZeroScript-Audit.md`). It is kept for history only — do not treat
+> any number here as a current measurement. Current documentation: `/README.md`.
+
 # ZeroScript ULTRA v2.0.0 — Ultra-Fast Middle Layer
 
 > **All logic upgraded. Designs, GUIs, colors untouched.**

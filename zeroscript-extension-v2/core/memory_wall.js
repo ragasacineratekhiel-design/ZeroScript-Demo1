@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.0.0 TELEMETRY 5ms TRIM";
+  const WALL_VERSION = "4.4.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
@@ -64,8 +64,6 @@ _One-line what this place is_
   }
 
   let _wall = null;
-  let _wallAt = 0;
-  let _wallDirty = false;
   // 10× cache: precomputed buildContext string + facts snapshot version
   let _ctxCache = "";
   let _ctxAt = 0;
@@ -93,13 +91,11 @@ _One-line what this place is_
           else _wall = raw;
         }
         if(_wall.timeline && _wall.timeline.length > WALL_MAX_ENTRIES) _wall.timeline = _wall.timeline.slice(-WALL_MAX_ENTRIES);
-        _wallAt = Date.now(); _ctxDirty = true;
         beaconWall(_wall);
         return _wall;
       }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.loadWall", _e); }
     _wall = { version:WALL_VERSION, updatedAt: nowISO(), wall: WALL_SKELETON, timeline: [], facts:{} };
-    _wallAt = Date.now(); _ctxDirty = true;
     beaconWall(_wall);
     return _wall;
   }
@@ -116,8 +112,8 @@ _One-line what this place is_
           if(!el){ el=document.createElement("script"); el.type="application/json"; el.id="zs-memory-wall"; (document.documentElement||document.body).appendChild(el); }
           // slice only 400 preview — 10× less string copy than full wall
           el.textContent = JSON.stringify({ version:w.version, updatedAt:w.updatedAt, wallPreview: (w.wall||"").slice(0,400), timeline: (w.timeline||[]).slice(-5) });
-          try{ window.__zsWall = w; }catch{}
-        }catch{}
+          try{ window.__zsWall = w; }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.beaconWall", _e); }
+        }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.beaconWall", _e); }
       });
     }catch{
       // fallback sync if rAF unavailable
@@ -125,7 +121,7 @@ _One-line what this place is_
         let el = document.getElementById("zs-memory-wall");
         if(!el){ el=document.createElement("script"); el.type="application/json"; el.id="zs-memory-wall"; (document.documentElement||document.body).appendChild(el); }
         el.textContent = JSON.stringify({ version:w.version, updatedAt:w.updatedAt, wallPreview: (w.wall||"").slice(0,400) });
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.beaconWall", _e); }
     }
   }
 
@@ -141,18 +137,15 @@ _One-line what this place is_
     const k = wallKey();
     // no compress — raw wall is <20k, compress cost > benefit. Keep pack compat for legacy reads only.
     const toSave = { version:_wall.version, updatedAt:_wall.updatedAt, wall:_wall.wall, timeline: (_wall.timeline||[]).slice(-WALL_MAX_ENTRIES), facts: _wall.facts||{} };
-    try{ chrome.storage.local.set({ [k]: toSave, zsMemoryWall: toSave }); }catch{}
+    try{ chrome.storage.local.set({ [k]: toSave, zsMemoryWall: toSave }); }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.saveWall", _e); }
     beaconWall(_wall);
-    _wallDirty = false;
     _ctxDirty = true;
-    _wallAt = Date.now();
   }
 
   function pruneIfNeeded(){
     if(!_wall || !_wall.timeline) return;
     if(_wall.timeline.length >= WALL_PRUNE_AT){
       _wall.timeline = _wall.timeline.slice(-WALL_MAX_ENTRIES);
-      _wallDirty = true; _ctxDirty = true;
     }
   }
 
@@ -179,7 +172,9 @@ _One-line what this place is_
     get: () => ensureWall(),
     getWallText: () => ensureWall().wall || WALL_SKELETON,
     setWallText: (txt)=>{
-      const w=ensureWall(); w.wall=String(txt||"").slice(0, 20000); w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
+      const w=ensureWall();
+      w.wall=String(txt||"").slice(0, 20000);
+      w.updatedAt=nowISO(); _ctxDirty=true; beaconWall(w);
       scheduleSave(5);
       return w;
     },
@@ -194,7 +189,7 @@ _One-line what this place is_
         if(m) w.wall = w.wall.replace(re, `$1${newContent}\n`);
         else w.wall += `\n${hdr}\n${newContent}\n`;
       }
-      w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
+      w.updatedAt=nowISO(); _ctxDirty=true; beaconWall(w);
       scheduleSave(5);
       return w.wall;
     },
@@ -208,10 +203,10 @@ _One-line what this place is_
       if(!w.timeline) w.timeline=[];
       w.timeline.push({ t: entry.t, iso: entry.iso, evt: kind, msg: fact.slice(0,120) });
       pruneIfNeeded();
-      w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
+      w.updatedAt=nowISO(); _ctxDirty=true; beaconWall(w);
       // micro-batch: 10ms not 80ms — 8× faster, 10ms MAX
       scheduleSave(5);
-      try{ console.log("[zs-wall] remember", kind, fact); }catch{}
+      try{ console.log("[zs-wall] remember", kind, fact); }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.arr", _e); }
     },
     timeline: (n=20)=> (ensureWall().timeline||[]).slice(-n),
     // 10× MAX buildContext: cached O(1) — instant
@@ -272,7 +267,7 @@ _One-line what this place is_
       const localHas = (ensureWall().wall.match(/## /g)||[]).length;
       if(studioHas >= localHas){
         const w=ensureWall();
-        w.wall=t; w.updatedAt=nowISO(); _wallDirty=true; _ctxDirty=true; beaconWall(w);
+        w.wall=t; w.updatedAt=nowISO(); _ctxDirty=true; beaconWall(w);
         scheduleSave(5);
       }
     },
@@ -284,10 +279,10 @@ _One-line what this place is_
     set(v){ _saveTimer = v; }
   });
 
-  try{ setTimeout(loadWall, 5); }catch{} // 5ms ULTRA instant load
+  try{ setTimeout(loadWall, 5); }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.localHas", _e); } // 5ms ULTRA instant load
 
-  try{ window.ZSMemoryWall = MemoryWall; }catch{}
-  if(typeof self!=="undefined") try{ self.ZSMemoryWall = MemoryWall; }catch{}
-  if(typeof window!=="undefined") try{ window.__zsWallAPI = MemoryWall; }catch{}
+  try{ window.ZSMemoryWall = MemoryWall; }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.localHas", _e); }
+  if(typeof self!=="undefined") try{ self.ZSMemoryWall = MemoryWall; }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.localHas", _e); }
+  if(typeof window!=="undefined") try{ window.__zsWallAPI = MemoryWall; }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.localHas", _e); }
 
 })();

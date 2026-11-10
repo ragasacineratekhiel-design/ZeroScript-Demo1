@@ -155,12 +155,31 @@ def main() -> int:
         return 1
     sys.stderr.write(f"launch_studio_mcp: using {exe}\n")
     sys.stderr.flush()
+    # Inherit our stdio: the bridge speaks MCP over this process's stdin/stdout,
+    # and this launcher exists only to find the right binary. The child MUST hold
+    # the same pipes the bridge holds, or the protocol has no transport.
     proc = subprocess.Popen([str(exe)] + sys.argv[1:])
     try:
         return proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        return proc.wait()
+        # terminate() alone leaves a window where the child ignores SIGTERM (and
+        # on Windows terminate() is TerminateProcess, but the wait below can
+        # still block). Escalate so Ctrl-C in the bridge never hangs on exit.
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        try:
+            return proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                return proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                return 1
 
 
 if __name__ == "__main__":

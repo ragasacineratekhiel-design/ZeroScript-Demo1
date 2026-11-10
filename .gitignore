@@ -1,0 +1,7 @@
+# Node (tools/verify.js only — the extension itself needs no build)
+node_modules/
+
+# Generated / local
+.DS_Store
+Thumbs.db
+*.log

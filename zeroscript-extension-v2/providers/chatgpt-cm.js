@@ -82,28 +82,59 @@
     return n;
   }
 
-  document.addEventListener("zs-cm-sync", () => { try { syncAll(); } catch {} }, true);
+  document.addEventListener("zs-cm-sync", () => { try { syncAll(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.syncAll", _e); } }, true);
 
   // A streaming block changes without anyone asking, and the isolated world only
   // syncs when it reads. That is enough for correctness, but a cheap idle sync
   // keeps the attribute warm so the very first read of a finished block is
   // already current.
-  const tick = () => { try { syncAll(); } catch {} };
-  setInterval(tick, 250);
+  // HONEST (max-speed pass): this called a FULL DOM sweep every 250ms forever
+  // — on a long conversation that is hundreds of node reads 4x/second, on every
+  // tab, whether or not anything changed. It is now idempotent and change-gated:
+  // cheap signature first, full sync only when the transcript actually moved,
+  // and it idles completely when the tab is hidden.
+  let _lastSig = "";
+  const sig = () => {
+    try {
+      // No getItems() here: this module's unit is `.cm-content` (CodeMirror).
+      // Signature = how many blocks + the tail of the last one.
+      const nodes = document.querySelectorAll(".cm-content");
+      const n = nodes.length;
+      const last = n ? (nodes[n - 1].textContent || "") : "";
+      return n + "|" + last.length + "|" + last.slice(-24);
+    } catch (_e) { return ""; }
+  };
+  const tick = () => {
+    try {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const now = sig();
+      if (now === _lastSig) return;      // nothing changed → no work at all
+      _lastSig = now;
+      syncAll();
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.tick", _e); }
+  };
+  // Paused when hidden (a background tab has nothing to sync) and stoppable —
+  // the previous version had no way to stop it at all.
+  let _tickTimer = setInterval(() => { tick(); }, 400);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { clearInterval(_tickTimer); _tickTimer = 0; }
+    else if (!_tickTimer) _tickTimer = setInterval(() => { tick(); }, 400);
+  });
+  window.addEventListener("pagehide", () => { if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = 0; } });
   tick();
 
 // ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } };
   _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 30); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm._zsApply", _e); }
 
 })();

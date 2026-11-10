@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# MacOS_Start.command
+# MacOS_START.command
 # ---------------------------------------------------------------------------
 #  Self-contained macOS/Linux launcher for the ZeroScript bridge.
 #  Double-clickable in Finder (that is why it is a .command, not a .sh: a .sh
@@ -39,14 +39,14 @@ echo
 echo "  === ZeroScript Bridge v2.2.0 ULTRA+ ==="
 echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary | Studio Full Access | All 8 Agents Super-Stable"
 echo
-log "===== MacOS_Start.command v2.2.0 launched ====="
+log "===== MacOS_START.command v2.2.0 launched ====="
 
 # --- 0. bridge.py must be next to us ---------------------------------------
 # If the user ran this out of a half-extracted download, bridge.py is missing
 # and Python would fail with a confusing error. Say the real thing instead.
 if [ ! -f "bridge.py" ]; then
     echo "  ERROR: bridge.py was not found next to this launcher."
-    echo "  Extract the WHOLE download, then run MacOS_Start.command from that folder."
+    echo "  Extract the WHOLE download, then run MacOS_START.command from that folder."
     log "FATAL: bridge.py missing next to launcher."
     pause_and_exit 1
 fi

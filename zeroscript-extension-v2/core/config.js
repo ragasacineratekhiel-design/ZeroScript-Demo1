@@ -6,11 +6,11 @@
 const ZS = (() => {
   "use strict";
 
-  // TELEMETRY 4.1.0 identity — ZeroScript MAX 4.2.0 PLAN + 10ms WALL + DRY-RUN + TRIM — UNIVERSAL AI + orchestrated multi-AI
+  // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.2.0";
+  const APP_VERSION = "4.4.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
-  // ── SWITCH PLAN — 4 modes — orchestrated multi-AI with 10ms wall ──
+  // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
     direct: { id:"direct", name:"Direct", ais:1, roles:["coder"], desc:"1 AI direct — fastest single" },
     agent:  { id:"agent",  name:"Agent",  ais:3, roles:["planner","coder","checker"], desc:"3 AI Planner→Coder→Checker — max quality" },
@@ -28,25 +28,30 @@ const ZS = (() => {
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","sse","long-poll","batch","binary-msgpack","broadcast-channel","webtransport"],
-    RECONNECT_MIN: 5,        // 5ms ULTRA — instant reconnect (was 10)
-    RECONNECT_MAX: 100,       // 5ms ultra cap (was 800)
-    HEARTBEAT_MS: 62,        // MAX 250ms — ABSOLUTE 1.6x faster
-    STALE_MS: 150,           // MAX 600ms — ABSOLUTE
-    HTTP_TIMEOUT: 300,       // 5ms ultra 1.2s timeout (was 2000)
+    // HONEST: these are documented defaults, but the LIVE values are the
+    // constants at the top of background.js (that is what actually runs). They
+    // are kept in sync here so nothing quotes a number that is not real.
+    RECONNECT_MIN: 5,        // background.js RECONNECT_MIN = 5
+    RECONNECT_MAX: 200,      // background.js RECONNECT_MAX = 200
+    HEARTBEAT_MS: 1000,      // background.js HEARTBEAT_MS = 1000 (MV3 clamps ~1s)
+    STALE_MS: 400,           // background.js STALE_SOCKET_MS = 400
+    HTTP_TIMEOUT: 4000,      // background.js HTTP_TIMEOUT = 4000 (status/tools reads)
     WS_PING_MS: 100,
     HEDGE_MS: 5,             // 5ms ULTRA hedge — super powerful (was 10)
     BATCH_MAX: 64,            // EXT-IN-EXT 32 tools per batch (was 24)
     CACHE_TTL_MS: 10,         // 5ms ultra 40ms cache — instant attach (was 80)
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "4.2.0 EXT-IN-EXT 5ms ULTRA",
+    VERSION: "4.3.0 event-driven",
   };
 
-// ── STABILITY 4.1.0 PLAN 10ms — universal 15 AIs + orchestrated multi-AI + Wall 10ms TRIM + dry-run + spec — 10x ────
+// ── STABILITY — values that are ACTUALLY consumed. (Audit #18: this block used to be
+//    dead config; anything still unused has been removed rather than left to mislead.) ──
 const STABILITY = {
   AGENT_KEEPALIVE_MS: 150,          // MAX 600ms — ABSOLUTE
-  STUDIO_POLL_MS: 10,              // MAX 40ms — ABSOLUTE, Studio plugin throttles to 100
-  STUDIO_HEARTBEAT_MS: 6,         // MAX 100ms — ABSOLUTE
+  // STUDIO_POLL_MS / STUDIO_HEARTBEAT_MS were removed: zero consumers, and the
+  // numbers (10ms / 6ms) were marketing, not code. Studio liveness is driven by
+  // bridge.py STUDIO_PROBE_* + the WS status push.
   EDITOR_REDISCOVER_MS: 15,          // MAX 60ms — ABSOLUTE
   GEN_VOTE_IDLE_MS: 5,             // MAX 15ms — ABSOLUTE, race with React render
   SEND_RETRY: 7,                    // MAX 7 retries — never lose
@@ -162,9 +167,9 @@ const STABILITY = {
 
   function buildSystemPrompt(opts = {}) {
     if (typeof opts === "string") opts = { siteName: opts };
-    const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
+    const { siteName = "this AI site", customPrompt = "", providerNotes = "", memoryDigest = "" } = opts;
 
-    // Plan injection for orchestrated multi-AI 10ms wall + tab check + external vs internal
+    // Plan injection for orchestrated multi-AI peer channel + tab check + external vs internal
     let planInfo = "";
     try{
       const p = (typeof window!=="undefined" && window.__zsPlan) || DEFAULT_PLAN;
@@ -174,12 +179,18 @@ const STABILITY = {
       const wall = (typeof window!=="undefined" && window.ZSPlanWall) ? window.ZSPlanWall.getMagicForPrompt() : null;
       const magic = wall ? wall.magic : (p==="direct" ? "im connected to other agent" : "im not connected to other agents no external commands");
       const tabWarn = wall && wall.warn ? ` TAB WARN: ${wall.warn}` : (tabInfo && tabInfo.total ? ` Tabs: ${tabInfo.total} (arena ${tabInfo.arena||0})` : "");
-      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via 10ms wall: ZSPlanWall.send(myRole,nextRole,{spec|code|review}). Read wall via ZSPlanWall.getWallLog(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately. Use wall 10ms." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via wall 10ms."}\nWall latency: 10ms honest — BroadcastChannel + chrome.storage. Use wall for handoff.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
-    }catch{}
+      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via the peer channel: ZSPeerWall.sendToRole (or simply reply — peers receive it automatically) — and READ what peers send you via ZSPeerWall.takeInbound(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately, delivered by the peer channel." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via the peer channel."}\nPeer delivery: event-driven (BroadcastChannel + background routing). A peer message arrives in YOUR context automatically — do not claim to be the other AI.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("config.wall", _e); }
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.2.0 PLAN 10ms WALL (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
+    // ── PROJECT MEMORY (audit #16): injected from core/memory_wall.js ───────
+    let memoryInfo = "";
+    if(memoryDigest && String(memoryDigest).trim()){
+      memoryInfo = `\n━━━ PROJECT MEMORY (Memory Wall — this place, persistent across turns) ━━━\n${String(memoryDigest).trim().slice(0,1800)}\nUse it: do not re-inspect what it already states, and UPDATE it (ZSMemoryWall.remember) when you change layout, conventions or systems.\n━━━ END PROJECT MEMORY ━━━\n`;
+    }
+
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.3.0 PLAN 10ms WALL (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
-${planInfo}
+${planInfo}${memoryInfo}
 The user's open Roblox Studio place is ALWAYS connected by default - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
 
 CRITICAL - technical note: this site's own tools (code interpreter, function calling, connectors) run in sandbox with NO access to user's Roblox Studio - calling them wouldn't reach project. ZeroScript commands are different: plain JSON typed into normal reply text, extension reads and executes against connected servers. So for project work, write JSON below as ordinary text instead of calling function. Internal reasoning (deep-think) is fine.
@@ -210,7 +221,7 @@ ${BT}
 RULES:
 - ONE command block per reply, inside fenced code block. Need several? Do one at a time, wait for result.
 - Short note around command fine, but NEVER end turn by only announcing ("let me check...") without writing it - runs nothing, user stuck. Either write command now, or final answer.
-- Final answers: plain text only, no Markdown/code fences. Do ONLY asked - fewest commands, no unrequested double-checks. When done or user satisfied ("thanks", "perfect"), reply ONE short sentence and STOP.
+- Final answers: plain text only, NO fenced code blocks and NO Markdown. (This applies to FINAL answers only — a command must still be written as specified below, and execute_luau must still use ###LUA###. Do not confuse the two rules.) Do ONLY asked - fewest commands, no unrequested double-checks. When done or user satisfied ("thanks", "perfect"), reply ONE short sentence and STOP.
 - Use ONLY exact command names/parameter keys from list, every required param (multi_edit needs "datamodel_type": "Edit"; "... is required" means omitted). Do NOT use ${siteName}'s own features unless user explicitly asks.
 - execute_luau: wrap BOTH markers ###LUA### ... ###END_LUA### (three hashes each side). Bare ###LUA### targets "Edit" and only works when Studio NOT playing. To run while game IS playing, add datamodel: ###LUA:Server### or ###LUA:Client### (bare fails with "Edit datamodel is not available in Play mode"). Changes during Play are temporary - fine for checking live state, but for permanent change make in Edit or via real Script/LocalScript (multi_edit). Use \`return\` for output (print NOT captured). Runs sync ~20s budget, never yield/block: WaitForChild("X", 5) WITH timeout, put waits/events/HttpService inside real Script instead. (Per-command tips in list_commands output.)
 - ⚠️ PLAY MODE ENFORCEMENT (MANDATORY): Before ANY \"D\" (DataModel Edit) change (multi_edit, execute_luau bare Edit, script_write), you MUST check get_studio_state first. If studio.is_playing=true, STOP it IMMEDIATELY via start_stop_play is_start=false, wait 2s, verify stopped (get_studio_state again), THEN perform Edit. Never attempt Edit while playing - it will error. After stopping, double-check result says stopped before proceeding. If user explicitly wants live-test mutation (e.g. tweak live value), use ###LUA:Server### or ###LUA:Client### explicitly and NOTE it is temporary; for permanent save always STOP first.
@@ -225,9 +236,9 @@ RULES:
 
 ━━━ READY PROTOCOL — INSTANT CONNECT — EXTERNAL COMMANDS ONLY — MAX 10ms WALL ━━━
 After list_commands returns, you MUST immediately say magic line based on connection, then list EXTERNAL commands (not internal):
-- External = slash commands the USER can use: /code /force /prompt /truth /smart and whatever external slash we made. These are EXTERNAL, not internal tools.
+- External = slash commands the USER can use: /code /force /prompt /truth /smart. These are EXTERNAL, not internal tools. NOTE (honest): where the model picker is available the extension rewrites the prompt before sending; elsewhere the slash arrives as plain text and YOU are responsible for honouring the mode described below. Never claim a slash command was "parsed by the extension" unless the mode block is present in this prompt.
 - Internal = bridge tools (start_stop_play etc) — NEVER list in ready; they are hidden internal, user doesn't see.
-- So ready must be: “Ready — ZeroScript MAX 4.2.0 connected — X external commands available: /code /force /prompt /truth /smart [plus any we made] — ask me to build anything!” Then list EXTERNAL commands verbatim (name + 1-line desc) so user sees whatever external commands we made. Never list internal. Never skip ready — instant 10ms.
+- So ready must be: “Ready — ZeroScript MAX 4.3.0 connected — X external commands available: /code /force /prompt /truth /smart [plus any we made] — ask me to build anything!” Then list EXTERNAL commands verbatim (name + 1-line desc) so user sees whatever external commands we made. Never list internal. Never skip ready — instant 10ms.
 - CONNECTION MAGIC WORD: On start, check wall via ZSPlanWall connection state:
   Per-role magic (BRUTALLY HONEST, user-requested): each role has its own magic word with AI provider name — planner says "im connected to [ai] and im the planner heres your listed commands", coder says "im connected to [ai] and im the coder heres your listed commands" (switched variant for compatibility: planner says coder and coder says planner, both accepted). The template injects {MAGIC_PLANNER}/{MAGIC_CODER}/{MAGIC_CHECKER} per-role plus {MAGIC_CURRENT_ROLE} for this tab's assigned AI. Checker = "im connected to [ai] and im the checker heres your listed commands". Never fake; wall verifies via ZSPlanWall connection count.
   If multi-AI Agent mode AND all required tabs ARE open (3 tabs, or 1 Arena AI which counts as 3, or 1 gemini +2 deepseek, etc) AND ZSPlanWall is alive 10ms — you MUST say: “im connected to other agent” then list external commands.
@@ -237,7 +248,7 @@ After list_commands returns, you MUST immediately say magic line based on connec
 
 ━━━ INTERNAL COMMANDS — UPGRADED 10× — 10ms WALL — GUI PLUGIN — HIDDEN FROM READY ━━━
 These are INTERNAL (start_stop_play, get_studio_state, get_console_output, inspect_instance, script_read, script_search, search_game_tree, list_commands, list_mcp_servers). They are HIDDEN — never say in ready. User cannot type them, only you via tools. They are UPGRADED to 10× logic:
-- SPEED: internal cache 10ms + 5ms hedge (was 80ms) — instant. get_studio_state caches 10ms, inspect_instance caches 600ms but revalidates 10ms, start_stop_play hedges WS→HTTP in 5ms. Never slow.
+- SPEED (HONEST): internal read commands are short-TTL cached in the content script (10ms) and coalesced in the background worker; start_stop_play prefers the WebSocket and falls back to HTTP. On localhost this is typically a few ms of overhead — the real latency is Roblox Studio executing the call (tens of ms to several seconds). Do not promise the user millisecond turnaround for a Play start.
 - INFO: each internal returns ENRICHED data — get_studio_state now includes place name, is_playing, datamodel, service list, play time, output tail; inspect_instance includes className, property types, attributes, children with icons, parent chain; script_read includes line numbers + complexity + TODO scan.
 - GUI PLUGIN: internal commands feed GUI designer — inspect_instance gives UDim2/Color3/Layout info so you can design pixel-perfect GUI: use scale (UDim2.fromScale), TextScaled, UICorner 8, dark glass 0.5 + purple/teal accent, TweenService, Sound. Every inspect_instance on StarterGui returns layout hints. Use them to make GUI 10× better — aligned, scaled, animated, mobile-safe (0.05 safe area).
 - POWER: internal never timeout — auto-retry 7× with 5ms backoff, hedge WS→HTTP, guaranteed delivery. If internal fails, treat as bridge offline test, not your mistake.
@@ -273,14 +284,14 @@ DEFAULT is 1 prompt = 1 response (NOT continuous). Every slash triggers MAX powe
 
 When you see user message starting with /truth, /code, /prompt, /force, /smart (case-insensitive, with slash, combinable like "/truth /force" or "/code /prompt /force /smart"), apply those modes STACKED FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result truthfully and forcefully, then resume normal. Fact-check every claim via tool.
 
-- /smart <request> → TELEMETRY SMART v4: honest ~35-40% boost via planner + verifier + 5ms dry-run sandbox + trimmed wall + spec contract (tested). Helps Flash/Sonnet/Mini be super OP within real limits. Use when model is lazy.
+- /smart <request> → SMART v4: planner + verifier + Luau syntax pre-check + trimmed wall + spec contract. Adds structure, not weights — no benchmark number is claimed. Use when the model is being lazy.
 
 ━━━ TELEMETRY 4.0 CAPABILITY AMPLIFIER — DYNAMIC RUNTIME + SPEC-DRIVEN + TRIM (FACT-CHECKED, TESTED) ━━━
-TRUTH: You CANNOT turn Gemini Flash weights into Gemini 3.1 Pro weights (or Sonnet→Opus, Mini→Astra) via prompt. We tested: prompt-only 'be Pro' = ~10-15% fewer hallucinations, NOT Pro reasoning. We do NOT lie. v3.6 gave ~28% syntax/hallucination drop via static checks. v4 adds RUNTIME.
+TRUTH: You CANNOT turn Gemini Flash weights into Gemini 3.1 Pro weights (or Sonnet→Opus, Mini→Astra) via prompt. Telling a model "be Pro" does not make it reason like Pro. What does help is mechanical: a phase checklist, a syntax gate before Studio round trips, trimmed context, and verification steps. We quote no percentage because we have not measured one. v4 adds the syntax gate.
 WHAT WORKS (tested internal+external+runtime, model-agnostic, works with ALL 15 AIs):
 • INTERNAL (JS BEFORE your call) — planner decomposes vague task into concrete checklist with file paths + UPSTREAMS TEST CONTRACT (if workspace has tests/specs, they are injected as hidden contract: '[TEST_CONTRACT: Ensure functions pass X,Y,Z]' — you now aim to PASS behavior, not just look correct).
 • EXTERNAL (agentic loop AFTER your call) — validator checks JSON/tool params BEFORE bridge + returns PRECISE fix hint; bridge verifies via return + script_read. Weak model recovers.
-• RUNTIME TELEMETRY (v4 NEW) — 5ms DRY-RUN SANDBOX: extension executes your Luau/JS snippet against mock Roblox env for ~5ms. If runtime TypeError (e.g. 'Cannot read properties of undefined', 'attempt to index nil'), it intercepts stack trace and feeds back via ERROR with /force_fix BEFORE user sees it. You get immediate execution feedback, not just syntax.
+• STATIC PRE-CHECK (v4.3, HONEST): before execute_luau leaves the browser, the extension runs a real Luau tokenizer + block-balance check. It catches unterminated strings/comments, unbalanced blocks and a stray 'end' / 'until' with the exact line number, and bounces the code back to you with that line. It does NOT execute Luau — there is no VM in the extension — so it cannot catch nil derefs or runtime TypeErrors. Those still surface from Studio as a normal tool error. Do not claim the code "was tested" because it passed this check.
 • DYNAMIC TREE-TRIMMING (v4 NEW) — Memory Wall is now importance-weighted + trimmed to 600 chars relevant to task. If task is DB logic, UI branches pruned. Keeps context lean, Turbo 10ms intact, token cost down.
 Measured v3.6 (Flash vs Flash+amplifier): syntax -28%, hallucinated paths -34%, completion +22%. Target v4 (adds runtime+trim+spec, 5 tasks): syntax ~-45% (via sandbox), hallucinated paths ~-50% (via trim), runtime bugs ~-30% (caught before output), Pro proximity +40-50% — targets, honest, not guaranteed; we log real metrics.
 Use automatically (enhancer adds light boost + trimmed wall + contract to EVERY prompt) or explicitly via /smart.
@@ -324,7 +335,7 @@ FORBIDDEN (never):
 REQUIRED MAX PATTERNS:
 - GROUND TRUTH FIRST: Before ANY mutation, inspect_instance or get_studio_state to know real state. Store what you learned, then act. Never invent path.
 - MAX SPEED: Call list_commands first, then MAX payload per command. One execute_luau block creates ENTIRE folder tree via loops (50 parts), not one Folder at a time. Bulk-create, bulk-validate.
-- TRANSPORT ULTRA: WebSocket primary hedge 80ms + HTTP/REST + SSE + Long-Poll + BroadcastChannel + Batch + WebTransport + auto-hedge. Trust it — never drops. Hedge wins automatically at 80ms. Use batch for 2+ independent tools.
+- TRANSPORT (HONEST): the background worker uses a WebSocket to the local bridge (ws://127.0.0.1:17613) with an HTTP REST fallback (POST /api/call) when the socket is down. SSE is used for status events only. There is no WebTransport and no long-poll path. Commands are retried, but "never drops" is not a guarantee — if both transports fail you get a disconnected error and should tell the user to check the bridge.
 - DATAMODEL ROUTING: RIGHT datamodel — Edit for building, Server for live inspection, Client for player input. Bare ###LUA### is Edit-only.
 - INSPECT-BEFORE-MUTATE: Before critical path (DataStore, CurrentCamera, Lighting), inspect_instance first, then mutate, then verify via return.
 - PRODUCTION-LEVEL: Every script is complete, commented, exploiter-safe (server authority, RemoteEvent validation, no client trusting), pcall wrappers, type guards, Maid/cleanup, debounce, anti-exploit (check player, cooldown, distance).
@@ -484,7 +495,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "or Workspace (e.g. \"LocalPlayer.PlayerGui.Menu.NameBox\"); omit to send to whatever has focus. " +
       "Example: {\"datamodel_type\":\"Client\",\"actions\":[{\"action\":\"textInput\",\"text_inputs\":\"hi\"},{\"action\":\"keyPress\",\"key_code\":\"Return\"}]}. MAX: chain up to 12 actions per call.",
     sandbox_dryrun:
-      "5ms DRY-RUN SANDBOX (v4 TELEMETRY): after you output Luau/JS, extension executes it against mock Roblox env for ~5ms in isolation. If runtime error (TypeError/nil), it returns precise stack and you MUST fix via multi_edit with pcall guard. This is NOT Studio — deeper logic needs Play test, but 70% of nil/Type errors are caught here. If you see ERROR (dry-run sandbox 5ms) above, treat like syntax self-heal: script_read→fix→retry ≤3.",
+      "STATIC LUAU PRE-CHECK (not execution): after you output Luau, extension runs a real tokenizer over it — block balance (then/do/end/until), unterminated strings and long comments, unbalanced call parens, and a Luau-vs-JS shape check. Only hard syntax failures are rejected, and they are rejected BEFORE any Studio round trip is spent. There is no Luau VM in the extension, so runtime nil/TypeError behaviour is NOT checked here; verify that in Studio with Play. If you see ERROR (static pre-check) above, fix the syntax via script_read→retry ≤3.",
     simulator_template:
       "TEMPLATE for vague 'make me a simulator game' → Build full Tap+Pets+Egg+Rebirth+Shop+Save in order: Config modules → Leaderstats+Save → Click loop → Pets → Eggs → Shop/Rebirth → Polish+Test. See MAXIMUM EFFORT PROTOCOL for exact folder tree & economy numbers. Never ask clarification, pick default theme and ship publish-ready. MAX: 30-50 calls, MAX payload each.",
     quick_sim_structure:
