@@ -195,6 +195,15 @@
     }
   } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.send", _e); }
 
+  // The API exposed close() but no caller used it, so the channel outlived the
+  // document. Release it here, where the channel is owned.
+  try {
+    window.addEventListener("pagehide", () => {
+      try { if (_bc) { _bc.onmessage = null; _bc.close?.(); } } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.pagehide", _e); }
+      _bc = null;
+    }, { once: true });
+  } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.hook", _e); }
+
   function emit(env) {
     // (a) direct
     try { if (_bc) _bc.postMessage(env); } catch (_e) { reportStatus("peer.bc.post", {}, _e); }

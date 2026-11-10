@@ -11,6 +11,16 @@
 
   let _bc = null;
   try { _bc = new BroadcastChannel(BC_NAME); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub", _e); }
+  // A BroadcastChannel holds a real port open. Nothing closed it, so on every
+  // navigation that keeps the document alive the old channel stayed registered
+  // on the origin. Close it with the page and null the handle so a later post
+  // cannot hit a closed channel.
+  try {
+    window.addEventListener("pagehide", () => {
+      try { if (_bc) _bc.close(); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.bcClose", _e); }
+      _bc = null;
+    }, { once: true });
+  } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.bcHook", _e); }
   const _cache = new Map();
   const _pending = new Map();
   let _listeners = [];

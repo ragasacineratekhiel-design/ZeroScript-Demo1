@@ -260,6 +260,30 @@ for (const { file, src } of allFiles) {
   }
 }
 
+// ── 4g2. BroadcastChannel with no release path ────────────────────────────
+// A BroadcastChannel holds a live port on the origin. If nothing closes it and
+// nothing hooks pagehide, it survives every navigation that keeps the document
+// alive. All three walls (agent_hub, plan_wall, peer_wall) had this: peer_wall
+// even exposed a close() that no caller ever used.
+for (const { file, src } of allFiles) {
+  if (!/new\s+BroadcastChannel\s*\(/.test(src)) continue;
+  // A service worker has no pagehide: it is torn down by the browser whenever it
+  // goes idle, which closes the channel for it. Demanding an unload hook there
+  // would be the wrong advice.
+  const isServiceWorker = /["']service_worker["']\s*:/.test(
+    (() => { try { return fs.readFileSync(path.join(EXT, "manifest.json"), "utf8"); } catch { return ""; } })()
+  ) && /chrome\.runtime\.onInstalled|chrome\.alarms/.test(src);
+  if (isServiceWorker) continue;
+  const hasHook = /(pagehide|beforeunload)/.test(src);
+  const closes = /\.close\s*\?\.?\s*\(/.test(src) || /\.close\s*\(/.test(src);
+  if (!hasHook) {
+    add("channel-leak", "P2", file, 0,
+      `opens a BroadcastChannel (${closes ? "a close() exists but no pagehide hook calls it" : "no close() at all"}) — ` +
+      "the port outlives the document",
+      "hook pagehide → channel.close()");
+  }
+}
+
 // ── 4h. innerHTML fed by a NON-LITERAL value ──────────────────────────────
 // Rules that keep this honest rather than noisy:
 //   * a template literal whose first chunk starts with "<" is our own markup;

@@ -320,7 +320,19 @@
 
   // Extended API with per-role magic (brutally honest upgrade)
   const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
+    // peer_wall.js exposed a close() and nothing ever called it; plan_wall.js
+    // exposed nothing at all, so its BroadcastChannel was held open for the life
+    // of the document with no way to release it. One unload hook, owned here,
+    // releases it — the page does not have to know which wall to close.
+    close: () => {
+      try { if (_bc) { _bc.onmessage = null; _bc.close(); } } catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.close", _e); }
+      _bc = null;
+    },
     sendWallTask, wallMode: () => (_bc ? "broadcast-channel+storage-events" : "storage-events"), SAFETY_POLL_MS: 5000 };
+
+  try {
+    window.addEventListener("pagehide", () => { try { API.close(); } catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.pagehide", _e); } }, { once: true });
+  } catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.hook", _e); }
 
   // ── hub bridge — a wall message is mirrored into agent-temp storage ──
   // When a wall message is sent, also write to ZSAgentHub for bridge temp storage (planner usually sender).
