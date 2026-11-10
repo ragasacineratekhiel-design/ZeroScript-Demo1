@@ -1011,9 +1011,19 @@
       }
     });
     _bgInflight.set(k,p);
-    // auto-evict coalesce after 120ms (so distinct quick calls don't wrongly share)
-    setTimeout(()=> _bgInflight.delete(k), 5); // MAX 5ms — perfected
-    // cache eviction for status already via TTL above
+    // Evict when the call SETTLES, not on a timer.
+    //
+    // This was `setTimeout(() => delete(k), 5)` under a comment saying 120ms. Both
+    // numbers are arbitrary guesses at "how long is a call", and both are wrong in
+    // one direction or the other: a status poll made 800ms apart never overlaps
+    // anything (so the map did nothing at all), while a genuinely slow call_tool
+    // was evicted after 5ms and the second identical call was issued a second time
+    // against the bridge. Settling is exact — an entry exists precisely while its
+    // call is in flight, which is the only window in which sharing it is correct.
+    p.then(
+      () => { if (_bgInflight.get(k) === p) _bgInflight.delete(k); },
+      () => { if (_bgInflight.get(k) === p) _bgInflight.delete(k); }
+    );
     return p;
   }
   // ── TRANSPORT TELEMETRY (honest, audit #17) ───────────────────────────────
@@ -1896,6 +1906,20 @@
   // remembered here, keyed independently of the DOM node (conversation +
   // position among assistant turns + a text prefix), and the sweep re-stamps
   // the marker whenever the node was swapped.
+  // Bounded memory. Both maps below are keyed per assistant turn and only ever
+  // gain entries, so a long agent session (or a chat left open for hours) grew
+  // them without limit. Oldest-first eviction is safe here: an evicted entry
+  // means "we forgot this turn was halted/executed", which degrades to the
+  // pre-existing behaviour of relying on the dataset marker on the node.
+  const MEMORY_MAX = 400;
+  const boundedSet = (m, k, v) => {
+    m.set(k, v);
+    if (m.size > MEMORY_MAX) {
+      const over = m.size - MEMORY_MAX;
+      let n = 0;
+      for (const key of m.keys()) { m.delete(key); if (++n >= over) break; }
+    }
+  };
   const halted = new Map(); // "conv|turnKey" → text prefix at halt time
   const assistantIdx = (item) => P.allItems().filter(P.isAssistantItem).indexOf(item);
   // Virtualization-stable map key for the off-DOM executed/halted memories.
@@ -1921,7 +1945,7 @@
       // index (seen live: a fresh streaming command went red "stopped" on the
       // spot). Too little text to identify → rely on the dataset marker only.
       if (pref.trim().length < 12) return;
-      halted.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
+      boundedSet(halted, `${P.conversationKey()}|${turnKey(item)}`, pref);
     } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function forgetHalted(item) {
@@ -1965,7 +1989,7 @@
       // command still streaming) would startsWith-match any later turn at this
       // index. Fall back to the dataset marker until there is enough text.
       if (pref.trim().length < 12) return;
-      executed.set(`${P.conversationKey()}|${turnKey(item)}`, pref);
+      boundedSet(executed, `${P.conversationKey()}|${turnKey(item)}`, pref);
     } catch (_e) { globalThis.ZSSafe?.seen?.("main.pref", _e); }
   }
   function isRememberedExecuted(item, txt) {

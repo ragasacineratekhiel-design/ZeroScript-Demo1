@@ -48,7 +48,19 @@ let bc=null, isLeader=false, leaderId=Math.random().toString(36).slice(2);
 let extId = (typeof chrome !=='undefined' && chrome.runtime && chrome.runtime.id) ? chrome.runtime.id : leaderId;
 // ── Agent Hub temp storage — extension-in-extension ultra communicator 5ms ──
 const agentTemp = new Map(); // key -> {value, from, t, ttl, exp}
-setInterval(()=>{ const now=Date.now(); for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k); }, 1000); // MAX 1s — ABSOLUTE
+const AGENT_TEMP_MAX=500; // keys, not bytes: each entry is small and short-lived
+setInterval(()=>{
+  const now=Date.now();
+  for(const [k,v] of agentTemp.entries()) if(v.exp && now>v.exp) agentTemp.delete(k);
+  // TTL alone is not a bound: a writer that keeps refreshing keys, or an entry
+  // that somehow has no exp, could still grow the map without limit. Oldest-first
+  // eviction on top of the TTL sweep, same policy as the walls' logs.
+  if(agentTemp.size>AGENT_TEMP_MAX){
+    const over=agentTemp.size-AGENT_TEMP_MAX;
+    let n=0;
+    for(const k of agentTemp.keys()){ agentTemp.delete(k); if(++n>=over) break; }
+  }
+}, 1000); // MAX 1s — ABSOLUTE
 
 // Load the safe-error core first: every `catch` in this worker (and there are
 // 26 of them) reports through it. importScripts is service-worker-only.
@@ -418,8 +430,15 @@ function handleBridgeMessage(msg){
   if(msg.type==="metrics"){ resolvePending(msg.id,msg); return; }
   if(msg.type==="error"){ resolvePending(msg.id,{ok:false, error:msg.error}); return; }
 }
-function resolvePending(id,value){ const p=pending.get(id); if(!p) return; clearTimeout(p.timer); pending.delete(id); p.resolve(value); // also clear coalesce entry if any
-  for(const [k,entry] of inflightCoalesce.entries()){ if(entry.id===id) inflightCoalesce.delete(k); }
+function resolvePending(id,value){
+  const p=pending.get(id); if(!p) return;
+  clearTimeout(p.timer); pending.delete(id); p.resolve(value);
+  // (a loop here tried to "also clear coalesce entry if any" by matching
+  // entry.id === id. It never removed anything: coalesce values are promises,
+  // which have no `.id`, and the one place that stored an object stored
+  // `{id:-1}` which never matches a real pending id either. Coalesce entries are
+  // cleared by their own owner in a `finally`, so the loop is gone rather than
+  // left as decoration.)
 }
 function failAllPending(reason){ for(const [,p] of pending){ clearTimeout(p.timer); p.resolve({ok:false, kind:'disconnected', error:reason}); } pending.clear(); inflightCoalesce.clear(); }
 
@@ -692,7 +711,31 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       }
       case "agent_temp_read": {
         try{ const k=String(msg.key||""); let v=agentTemp.get(k); if(v && v.exp && Date.now()>v.exp){ agentTemp.delete(k); v=null; } if(v) sendResponse({ok:true, payload:v}); else { // try HTTP fallback
-        try{ const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"}); if(rr.ok){ const jj=await rr.json(); if(jj && jj.value!==undefined) { agentTemp.set(k,jj); sendResponse({ok:true, payload:jj}); break; } } }catch (_e) { globalThis.ZSSafe?.seen?.("background.cur", _e); }
+        try{
+          const rr=await fetch(`${HTTP_BASE}/api/agent_temp?key=${encodeURIComponent(k)}`,{headers:{...(bridgeToken?{"X-ZS-Token":bridgeToken}:{})}, cache:"no-store"});
+          if(rr.ok){
+            const jj=await rr.json();
+            if(jj && jj.value!==undefined){
+              // Normalise into the SAME shape agent_temp_write stores. The real
+              // defect here was the missing `exp`: the raw bridge JSON {{key,
+              // value, from, ttl}} was cached as-is, the 1s sweeper skips entries
+              // without `exp`, so every distinct key read over HTTP stayed in
+              // memory for the life of the service worker.
+              //
+              // Note for the record: the SHAPE happened to work — the consumer
+              // (agent_hub.js) reads payload.value, and the raw object carried
+              // .value, so it resolved correctly. I first wrote that a reader got
+              // `payload.value.value`; that was wrong, and the test above proves
+              // it. This normalisation is for consistency with the write path and
+              // to give the entry a TTL, not to fix a wrong value.
+              const ttl=jj.ttl||120000;
+              const entry={value:jj.value, from:jj.from||"bridge", t:jj.t||Date.now(), ttl, exp:Date.now()+ttl};
+              agentTemp.set(k,entry);
+              sendResponse({ok:true, payload:entry});
+              break;
+            }
+          }
+        }catch (_e) { globalThis.ZSSafe?.seen?.("background.agentTempReadHttp", _e); }
         sendResponse({ok:false, error:"not found"}); } }catch(e){ sendResponse({ok:false, error:String(e)}); }
         break;
       }
