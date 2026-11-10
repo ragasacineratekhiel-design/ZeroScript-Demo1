@@ -511,4 +511,53 @@ gate you cannot trust.
 |---|---|
 | `test-observers.js` (new) | 13 — fails 6 against the pre-fix provider |
 | `test-bridge.py` (new) | 9 — fails 2 against the pre-fix `stop()` |
-| all suites | **10 files, 247 assertions** (37+8+36+18+20+35+60+11+13+9) |
+| all suites | **11 files, 263 assertions** — `test-composer.js` (12) and the bridge suite's
+| | extra launcher cases (4) were added after that line was first written |
+
+### The composer cover — deleted, not fixed
+
+**Reported by the user as:** "Agent working … makes me not able to type even if the
+AI is done."
+
+**What it actually was.** Two mechanisms, both on the composer:
+
+1. `ui.inputCover(true)` painted a fixed-position `#zs-input-cover` panel reading
+   "Agent is working…" over the chat box, sized every animation frame to the
+   editor's rectangle, with `pointer-events: auto` so clicks could not reach the
+   input.
+2. `P.setInputLock(true)` plus a `.zs-typing` class made the typed text
+   `color: transparent`.
+
+**Why it stuck.** The cover was raised in `submitAndGetBase`, in the agent loop
+and in `startSession`, and lifted in their `finally` blocks. Several exits never
+reach a `finally`: a new chat opened mid-bootstrap bumps `startGen`, which makes
+every later `alive()` checkpoint fail — including the one guarding the cleanup.
+The codebase already carried a comment about fixing exactly that, from a previous
+occurrence ("the cover was stuck forever … validated live 2026-07"). A failure
+mode that has needed a special case once will need it again.
+
+**Decision.** The user asked for it gone rather than patched, and they are right:
+this is not a bug in the cover, it is the cover. Removed at the source.
+
+| | Before | After |
+|---|---|---|
+| `inputCover` | 9,188 chars of placement, clipping and colour-blending | 1,573 chars: inert, and removes any stale panel |
+| `opaqueBg`, `parseColor`, `blendOver` | backdrop colour for the panel | deleted (0 remaining callers; `blendOver` looked used and was not) |
+| `setInputLock(true)` | 2 sites (loop, bootstrap) | 0 sites |
+| `.zs-typing` | transparent text + 140px height cap | never applied; stale class stripped |
+| while the agent works | panel over the composer, text invisible | text visible, composer fully usable |
+
+**The half that is easy to miss.** With the composer unlocked, the agent's next
+send would overwrite whatever the user was typing. `submitAndGetBase` now compares
+the box contents with the text it is about to send, waits up to 20 s for the user
+to send or clear a draft, and refuses to type over it — with a banner explaining
+the pause. *My first comment claimed this guard already existed. It did not.* The
+audit's own dead-code check is what caught that `blendOver` had no callers after
+my edit; the same scepticism is what made me check the guard instead of trusting
+the comment.
+
+`test-composer.js` (12 assertions) asserts the removal from outside: no lock is
+ever engaged, no cover is created, no mask is added, a stale build's panel is
+forced hidden by the stylesheet, and a draft is protected. **11 of the 12 fail
+against the previous code**, so the suite measures the change rather than
+describing it.
