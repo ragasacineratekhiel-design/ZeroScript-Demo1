@@ -141,8 +141,22 @@ check("ChatGPT's inbound mailbox stayed empty (it did not talk to itself)", P.ta
 check("the two realms resolve to different roles", P.resolveRoles("chatgpt", GOOD, ["planner","coder","checker"]).role !== CLAUDE.resolveRoles("claude", GOOD, ["planner","coder","checker"]).role);
 
 // ── 7. delivery honesty ──────────────────────────────────────────────────
+// NOTE: `Array.isArray(dl)` was the whole assertion here for two versions, which
+// passes even if undelivered() is hard-coded to return []. Pin both directions
+// with a send that is deliberately never acknowledged.
+const before = P.undelivered(0).length;
+const lonely = P.send("msg", "deepseek", { text: "this peer tab is closed" });
+check("a send with no live receiver is pending", lonely.ok === true, JSON.stringify(lonely));
 const dl = P.undelivered(0);
-check("unacknowledged sends are visible as undelivered", Array.isArray(dl));
+check("unacknowledged sends are visible as undelivered", Array.isArray(dl) && dl.length > before,
+  `before=${before} after=${dl.length}`);
+check("the undelivered entry names the peer that never answered",
+  dl.some((d) => d.id === lonely.id && d.toProvider === "deepseek"),
+  JSON.stringify(dl.map((d) => [d.id, d.toProvider])));
+// and the honest inverse: once acked, it is no longer reported as lost.
+if (typeof P.ack === "function") P.ack(lonely.id, "test");
+check("an acknowledged send stops being reported as undelivered",
+  !P.undelivered(0).some((d) => d.id === lonely.id));
 check("stats reports the transport actually in use", /broadcast|runtime/.test(P.stats().transport), P.stats().transport);
 check("stats reports the effective self identity", typeof P.stats().self === "string");
 check("stats is bounded metadata only", Object.keys(P.stats()).length < 12);
@@ -160,6 +174,18 @@ for (const [needle, id] of [["deepseek.com", "deepseek"], ["chatgpt.com", "chatg
 check("background.js provider table matches peer_wall.js", missingInBg.length === 0, missingInBg.join(", "));
 check("background.js has the peer_route handler", bgSrc.includes('case "peer_route"'));
 check("main.js handles zs-peer-inbound", fs.readFileSync(path.join(__dirname, "core/main.js"), "utf8").includes("zs-peer-inbound"));
+
+// ── 9. the ack must come BACK, not just be logged ────────────────────────
+// Regression guard for a bug that made every DELIVERED message look lost:
+// peer_ack was received by background.js and only written to a log, so the
+// sender's pending map never cleared.
+const mainSrc = fs.readFileSync(path.join(__dirname, "core/main.js"), "utf8");
+check("main.js accepts the relayed ack", /zs-peer-ack/.test(mainSrc));
+check("main.js clears pending on ack", /PW\.ack\(m\.id\)/.test(mainSrc));
+check("background relays peer_ack to the sender tab", /zs-peer-ack/.test(bgSrc));
+check("background targets the sender by provider, not by broadcast", /told\+\+/.test(bgSrc) && /providerIdForHost/.test(bgSrc.slice(bgSrc.indexOf("peer_ack"), bgSrc.indexOf("peer_whoami"))));
+const apiAck = typeof P.ack === "function";
+check("ack is exported so the content script can call it", apiAck);
 
 P.close();
 CLAUDE.close();

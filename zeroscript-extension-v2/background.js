@@ -605,10 +605,23 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         break;
       }
       case "peer_ack": {
-        // A peer confirmed it received an envelope. Nothing to route; log it so
-        // "undelivered" statistics are trustworthy.
+        // A peer confirmed it received an envelope. This MUST be relayed back to
+        // the sender's tab or the sender's `pending` map never clears — every
+        // send that actually arrived would still age out as "undelivered", which
+        // is a false alarm pointing at the one thing that was working. The old
+        // version only wrote a log line and the ack stopped here.
         try { notePageFault("peer.ack", `${msg.fromProvider}→${msg.toProvider} ${msg.id}`, "info"); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
-        sendResponse({ok:true});
+        try {
+          const from = String(msg.fromProvider || "").toLowerCase();
+          const tabs = await chrome.tabs.query({url: PROVIDER_URLS});
+          let told = 0;
+          for (const t of tabs) {
+            if (providerIdForHost(t.url || "") !== from) continue;   // only the sender
+            try { await chrome.tabs.sendMessage(t.id, {type:"zs-peer-ack", id: msg.id}); told++; }
+            catch (_e) { globalThis.ZSSafe?.seen?.("background.peerAck", _e); }
+          }
+          sendResponse({ok:true, told});
+        } catch (e) { sendResponse({ok:false, error:String(e)}); }
         break;
       }
       case "peer_whoami": {

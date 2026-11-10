@@ -388,7 +388,28 @@
         const PW = window.ZSPeerWall;
         if (!PW || !PW.takeInbound) return "";
         const msgs = PW.takeInbound(5);
-        if (!msgs || !msgs.length) return "";
+        if (!msgs || !msgs.length) {
+          // Nothing inbound is the normal case (solo run) — but a message WE sent
+          // that nobody acknowledged is not: it means the other AI's tab is closed,
+          // on a different provider, or its listener is dead. `undelivered()` has
+          // existed for exactly this and nothing ever read it, so a failed
+          // cross-AI hand-off looked identical to a solo run. Say it once per
+          // batch, not per turn.
+          try {
+            const lost = PW.undelivered ? PW.undelivered(8000) : [];
+            if (lost.length && !A._peerWarnedAt) {
+              A._peerWarnedAt = Date.now();
+              const who = [...new Set(lost.map((l) => l.toProvider))].join(", ");
+              diag("peer.undelivered", { n: lost.length, to: who });
+              ui.banner("warn", "No reply from the other AI",
+                `${lost.length} message(s) sent to ${who || "a peer"} were never acknowledged. ` +
+                `Open that AI's tab (or check it is the same browser) — nothing was delivered.`);
+            }
+            if (!lost.length) A._peerWarnedAt = 0;   // re-arm once things flow again
+          } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerUndelivered", _e); }
+          return "";
+        }
+        A._peerWarnedAt = 0;
         diag("peer.context", { n: msgs.length, from: msgs.map((m) => m.fromProvider) });
         try { window.ZSAgentHub && window.ZSAgentHub.pushTemp &&
           window.ZSAgentHub.pushTemp({ type: "peer_context", n: msgs.length, from: msgs.map(m => m.fromProvider), ts: Date.now() }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.peerContext", _e); }
@@ -2359,6 +2380,17 @@
         // AI. Here we accept the envelope into ZSPeerWall's mailbox, and the
         // next prompt on this tab carries the peer's actual words (see
         // peerContext() below, called from submitAndGetBase).
+        // The background relayed a peer's receipt back to US (we were the
+        // sender). Clear the pending entry so this message is not counted as
+        // undelivered later. Without this handler the ack dead-ends again.
+        if(m.type==="zs-peer-ack"){
+          try{
+            const PW = window.ZSPeerWall;
+            if(PW && PW.ack) PW.ack(m.id);
+            if(sendResp) sendResp({ok:true});
+          }catch (_e) { globalThis.ZSSafe?.seen?.("main.peerAck", _e); }
+          return true;
+        }
         if(m.type==="zs-peer-inbound"){
           try{
             const env = m.envelope;

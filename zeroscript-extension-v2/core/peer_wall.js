@@ -176,7 +176,9 @@
     outbox.push(env);
     while (outbox.length > MAX_INBOX) outbox.shift();
     try { emit(env); } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.send", _e); }
-    return { ok: true, envelope: env };
+    // Flat `id` mirrors what undelivered()/ack() take, so a caller never has to
+    // know the id lives at .envelope.id.
+    return { ok: true, id: env.id, envelope: env };
   }
 
   // ── transport ───────────────────────────────────────────────────────────
@@ -303,9 +305,13 @@
   // ── delivery honesty ────────────────────────────────────────────────────
   // A peer that never acknowledges is reported instead of assumed fine.
   function undelivered(olderThanMs) {
-    const cutoff = Date.now() - (olderThanMs || 8000);
+    // `olderThanMs || 8000` made 0 mean 8000, so "show me everything unacked"
+    // was impossible to ask for — the test that passed 0 was testing nothing.
+    const cutoff = Date.now() - (olderThanMs == null ? 8000 : olderThanMs);
     const out = [];
-    for (const [id, p] of pending) if (!p.ackedAt && p.at < cutoff) out.push({ id, ...p });
+    // `<=` so olderThanMs=0 means "every unacked send", including one made in
+    // this very millisecond (`<` skipped it, which made the check flaky).
+    for (const [id, p] of pending) if (!p.ackedAt && p.at <= cutoff) out.push({ id, ...p });
     return out;
   }
 
@@ -360,6 +366,7 @@
     takeInbound,
     formatForPrompt,
     undelivered,
+    ack,
     stats,
     // test/shutdown helper: releases the channel so a process can exit
     close: () => { try { _bc?.close?.(); } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.sendToRole", _e); } _bc = null; },
