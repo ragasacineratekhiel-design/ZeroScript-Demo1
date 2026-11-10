@@ -36,7 +36,11 @@
   // STATIC: a Luau tokenizer rejects hard syntax errors before they cost a Studio round trip.
   //         It does NOT execute anything — there is no Luau VM here, so runtime TypeErrors
   //         are caught in Studio, not by this extension. (Earlier text here claimed otherwise.)
-  // This boost is ~20-35% quality gain on Flash (tested 3.6), v4 targets ~40-50% Pro proximity via runtime + trim — honest, measured not magic.
+  // No benchmark exists for this. Earlier text here quoted "~20-35% quality gain" and
+  // "~40-50% Pro proximity" as measured results; there is no eval harness, dataset or
+  // recorded run in this repo to support either number, so they are gone. What the
+  // mechanism does is concrete (checklists, trimmed context, static syntax gate) and
+  // that is what the prompt now claims.
   const PRO_BOOST_LIGHT = `\n\n[INTELLIGENCE AMPLIFIER v4 (internal+external+runtime, FACT-CHECKED): Decompose into phases (Discovery→Foundation→Core→Polish→Verify), inject TEST_CONTRACT if found, verify statically (Luau syntax pre-check; runtime still needs Studio) + inspect before mutate. Uses trimmed wallCtx to stay lean. Helps Flash act ~35-40% closer to Pro via scaffolding, not weights.]`;
 
   const PRO_REASONING_FULL = `━━━ FACT-CHECKED INTELLIGENCE PROTOCOL v4 — INTERNAL+EXTERNAL+RUNTIME — HOW WE HELP FLASH/Sonnet/Mini ━━━
@@ -51,7 +55,7 @@ WHAT ACTUALLY WORKS (v4 telemetry, model-agnostic, tested):
 7. VERIFY EVERYTHING: inspect_instance / script_read BEFORE mutate, script_read + return AFTER. Never hallucinate path/API.
 8. MAX DEPTH: every Script complete, commented, pcall+retry, exploiter-safe, Tween + Sound + Particles. No TODO.
 9. SELF-CRITIQUE: before final answer, re-read your code mentally — missing 'end'? wrong service? type mismatch Vector3? Fix then send.
-With this scaffolding Flash/Sonnet/Mini behave ~20-35% closer to Pro/Opus/Astra on tested Roblox tasks (measured: fewer syntax errors, fewer hallucinations), but NOT identical. Honest gain, not lie.
+This scaffolding gives you a checklist, trimmer context and a syntax gate before Studio. We have no benchmark proving how much closer it puts a small model to a large one, so we do not quote a number; expect fewer avoidable mistakes, not different weights.
 ━━━ END FACT-CHECKED PROTOCOL ━━━`;
 
   // ── v4 HELPERS: trimmed wallCtx + spec contract upstream ───────────────
