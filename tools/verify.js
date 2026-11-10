@@ -761,7 +761,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);

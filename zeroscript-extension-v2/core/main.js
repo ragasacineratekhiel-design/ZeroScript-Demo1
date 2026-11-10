@@ -452,6 +452,30 @@
           if (!(await waitVisible()) || A.stop) break; // park (no cap) until foreground; break only on user stop
         }
         await jitterBeforeSend();
+        // ── NEVER OVERWRITE THE USER'S DRAFT ────────────────────────────────
+        // The composer no longer has an input lock or a cover, so the user can be
+        // typing at this exact moment. typeAndSend() replaces whatever is in the
+        // box, which would silently destroy their message. If the box holds text
+        // that is not the text we are about to send, they are composing: wait for
+        // them to send or clear it, then continue. Our own retry text compares
+        // equal to `text`, so a retry of the same message is still allowed.
+        const ours = String(text || "").trim();
+        const draft = () => { try { return String(P.editorText() || "").trim(); } catch (_e) { return ""; } };
+        let held = draft();
+        if (held && held !== ours) {
+          diag("send.userTyping", { len: held.length });
+          await waitFor(() => { const d = draft(); return !d || d === ours; }, 20000);
+          held = draft();
+          if (held && held !== ours) {
+            // Still composing. Do not send, do not overwrite, and say why — a
+            // silent stall here is the thing the old cover was hiding.
+            diag("send.userDraftHeld");
+            ui.banner("warn", "Holding your draft",
+              "You have text in the message box, so ZeroScript paused instead of overwriting it. " +
+              "Send or clear it and the agent will continue.");
+            break;
+          }
+        }
         diag("submit.typeAndSend", { hasImages: !!(images && images.length) });
         // ── MEMORY WALL CONTEXT (HONEST FIX, audit #16) ──────────────────────
         // memory_wall.js was fully implemented but nothing in the agent loop ever
@@ -477,8 +501,8 @@
         // uploading the capture before the turn appears, past the 2.5s window - so
         // without this re-arm the raw "Output of…" + a still-loading (0-byte)
         // thumbnail flash for image feedbacks until a sweep chip lands. Safe: the
-        // input is covered and the loop owns this send, so no user turn can slip
-        // into the window, and the pre-hide is one-shot (consumes the first turn).
+        // loop owns this send (the draft guard above guarantees the box was ours),
+        // and the pre-hide is one-shot (consumes the first turn).
         A.injectHideUntil = Date.now() + 1500; // MAX
         // The site clears the textarea as soon as the send is accepted - faster
         // and more reliable than waiting for a DOM turn count change.
@@ -1490,8 +1514,8 @@
     // so the reminder does not bloat the context too often.
     const REMIND_TOOLS_EVERY = 20;
     ui.showStop(true);
-    P.setInputLock(true); // prevent user from typing while the agent is active
-    ui.inputCover(true);  // keep the "Agent is working" cover up for the WHOLE loop
+    P.setInputLock(false); // the user can always type: no input lock while the agent works
+    // (no composer cover: the user keeps full access to the chat box while the loop runs)
     diag("loop.start", { base, exec: execMode() });
     try {
       while (!A.stop) {
@@ -1513,7 +1537,7 @@
         // send step re-checks too, so a switch-away mid-generation is covered.
         if (document.hidden && !A.stop) {
           diag("loop.waitVisible");
-          ui.inputCover(true); // keep the "Agent is working" cover up while parked
+          // (cover removed; nothing to raise while parked)
           if (!(await waitVisible()) || A.stop) break; // park (no cap) until foreground; break only on user stop
           diag("loop.visibleAgain");
         }
@@ -1854,7 +1878,7 @@
       A.toolSettle = null;
       A.loopKey = null;
       ui.showStop(false);
-      ui.inputCover(false); // lift the "Agent is working" cover when the loop ends
+      ui.inputCover(false); // no-op now; kept so a stale cover from an older build is cleared
       P.setInputLock(false); // always unlock, even on error or stop
       diag("loop.end");
     }
@@ -2428,8 +2452,20 @@
         }, 2500);
       })();
     }catch (_e) { globalThis.ZSSafe?.seen?.("main.startWallPoll", _e); }
-    P.setInputLock(true); // block user input during bootstrap
-    ui.inputCover(true);  // cover the composer ("Working…") for the WHOLE Starting Up
+    // NO input lock and no composer cover during bootstrap.
+    //
+    // Both used to be raised here for the whole "Starting Up" sequence: locking the
+    // editor so the user could not interfere while the system prompt was submitted,
+    // and covering it so they could not see the prompt. The cost was that a
+    // bootstrap that never reached its `finally` (a tool call that never returns, a
+    // new chat opened mid-flight, an abandoned generation) left the chat box
+    // permanently untypeable while the AI had already finished.
+    //
+    // Removing them costs nothing here: this function writes the prompt on the
+    // user's behalf through the provider's own setter, and the send path already
+    // re-checks that the composer holds what it typed before clicking send. If the
+    // user starts typing during the ~1s bootstrap, that send is skipped rather than
+    // racing them - the same guard that covers a mid-generation tab switch.
     try {
       await ensureTools(true); // boot: always take a fresh catalogue (the TTL then
                                // covers the list_commands / list_mcp_servers calls
@@ -2500,8 +2536,8 @@
         A.starting = false;
         A.startingKey = null;
         ui.setStarting(false);
-        ui.inputCover(false); // lift the Starting Up composer cover
-        P.setInputLock(false); // always unlock after bootstrap
+        ui.inputCover(false); // no-op; clears any stale cover from an older build
+        P.setInputLock(false); // clears a lock if one was left by an older build
         decorate.sweep();
       }
     }
@@ -4391,207 +4427,34 @@
     // Masks the input box while the extension types/sends, so the copied text
     // and the submit aren't visible to the user.
     // Returns a FULLY OPAQUE colour that matches what is VISUALLY behind the cover.
-    // The cover must hide the typed text, so it can't be translucent - but simply
-    // returning the first solid ancestor is wrong when the composer surface itself
-    // is translucent: Meta's card is rgba(56,56,56,0.8) over a dark page, so its
-    // real on-screen colour is a BLEND (~rgb(50,50,50)), lighter than the bare page
-    // (rgb(24,24,25)). Filling the cover with the page colour made it visibly
-    // darker than the composer. So collect the background layers from `el` up to
-    // the first opaque ancestor and FLATTEN them (alpha compositing) into one solid
-    // colour that reproduces the composer's actual appearance.
-    function opaqueBg(el) {
-      const layers = [];
-      let n = el;
-      while (n && n !== document.documentElement) {
-        const c = parseColor(getComputedStyle(n).backgroundColor);
-        if (c && c.a > 0) {
-          layers.push(c);
-          if (c.a >= 0.999) break; // opaque base reached - nothing behind matters
-        }
-        n = n.parentElement;
-      }
-      // Guarantee an opaque base at the bottom of the stack.
-      if (!layers.length || layers[layers.length - 1].a < 0.999) {
-        const base = parseColor(getComputedStyle(document.body).backgroundColor) ||
-                     { r: 255, g: 255, b: 255, a: 1 };
-        layers.push({ r: base.r, g: base.g, b: base.b, a: 1 });
-      }
-      // We collected top-most (el) first, so composite from the opaque base (last)
-      // upward toward el (first).
-      let out = layers[layers.length - 1];
-      for (let i = layers.length - 2; i >= 0; i--) out = blendOver(layers[i], out);
-      return `rgb(${Math.round(out.r)}, ${Math.round(out.g)}, ${Math.round(out.b)})`;
-    }
-    // Parse an rgb()/rgba() computed colour into {r,g,b,a}. Returns null for
-    // "transparent"/unparseable. getComputedStyle always yields rgb/rgba form.
-    function parseColor(c) {
-      if (!c || c === "transparent") return null;
-      const m = c.match(/rgba?\(([^)]+)\)/i);
-      if (!m) return null;
-      const p = m[1].split(",").map((x) => parseFloat(x));
-      return { r: p[0], g: p[1], b: p[2], a: p.length >= 4 ? p[3] : 1 };
-    }
-    // Source-over compositing of a (possibly translucent) fg onto an opaque bg.
-    function blendOver(fg, bg) {
-      const a = fg.a;
-      return {
-        r: fg.r * a + bg.r * (1 - a),
-        g: fg.g * a + bg.g * (1 - a),
-        b: fg.b * a + bg.b * (1 - a),
-        a: 1,
-      };
-    }
 
-    function inputCover(on) {
-      const ed = P.getEditor();
-      if (!on) {
-        if (cover) { cover.style.display = "none"; cover.dataset.on = ""; }
+    // ── composer cover: REMOVED (user request) ──────────────────────────────
+    // This used to paint a full-bleed "Agent is working…" panel over the chat box
+    // and set `.zs-typing` on the editor, which made the typed text transparent.
+    // Between those two things the composer was unusable while the agent ran, and
+    // whenever the loop ended by a path that did not run its `finally` (a new chat
+    // opened mid-bootstrap, an abandoned loop, a throwing init) the panel stayed
+    // up after the AI was done — the user could not type at all.
+    //
+    // The user asked for it gone rather than patched, and the failure mode is
+    // exactly the kind that keeps coming back, so the mechanism is deleted rather
+    // than guarded: no panel, no typing mask, nothing to leave stuck.
+    //
+    // Kept as a no-op because ~10 call sites still call it. A no-op is honest; a
+    // half-removed cover is not. It also actively cleans up after an older
+    // version of this file that may still be in the page after an extension
+    // update-without-reload: any stale cover node or leftover mask class is
+    // removed on the first call.
+    function inputCover(_on) {
+      try {
+        if (cover) { cover.remove(); cover = null; }
+        const stale = document.getElementById("zs-input-cover");
+        if (stale) stale.remove();
+        const ed = P.getEditor();
         if (ed) ed.classList.remove("zs-typing");
         cancelAnimationFrame(coverRaf);
-        return;
-      }
-      if (!ed) return;
-      ed.classList.add("zs-typing"); // make the typed text itself invisible
-      if (!cover) {
-        cover = document.createElement("div");
-        cover.id = "zs-input-cover";
-        cover.innerHTML = `<span>Agent is working…</span>`;
-        document.documentElement.appendChild(cover);
-      }
-      cover.dataset.on = "1"; // intent flag: keep the place() loop alive while set
-      cover.style.display = "flex";
-      const place = () => {
-        // Loop runs while the cover is INTENDED on (dataset.on), not while it's
-        // visible - so we can hide it for an overlay and still restore it after.
-        if (!cover || cover.dataset.on !== "1") return;
-        const e = P.getEditor();
-        if (!e) { coverRaf = requestAnimationFrame(place); return; }
-        // Re-assert the typing mask on the CURRENT editor node: sites that
-        // recreate the editor on each inject/clear (Kimi's Vue) drop the class,
-        // which would un-hide the raw text and un-cap its height. Cheap idempotent
-        // add every frame keeps the mask + height cap glued to the live node.
-        if (!e.classList.contains("zs-typing")) e.classList.add("zs-typing");
-        // The cover is SIZED to coverTarget() when a provider supplies one, else
-        // to the editor node itself. Some composers (Meta AI) make the editable a
-        // tiny line inside a much larger rounded card - covering only the editor
-        // left the rest of the card exposed and CLICKABLE (a careful click focused
-        // the editor and let the user type behind the cover). Meta returns its
-        // whole composer card so the cover blankets the entire input band and its
-        // pointer-events:auto blocks every click. The typing mask above still lives
-        // on the real editor node `e`.
-        const covNode = (P.coverTarget && P.coverTarget()) || e;
-        // While a blocking modal (login / consent) or bot-check is up, hide the
-        // cover so it doesn't sit on top of the modal; it reappears once the
-        // overlay clears (the loop keeps running).
-        if (
-          (P.overlayBlocking && P.overlayBlocking()) ||
-          (P.captchaPresent && P.captchaPresent())
-        ) {
-          cover.style.display = "none";
-          coverRaf = requestAnimationFrame(place);
-          return;
-        }
-        cover.style.display = "flex";
-        let r = covNode.getBoundingClientRect();
-        // Clip the cover to the composer's VISIBLE band. Some composers grow the
-        // inner editor node past a scrolling ancestor that clips it (Kimi's Vue
-        // RECREATES .chat-input-editor on every inject/clear, dropping the
-        // .zs-typing height cap, so the editor balloons to ~1500px while its
-        // .chat-input-editor-container caps the visible box via overflow:auto).
-        // Measuring the raw editor then centres the cover on the giant editor's
-        // midpoint - far below the visible input - so it "vanishes" off the box.
-        // Intersect with the nearest clipping ancestor to track what's on screen.
-        // The SAME clipping applies horizontally, and for the same reason: a
-        // composer whose editor is a flex item grows to its content width when a
-        // long unbroken line is injected, while an ancestor with overflow-x:hidden
-        // keeps the PAGE looking right. Seen on ChatGPT at Start, where the editor
-        // is filled with the (large) system prompt: the inner
-        // .prosemirror-parent widened past its `-my-2.5 flex overflow-x-hidden`
-        // wrapper, so the cover - position:fixed and sized to the raw rect - stuck
-        // out to the RIGHT of the composer card. Clip on each axis independently:
-        // the ancestor that clips X is not always the one that clips Y.
-        let clipY = false, clipX = false;
-        for (let a = covNode.parentElement, i = 0; a && a !== document.body && i < 8 && !(clipX && clipY); a = a.parentElement, i++) {
-          const st = getComputedStyle(a);
-          const clips = (v) => v === "auto" || v === "scroll" || v === "hidden";
-          const ar = a.getBoundingClientRect();
-          if (!clipY && clips(st.overflowY)) {
-            clipY = true;
-            const top = Math.max(r.top, ar.top);
-            const bottom = Math.min(r.bottom, ar.bottom);
-            if (bottom > top) r = new DOMRect(r.left, top, r.width, bottom - top);
-          }
-          if (!clipX && clips(st.overflowX)) {
-            clipX = true;
-            const left = Math.max(r.left, ar.left);
-            const right = Math.min(r.right, ar.right);
-            if (right > left) r = new DOMRect(left, r.top, right - left, r.height);
-          }
-        }
-        // Never paint outside the composer card. The cover is position:fixed and
-        // re-placed every rAF from a freshly measured rect, which is correct while
-        // the page is still - but a site that ANIMATES its composer updates layout
-        // AFTER our callback, so for the whole animation the cover trails one frame
-        // behind. Seen on ChatGPT at Start: injecting the system prompt grows the
-        // composer 58px -> 156px, the page gains a scrollbar, the content column
-        // narrows and the composer slides 29px left - while the cover kept the
-        // previous coordinates and hung 28px past the card's right edge. It only
-        // showed on the FIRST send, because afterwards the composer is already
-        // docked at the bottom and stops moving. Clamping to the composer frame
-        // makes a stale rect impossible to see: worst case the cover is briefly a
-        // few px small, which reads as nothing.
-        const frame = P.composerFrame && P.composerFrame();
-        if (frame) {
-          const fr = frame.getBoundingClientRect();
-          // Only clamp to a frame that really wraps the cover target, so a provider
-          // whose frame is narrower than its editor can never shrink the cover.
-          const cx = r.left + r.width / 2;
-          if (fr.width > 0 && fr.left <= cx && fr.right >= cx) {
-            const left = Math.max(r.left, fr.left);
-            const right = Math.min(r.right, fr.right);
-            if (right - left > 40) r = new DOMRect(left, r.top, right - left, r.height);
-          }
-        }
-        // Optionally overshoot the editor box by PAD px on every side. Some
-        // composers (Gemini's Quill) keep typed text near rounded corners, so a
-        // cover sized EXACTLY to the editor leaves slivers of text peeking; those
-        // providers set coverPad to bleed past the edges. A native <textarea>
-        // (DeepSeek) needs none - overshooting there just makes the cover overflow
-        // the composer, so it defaults to 0.
-        const PAD = P.coverPad || 0;
-        // Optional vertical nudge: some composers (Gemini's Quill) report an
-        // editor rect that sits a few px below the visual input box centre, so
-        // the centred "Agent is working…" text looks low. A provider can shift it.
-        const OFFY = P.coverOffsetY || 0;
-        // Height is at least MIN_H so the label is readable even over a
-        // single-line composer. CENTER the cover on the editor's vertical middle
-        // rather than anchoring its TOP to the editor top: a short (e.g. 20px)
-        // textarea bumped to 36px would otherwise grow only DOWNWARD, leaving the
-        // "Agent is working…" label sitting high in the composer's input band
-        // (seen on Cloudflare's 1-line textarea). For a composer already taller
-        // than MIN_H the maths reduces to the old `r.top - PAD`, so DeepSeek/Gemini
-        // are unchanged.
-        // Hard ceiling: even though .zs-typing caps the editor's visual height
-        // (see overlay.css), belt-and-suspenders clamp the cover so a composer
-        // whose growing element escapes that CSS cap on some provider can never
-        // turn the "Agent is working…" cover into a full-page white slab.
-        const MAXH = P.coverMaxH || 200;
-        const h = Math.min(Math.max(r.height + PAD * 2, 36), MAXH);
-        const centerY = r.top + r.height / 2 + OFFY;
-        cover.style.left = (r.left - PAD) + "px";
-        cover.style.top = (centerY - h / 2) + "px";
-        cover.style.width = (r.width + PAD * 2) + "px";
-        cover.style.height = h + "px";
-        // Composite the surface BEHIND the cover target so the fill matches what
-        // the user sees (a translucent composer card blends over the page).
-        cover.style.background = opaqueBg(covNode);
-        // When the cover blankets a whole composer card (coverTarget), match its
-        // corner radius so the cover's square corners don't poke past the card's
-        // rounded ones. Editor-sized covers keep the CSS default.
-        if (P.coverTarget) cover.style.borderRadius = getComputedStyle(covNode).borderRadius;
-        coverRaf = requestAnimationFrame(place);
-      };
-      place();
+        coverRaf = 0;
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.inputCover", _e); }
     }
 
     function toast(msg) {
@@ -5008,7 +4871,7 @@
         ui.setStarting(false);
         // CRITICAL: startSession's own finally is gated on `alive()` (this abandon
         // just invalidated it via startGen++), so it will NEVER run and never
-        // lift the "Agent is working…" cover. Without this line the cover was
+        // clear any stale cover. Without this line the cover used to be
         // stuck forever on the fresh chat whenever the user opened a new,
         // empty conversation WHILE the bootstrap's tool call (list_commands) was
         // still in flight - validated live 2026-07 on Cloudflare AI Playground.
