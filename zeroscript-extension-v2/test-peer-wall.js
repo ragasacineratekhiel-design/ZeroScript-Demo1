@@ -187,6 +187,38 @@ check("background targets the sender by provider, not by broadcast", /told\+\+/.
 const apiAck = typeof P.ack === "function";
 check("ack is exported so the content script can call it", apiAck);
 
+// ── 10. a route that delivers to nobody must not report ok ───────────────
+// background.js decides ok/fail from `delivered` and `targets`. Model that
+// decision exactly and prove the zero-delivery branch is a failure. (The old
+// version answered ok:true, delivered:0 whenever a target tab merely existed.)
+const routeSlice = bgSrc.slice(bgSrc.indexOf('case "peer_route"'), bgSrc.indexOf('case "peer_ack"'));
+check("peer_route has a zero-delivery failure branch", /else if\(!delivered\)/.test(routeSlice));
+check("the zero-delivery branch explains why", /cannot message itself/.test(routeSlice));
+function routeDecision(delivered, targetCount) {
+  if (!delivered && !targetCount) return { ok: false, why: "no-open-tab" };
+  if (!delivered) return { ok: false, why: "filtered-to-nobody" };
+  return { ok: true, why: "delivered" };
+}
+check("route with a live target is ok", routeDecision(1, 1).ok === true);
+check("route with no tab at all fails", routeDecision(0, 0).ok === false && routeDecision(0, 0).why === "no-open-tab");
+check("route whose only target is the sender fails", routeDecision(0, 2).ok === false && routeDecision(0, 2).why === "filtered-to-nobody");
+
+// ── 11. a user condition is not a code fault ─────────────────────────────
+// Refusing to send to your own provider is normal (plan audit, solo run). It
+// used to go through ZSSafe.seen(), so 25 such refusals logged "repeated
+// failure x25" about code that is fine. Expected conditions get their own
+// counter instead of the fault stream.
+const sentCount = 30;
+for (let i = 0; i < sentCount; i++) P.send("msg", "chatgpt", { text: "self send" });
+check("same-provider sends are refused", P.send("msg", "chatgpt", { text: "x" }).ok === false);
+check("refusals are counted as conditions, not faults",
+  (P.stats().conditions || {})["send.refused"] >= sentCount,
+  JSON.stringify(P.stats().conditions));
+check("the peer module did not borrow ZSSafe to report a refusal",
+  !/reportStatus\("peer\.send\.refused"/.test(SRC));
+check("no refusal path calls ZSSafe.seen with a condition site",
+  !/seen\?\.\("send\.refused"/.test(SRC));
+
 P.close();
 CLAUDE.close();
 const total = pass + failed;

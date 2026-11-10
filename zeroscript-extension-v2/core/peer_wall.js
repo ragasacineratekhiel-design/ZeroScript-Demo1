@@ -165,7 +165,7 @@
       env.refused = "same-provider";
       outbox.push(env);
       while (outbox.length > MAX_INBOX) outbox.shift();
-      reportStatus("peer.send.refused", { to: toProvider, kind });
+      reportCondition("send.refused", `refused to send ${kind} to own provider "${toProvider}"`);
       return { ok: false, refused: "same-provider", envelope: env };
     }
     pending.set(env.id, { at: env.t, toProvider: env.toProvider, kind: env.kind });
@@ -215,9 +215,9 @@
         chrome.runtime.sendMessage({ type: "peer_route", envelope: env }, (resp) => {
           try {
             const err = chrome.runtime.lastError;
-            if (err) { reportStatus("peer.route", { id: env.id }, err.message); return; }
+            if (err) { reportCondition("route", err.message); return; }
             if (resp && resp.ok) ack(env.id, "route:" + (resp.delivered || 0));
-            else reportStatus("peer.route", { id: env.id, to: env.toProvider }, resp && resp.error);
+            else reportCondition("route", (resp && resp.error) || `underspecified route to ${env.toProvider}`);
           } catch (_e) { globalThis.ZSSafe?.seen?.("peer_wall.emit", _e); }
         });
       }
@@ -327,8 +327,35 @@
       outbox: outbox.length,
       awaitingAck: pending.size,
       undelivered: undelivered().length,
+      // user-facing conditions, NOT faults: readable without polluting the
+      // fault count that is supposed to mean "the code is broken".
+      conditions: Object.fromEntries([...conditions].map(([k, v]) => [k, v.n])),
       safe: st ? { faults: st.faults } : null,
     };
+  }
+
+  // ── reporting a user condition vs a code fault ──────────────────────────
+  // "the other AI's tab isn't open", "you mapped both roles to one model" and
+  // "the route was underspecified" are things the USER caused or can fix. They
+  // are not defects, so they must not enter ZSSafe's fault stream.
+  //
+  // I first tried ZSSafe.expected() here and MEASURED that it does not work:
+  // it resets its streak only on a success, and a refusal has no success
+  // counterpart, so the 25th refusal still logged "repeated failure x25" —
+  // a warning about code that is fine. Hence a local bounded counter instead.
+  const conditions = new Map();   // site -> {n, last}
+  function reportCondition(site, note) {
+    try {
+      const key = String(site || "?");
+      const c = conditions.get(key) || { n: 0, last: 0, note: "" };
+      c.n++; c.last = Date.now(); if (note) c.note = String(note);
+      conditions.set(key, c);
+      if (conditions.size > 16) conditions.delete(conditions.keys().next().value);
+    } catch (_e) {
+      // A throw IN HERE is a real defect (the counter is a Map write), so unlike
+      // the conditions it counts, it does belong in the fault stream.
+      globalThis.ZSSafe?.seen?.("peer_wall.reportCondition", _e);
+    }
   }
 
   function reportStatus(site, data, err) {

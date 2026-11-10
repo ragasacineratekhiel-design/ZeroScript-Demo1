@@ -598,6 +598,12 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
           if(!delivered && !targets.length){
             // honest failure: the peer tab is not open. Surface it, do not pretend.
             sendResponse({ok:false, error:`no open tab for provider "${to}" — open ${to} first`, delivered:0});
+          } else if(!delivered){
+            // Targets exist but the distinctness filter removed all of them (the
+            // only tab of that provider IS us). The old code answered ok:true,
+            // delivered:0 — so the sender acknowledged a message that reached
+            // nobody, and the failure was invisible on both ends.
+            sendResponse({ok:false, error:`the only "${to}" tab is the sender — a model cannot message itself`, delivered:0, targets: filtered.map(t=>t.pid)});
           } else {
             sendResponse({ok:true, delivered, targets: filtered.map(t=>t.pid)});
           }
