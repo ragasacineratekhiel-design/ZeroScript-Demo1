@@ -458,9 +458,8 @@ def config_remove_server(server_id):
 
 def restart_self():
     log("restarting bridge to reload config...","yl")
-    try:
-        for c in mgr.clients.values(): c.stop()
-    except: pass
+    try: mgr.stop_all()
+    except Exception: pass
     if _log_file:
         try: _log_file.flush()
         except: pass
@@ -540,12 +539,25 @@ class MCPClient:
                 try: q.put_nowait(None)
                 except: pass
             self.pending.clear()
-        if self.proc:
-            try:
-                if sys.platform=="win32": subprocess.run(["taskkill","/F","/T","/PID",str(self.proc.pid)],capture_output=True,timeout=8)
-                else: self.proc.terminate()
-            except: pass
+        proc=self.proc
         self.proc=None
+        if proc is None: return
+        try:
+            if sys.platform=="win32": subprocess.run(["taskkill","/F","/T","/PID",str(proc.pid)],capture_output=True,timeout=8)
+            else: proc.terminate()
+        except Exception: pass
+        # wait() + closed pipes. Without these every restart leaks three pipe
+        # descriptors and (on POSIX) leaves an unreaped child, so a bridge that
+        # restarted a studio MCP server a few dozen times ran out of fds.
+        try: proc.wait(timeout=5)
+        except Exception:
+            # still running: the terminate was ignored, so make it certain
+            try: proc.kill(); proc.wait(timeout=3)
+            except Exception: pass
+        for stream in (proc.stdin,proc.stdout,proc.stderr):
+            try:
+                if stream is not None: stream.close()
+            except Exception: pass
 
     def _reader(self,proc):
         stream=proc.stdout
@@ -643,6 +655,12 @@ class MCPManager:
         servers=_read_config().get("mcpServers",{}) or {}
         for sid,spec in servers.items(): self.clients[sid]=MCPClient(sid,spec.get("command"),spec.get("args"),spec.get("env"))
         log(f"configured {len(self.clients)} MCP server(s): {', '.join(self.clients) or '(none)'}","cy")
+    def stop_all(self):
+        for sid,client in list(self.clients.items()):
+            try: client.stop()
+            except Exception as e: log(f"[{sid}] stop failed: {e}","yl")
+        with self.index_lock: self.index={}
+
     def start_all(self):
         threads=[]
         for sid,client in self.clients.items():
@@ -1159,6 +1177,35 @@ def _start_http_server():
     return server
 
 # ── WebSocket handler (upgraded) ────────────────────────────────────────
+# Fire-and-forget tasks must be retained: `asyncio.create_task` returns a weak
+# reference only, so an unreferenced task can be garbage-collected mid-flight and
+# its exception is never retrieved (asyncio logs it as "never retrieved" at best,
+# silently at worst). Everything spawned per-connection is registered here and
+# cancelled when that connection goes away.
+_CONN_TASKS={}   # id(ws) -> set[Task]; keyed by id() so the key is hashable and
+                 # the socket is not kept alive by the registry itself
+
+def _spawn(ws, coro, label):
+    key=id(ws)
+    tasks=_CONN_TASKS.setdefault(key,set())
+    task=asyncio.create_task(coro)
+    tasks.add(task)
+    def _done(t, key=key, label=label):
+        held=_CONN_TASKS.get(key)
+        if held is not None: held.discard(t)
+        if t.cancelled(): return
+        try: err=t.exception()
+        except asyncio.CancelledError: return
+        if err: log(f"[{label}] task failed: {err}","yl")
+    task.add_done_callback(_done)
+    return task
+
+def _cancel_conn_tasks(ws):
+    key=id(ws)
+    for t in list(_CONN_TASKS.get(key,())):
+        t.cancel()
+    _CONN_TASKS.pop(key,None)
+
 async def handler(ws):
     peer=getattr(ws,"remote_address",("?",))[0]
     with clients_lock: clients.add(ws)
@@ -1212,7 +1259,7 @@ async def handler(ws):
             elif mtype=="call_tool":
                 name=msg.get("name",""); args=msg.get("arguments") or {}; timeout=float(msg.get("timeout",120000))/1000.0
                 log(f"-> tool {name}({', '.join(args.keys())})","cy",terminal=False)
-                asyncio.create_task(run_tool_task(ws,name,args,timeout,rid))
+                _spawn(ws,run_tool_task(ws,name,args,timeout,rid),"tool_task")
             elif mtype=="batch":
                 calls=msg.get("calls") or []
                 # start all as tasks, preserve order via index, but run in parallel where servers differ
@@ -1228,17 +1275,27 @@ async def handler(ws):
                         except: pass
                     try: await ws.send(_dumps({"type":"batch_result","id":rid,"results":results}))
                     except: pass
-                asyncio.create_task(_run_batch())
+                _spawn(ws,_run_batch(),"batch")
             elif mtype=="subscribe":
                 # SSE over WS: push status every 3s while subscribed
                 async def _sub_loop():
+                    # Measured, not assumed: the `while ws in clients` condition
+                    # DID end this loop within one 3s period after a disconnect, so
+                    # it was never an unbounded leak (a first draft of this comment
+                    # claimed otherwise and was wrong). What it was: up to 3s of
+                    # pointless probe_studio + a failed send per closed client, and
+                    # an untracked task whose exceptions asyncio never retrieved.
+                    # Now it is cancelled through the connection registry.
                     try:
                         while ws in clients:
                             _st=await asyncio.to_thread(probe_studio)
                             await ws.send(_dumps({"type":"status_update","studio":_st["place"],"studio_app":_st["app"],"servers":mgr.health()}))
                             await asyncio.sleep(3)
-                    except: pass
-                asyncio.create_task(_sub_loop())
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        log(f"status subscription ended: {e}","yl",terminal=False)
+                _spawn(ws,_sub_loop(),"sub_loop")
                 await ws.send(_dumps({"type":"subscribed","id":rid}))
             elif mtype in ("add_server","remove_server"):
                 if mtype=="add_server": ok,err=await asyncio.to_thread(config_add_server,msg.get("server_id"),msg.get("command"),msg.get("args"),msg.get("env"))
@@ -1259,6 +1316,7 @@ async def handler(ws):
     except ConnectionClosed: pass
     except Exception as e: log(f"handler error: {e}","rd")
     finally:
+        _cancel_conn_tasks(ws)
         with clients_lock: clients.discard(ws)
         metrics.ws_connections=len(clients)
         log(f"extension disconnected [{len(clients)} client(s)]","yl")
@@ -1355,7 +1413,12 @@ async def main():
     await asyncio.to_thread(_kill_orphan_studio_mcp)
     mgr.load_config()
     # load but don't block WS on it — start_all in background
+    # Retain the task. create_task keeps only a weak reference, so this future was
+    # collectable: if it got collected before _boot_and_diagnose awaited it, the
+    # diagnosis silently lost its "did MCP actually start" signal.
     start_task=asyncio.create_task(asyncio.to_thread(mgr.start_all))
+    _BOOT_TASKS.add(start_task)
+    start_task.add_done_callback(_BOOT_TASKS.discard)
     # reclaim bridge port before bind
     if await asyncio.to_thread(_reclaim_bridge_port): await asyncio.sleep(0.6)
     check_studio_port()
@@ -1431,9 +1494,12 @@ async def _supervised(name, coro_fn):
             except: pass
             await asyncio.sleep(2)
 
+_BOOT_TASKS=set()
+
 if __name__=="__main__":
     try: asyncio.run(main())
     except KeyboardInterrupt:
         log("shutting down...","yl")
-        for c in mgr.clients.values(): c.stop()
+        try: mgr.stop_all()
+        except Exception: pass
     finally: log("===== BRIDGE STOP =====","cy")

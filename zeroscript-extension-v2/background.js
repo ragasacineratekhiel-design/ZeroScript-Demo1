@@ -484,18 +484,31 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
           return {ok:false, tools:toolsCache, error:r.error||'no tools'};
         })();
         inflightCoalesce.set(key,p);
-        const res=await p; inflightCoalesce.delete(key); sendResponse(res); break;
+        // try/finally: if the promise rejects, the key must still be removed.
+        // Leaving it behind kept a rejected promise in the map, so every later
+        // list_tools would await that same rejection and never recover.
+        let res;
+        try { res = await p; }
+        catch (e) { res = { ok:false, tools: toolsCache, error: String(e) }; }
+        finally { inflightCoalesce.delete(key); }
+        sendResponse(res); break;
       }
       case "call_tool":{
         const name=msg.name, args=msg.arguments||{}, timeout=msg.timeout||120000;
         const key=coalesceKey(name,args);
         if(inflightCoalesce.has(key)){ const prev=await inflightCoalesce.get(key); sendResponse(prev); break; }
         const p=transportCall(name,args,timeout);
-        inflightCoalesce.set(key,{id: -1});
-        // store promise for coalesce (simplified: no second pending race)
+        // Store the PROMISE. This used to store the literal `{id: -1}`, so a
+        // second identical call in flight did `await {id:-1}`, resolved at once
+        // and answered the caller with that object as though it were the tool
+        // result — a caller could then treat a non-execution as success.
+        inflightCoalesce.set(key,p);
+        let r;
         try{
-          const r=await p;
+          r = await p;
           sendResponse(r);
+        }catch(e){
+          sendResponse({ok:false, error:String((e && e.message) || e)});
         }finally{ inflightCoalesce.delete(key); }
         break;
       }

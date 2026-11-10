@@ -778,6 +778,26 @@ function runTests(testsOnly) {
       ok(t, `${(out.match(/^PASS/mg) || []).length} assertions`);
     }
   }
+  // The Python bridge cannot be smoke-tested by requiring it. Run its lifecycle
+  // suite when a Python with `websockets` is available; report honestly when not
+  // rather than pretending it passed or silently skipping.
+  const bridgeTest = path.join(EXT, "test-bridge.py");
+  if (fs.existsSync(bridgeTest)) {
+    const py = [process.env.ZS_PYTHON, "/tmp/venv/bin/python", "python3", "python"]
+      .filter(Boolean).find((cand) => { try { return require("child_process").spawnSync(cand, ["-c", "import websockets"], { encoding: "utf8" }).status === 0; } catch { return false; } });
+    if (!py) {
+      warn("tests", "test-bridge.py skipped: no python with `websockets` on this machine");
+    } else {
+      const r = require("child_process").spawnSync(py, [bridgeTest], { encoding: "utf8", cwd: EXT });
+      const out = (r.stdout || "") + (r.stderr || "");
+      const n = (out.match(/^PASS/mg) || []).length;
+      if (r.status !== 0 || /^FAIL/m.test(out)) {
+        fail("tests", `test-bridge.py exited ${r.status}`);
+        console.log(out.split("\n").filter((l) => /FAIL/.test(l)).slice(0, 8).map((l) => "      " + l).join("\n"));
+        failCount++;
+      } else { ok("test-bridge.py", `${n} assertions (bridge lifecycle)`); ran++; }
+    }
+  }
   if (!failCount) ok("tests", `${ran} test files green`);
 }
 
