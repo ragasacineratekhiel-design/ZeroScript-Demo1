@@ -1,0 +1,12 @@
+{
+  "name": "zeroscript-team-regression-tests",
+  "version": "3.1.0",
+  "private": true,
+  "description": "Development tests only; the browser extension and bridge do not need npm at runtime.",
+  "scripts": {
+    "test": "node tests/test-extension.js && node tests/test-team-dom.js && node tests/test-claude-dom.js && node tests/test-provider-startup.js && node tests/test-popup.js && node zeroscript-extension-v2/test-parser.js && node zeroscript-extension-v2/test-chatgpt.js"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

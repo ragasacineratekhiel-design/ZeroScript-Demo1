@@ -16,7 +16,7 @@ set -u
 cd "$(dirname "$0")" || exit 1
 
 BRIDGE_PORT="${ZS_BRIDGE_PORT:-17613}"
-BRIDGE_HTTP_PORT="${ZS_BRIDGE_HTTP_PORT:-17614}"
+BRIDGE_HTTP_PORT="${ZS_BRIDGE_HTTP_PORT:-$((BRIDGE_PORT + 1))}"
 LOG_DIR="logs"
 LOG_FILE="$LOG_DIR/start.log"
 mkdir -p "$LOG_DIR" 2>/dev/null
@@ -36,7 +36,7 @@ pause_and_exit() {
 }
 
 echo
-echo "  === ZeroScript Bridge v2.2.0 ULTRA+ ==="
+echo "  === ZeroScript Bridge v3.1.0 Team ==="
 echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary | Studio Full Access | All 8 Agents Super-Stable"
 echo
 log "===== MacOS_Start.command v2.2.0 launched ====="
@@ -81,9 +81,9 @@ echo "  [2/3] Checking dependencies (websockets + ultra) ..."
 if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
     echo "        Installing websockets - first time only..."
     log "websockets missing, installing via pip --user."
-    if ! "$PY" -m pip install --user websockets >/dev/null 2>&1; then
+    if ! "$PY" -m pip install --user 'websockets>=13,<16' >/dev/null 2>&1; then
         log "pip --user failed; retrying with --break-system-packages."
-        "$PY" -m pip install --user --break-system-packages websockets >/dev/null 2>&1 || true
+        "$PY" -m pip install --user --break-system-packages 'websockets>=13,<16' >/dev/null 2>&1 || true
     fi
     if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
         echo
@@ -94,30 +94,11 @@ if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
     fi
 fi
 echo "        websockets OK"
-# optional ultra libs (best-effort)
-if ! "$PY" -c "import orjson" >/dev/null 2>&1; then
-    echo "        Installing orjson (optional, +30% speed) ..."
-    "$PY" -m pip install --user orjson >/dev/null 2>&1 || "$PY" -m pip install --user --break-system-packages orjson >/dev/null 2>&1 || true
-fi
-if ! "$PY" -c "import msgpack" >/dev/null 2>&1; then
-    echo "        Installing msgpack (optional, binary) ..."
-    "$PY" -m pip install --user msgpack >/dev/null 2>&1 || "$PY" -m pip install --user --break-system-packages msgpack >/dev/null 2>&1 || true
-fi
+# Optional JSON/binary accelerators are not installed on the startup path.
 log "deps OK."
-
-# --- 3. Replace any previous bridge holding ports (both ultra ports) -----
 echo "  [3/3] Starting bridge (WS $BRIDGE_PORT + HTTP $BRIDGE_HTTP_PORT) ..."
-if command -v lsof >/dev/null 2>&1; then
-    for P in "$BRIDGE_PORT" "$BRIDGE_HTTP_PORT"; do
-        OLD_PID="$(lsof -ti "tcp:$P" -s TCP:LISTEN 2>/dev/null | head -n1)"
-        if [ -n "${OLD_PID:-}" ]; then
-            echo "        Previous bridge on $P pid $OLD_PID — replacing..."
-            log "Killing previous bridge pid $OLD_PID on port $P."
-            kill -TERM "$OLD_PID" 2>/dev/null || true; sleep 1
-            if kill -0 "$OLD_PID" 2>/dev/null; then kill -9 "$OLD_PID" 2>/dev/null || true; sleep 1; fi
-        fi
-    done
-fi
+echo "        Existing port owners are left alone; close an old bridge yourself."
+echo "        To view team messages in another Terminal: $PY team_console.py"
 
 echo
 echo "  ############################################################"

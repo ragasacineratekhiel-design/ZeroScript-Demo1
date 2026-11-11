@@ -16,21 +16,41 @@
     button { width: 100%; margin-top: 8px; padding: 8px; border: 0; border-radius: 8px; cursor: pointer; font-size: 12px; }
     .ghost { background: rgba(255,255,255,0.08); color: #e8e8ec; }
     .kofi { background: rgba(255,105,135,.16); color: #ff8fa3; border: 1px solid rgba(255,105,135,.4) !important; font-weight: 700; }
+    input, select { width:100%; box-sizing:border-box; margin:4px 0; padding:6px; background:#25252b; color:#e8e8ec; border:1px solid #4b4b55; border-radius:4px; }
     code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1><span id="dot" class="dot"></span> ZeroScript V2 <span id="ver" class="ver"></span> <span style="font-size:8px;opacity:.7;background:rgba(99,102,241,.25);padding:2px 5px;border-radius:4px;">✦ Claude + All AI</span></h1>
+    <h1><span id="dot" class="dot"></span> ZeroScript Team <span id="ver" class="ver"></span> <span style="font-size:8px;opacity:.7;background:rgba(99,102,241,.25);padding:2px 5px;border-radius:4px;">Open AI tabs</span></h1>
     <div class="row" id="state">Bridge: …</div>
     <div class="row" id="tools"></div>
     <div class="row" id="servers" style="white-space:pre-line; font-family:ui-monospace,monospace; opacity:0.75"></div>
     <button class="ghost" id="reconnect">↻ Reconnect bridge</button>
     <button class="ghost" id="restart">⟳ Restart Roblox server</button>
     <button class="ghost" id="settings">⚙ Settings</button>
+    <hr />
+    <section aria-label="Active chat controls">
+      <div class="row"><b>Active chat tab</b></div>
+      <div class="row" id="tab-result" role="status" aria-live="polite" style="white-space:pre-wrap">Checking tab…</div>
+      <button class="ghost" id="tab-refresh">Refresh tab status</button>
+      <button class="ghost" id="tab-recover">Restore toolbar</button>
+      <button class="ghost" id="tab-stop">Stop this tab</button>
+      <div class="row" style="opacity:.65">Detection is not proof the model is ready. Restore does not reload the page or send chat text.</div>
+    </section>
+    <hr />
+    <div class="row"><b>Bridge team</b> — join each tab once</div>
+    <label class="row">Team <input id="team-name" value="studio" maxlength="64" /></label>
+    <label class="row">Role <select id="team-role"><option value="planner">Planner (first)</option><option value="coder">Coder (second)</option><option value="checker">Checker (third)</option></select></label>
+    <button class="ghost" id="team-join">Join active AI tab</button>
+    <button class="ghost" id="team-leave">Leave active team tab</button>
+    <button class="ghost" id="team-start">Start all three team tabs</button>
+    <button class="ghost" id="team-stop">Stop team</button>
+    <div class="row" id="team-result" role="status" style="white-space:pre-wrap"></div>
+    <div class="row">Messages travel through the bridge. Open AI tabs are required. Background tabs may be throttled; bring a stalled tab forward. See the separate Team Console for timestamps.</div>
     <button class="kofi" id="kofi">♥ Tip the developer on Ko-fi</button>
     <div class="row" style="margin-top:10px; opacity:0.6">
-      Run <code>start.bat</code> and open <b>Roblox Studio</b>, then go to a supported AI.
+      Run <code>start.py</code> and open <b>Roblox Studio</b>, then go to a supported AI.
     </div>
   </div>
   <script src="popup.js"></script>

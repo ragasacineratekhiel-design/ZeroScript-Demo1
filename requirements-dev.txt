@@ -1,0 +1,2 @@
+# Only required Python dependency; stdlib supplies tests and team console.
+websockets>=13,<16

@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.zs_token
+config.json.tmp
+logs/
+.venv/
+node_modules/
+ZeroScript Demo/config.json

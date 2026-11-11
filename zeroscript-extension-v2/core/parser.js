@@ -97,29 +97,37 @@ const ZSParse = (() => {
     return false;
   }
   // Ultra: quick fingerprint for cache — first 60 chars + length
-  function cacheKey(fn, r){ return fn+":"+r.length+":"+r.slice(0,64).replace(/\s+/g,' '); }
+  function cacheKey(fn, r){ return fn+":"+r; }
 
   // True if the reply contains a tool block that has STARTED but not yet CLOSED
   // (a ###LUA### / ###MCP_TOOL### opener with no matching end marker). Used by the
   // response watcher to avoid finalizing a command that is still being streamed.
   function hasOpenToolBlock(r) {
     if (!r) return false;
-    const { pos: ls, len } = findLuaStart(r);
-    if (ls !== -1 && findLuaEnd(r, ls + len) === -1) return true;
-    const sm = r.indexOf(START_M);
-    if (sm !== -1) {
-      const low = r.toLowerCase();
-      if (low.indexOf("###end_mcp_tool###", sm) === -1 && low.indexOf("###end-mcp_tool###", sm) === -1) return true;
+    let from = 0;
+    while (true) {
+      const {pos: ls, len} = findLuaStart(r, from);
+      if (ls === -1) break;
+      const end = findLuaEnd(r, ls + len);
+      if (end === -1) return true;
+      from = end + (LUA_END_RE.exec(r.slice(end))?.[0].length || 1);
     }
-    // An inline JSON command ({"command"/"tool": …}) whose object has NOT closed yet
-    // is still being streamed (a big multi_edit can take many seconds). Treat it as
-    // open so the watcher keeps waiting instead of finalizing - and failing to parse -
-    // half a command, which would drop the tool and end the turn as plain text.
-    for (const key of ['"command"', '"tool"']) {
-      const k = r.indexOf(key);
-      if (k === -1) continue;
-      const open = r.lastIndexOf("{", k);
-      if (open !== -1 && matchBrace(r, open) === -1) return true;
+    from=0;
+    const low=r.toLowerCase();
+    while(true) {
+      const sm=r.indexOf(START_M,from); if(sm===-1)break;
+      const endings=[low.indexOf("###end_mcp_tool###",sm),low.indexOf("###end-mcp_tool###",sm)].filter(i=>i!==-1);
+      if(!endings.length)return true;
+      from=Math.min(...endings)+END_M.length;
+    }
+    for(const key of ['"command"','"tool"']) {
+      let pos=0;
+      while(true) {
+        const k=r.indexOf(key,pos); if(k===-1)break;
+        const open=r.lastIndexOf("{",k);
+        if(open!==-1 && matchBrace(r,open)===-1)return true;
+        pos=k+key.length;
+      }
     }
     return false;
   }
@@ -226,7 +234,7 @@ const ZSParse = (() => {
     const res=parseToolCalls(r); _cacheSet(k,res); return res;
   }
   function hasOpenToolBlockCached(r){
-    const k=cacheKey("open",r.slice(-300)); const hit=_cacheGet(k); if(hit!==null) return hit;
+    const k=cacheKey("open",r); const hit=_cacheGet(k); if(hit!==null) return hit;
     const v=hasOpenToolBlock(r); _cacheSet(k,v); return v;
   }
 
@@ -271,15 +279,24 @@ const ZSParse = (() => {
     // source (literal \n, \") instead of the decoded code. extractToolAnywhere
     // JSON-decodes it; cleanLuaCall (applied at the end) then strips the markers.
     if (out.length === 0) {
-      const f = extractToolAnywhere(r);
-      if (f) out.push(f);
+      // Enumerate complete top-level objects so the caller can reject multiple
+      // commands rather than silently executing only their first mutation.
+      for (let pos=0; pos<r.length;) {
+        const start=r.indexOf("{",pos); if(start===-1)break;
+        const end=matchBrace(r,start); if(end===-1)break;
+        try { const call=normalizeCall(parseLoose(r.slice(start,end+1))); if(call)out.push(call); } catch {}
+        pos=end+1;
+      }
     }
     // Bare ###LUA### … ###END_LUA### block with no JSON envelope at all.
     if (out.length === 0) {
-      const { pos: ls, len: luaLen, dm } = findLuaStart(r);
-      const le = findLuaEnd(r, ls === -1 ? 0 : ls + luaLen);
-      if (ls !== -1 && le !== -1 && le > ls) {
-        out.push({ tool: "execute_luau", arguments: { code: stripCodeChrome(r.slice(ls + luaLen, le).trim()), datamodel_type: dm } });
+      let pos=0;
+      while(true) {
+        const {pos:ls,len:luaLen,dm}=findLuaStart(r,pos);
+        if(ls===-1)break;
+        const le=findLuaEnd(r,ls+luaLen); if(le===-1)break;
+        out.push({tool:"execute_luau",arguments:{code:stripCodeChrome(r.slice(ls+luaLen,le).trim()),datamodel_type:dm}});
+        pos=le+LUA_END_RE.exec(r.slice(le))[0].length;
       }
     }
     return out.map(cleanLuaCall);
@@ -297,9 +314,12 @@ const ZSParse = (() => {
     const code = call.arguments && call.arguments.code;
     if (typeof code !== "string") return call;
     const s = findLuaStart(code);
-    if (s.pos === -1) return call;
+    if (s.pos === -1 || code.slice(0,s.pos).trim() !== "") return call;
     const e = findLuaEnd(code, s.pos + s.len);
-    call.arguments.code = code.slice(s.pos + s.len, e === -1 ? code.length : e).trim();
+    if (e === -1) return call; // Never amputate source around an incomplete marker.
+    const endMarker = LUA_END_RE.exec(code.slice(e));
+    if (code.slice(e + endMarker[0].length).trim()) return call;
+    call.arguments.code = code.slice(s.pos + s.len, e).trim();
     if (!call.arguments.datamodel_type) call.arguments.datamodel_type = s.dm;
     return call;
   }

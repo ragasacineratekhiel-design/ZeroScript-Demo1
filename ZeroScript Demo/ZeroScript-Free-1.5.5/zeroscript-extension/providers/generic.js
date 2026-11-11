@@ -29,7 +29,11 @@ const ZSGenericProvider = (() => {
       if (n.nodeType !== 1) return;
       if (excludeSel && n.matches && n.matches(excludeSel)) return;
       if (n.matches && n.matches(".zs-chip")) return;
+      if(n.tagName==='BR'){t+='\n';return;}
+      const block=/^(P|DIV|PRE|LI|SECTION|ARTICLE|TR|H[1-6])$/.test(n.tagName);
+      if(block && t && !t.endsWith('\n'))t+='\n';
       for (const c of n.childNodes) walk(c);
+      if(block && !t.endsWith('\n'))t+='\n';
     };
     walk(root);
     return t;
@@ -63,13 +67,11 @@ const ZSGenericProvider = (() => {
     // Heuristic: user items tend to be shorter, on right side, or have user avatar
     if (el.matches("[data-is-user='true'], [data-author='user'], [class*='user-message']")) return true;
     if (el.matches("[data-is-user='false'], [data-author='assistant']")) return false;
-    // Position heuristic: check order - even idx = user in alternating layout
-    const all = allMessages();
-    const idx = all.indexOf(el);
-    if (idx >= 0) return idx % 2 === 0; // approximate
-    return false;
+    return el.getAttribute('data-message-author-role')==='user';
   };
-  const isAssistantItem = (el) => !isUserItem(el);
+  // Unknown roles are not executable assistant turns. Fail closed rather than
+  // guessing from parity after virtualization or short-message filtering.
+  const isAssistantItem = (el) => !!el && (el.matches("[data-is-user='false'], [data-author='assistant'], [data-message-author-role='assistant'], [class*='assistant-message']"));
   const allItems = () => allMessages();
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
@@ -143,7 +145,7 @@ const ZSGenericProvider = (() => {
       await sleep(80);
       if((ed.innerText||ed.textContent||"").trim().length < 10){
         // fallback
-        if(ed.tagName==="TEXTAREA"){ ed.value=text; ed.dispatchEvent(new Event("input",{bubbles:true})); }
+        if(ed.tagName==="TEXTAREA"){ Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(ed,text); ed.dispatchEvent(new Event("input",{bubbles:true})); }
         else { ed.textContent=text; ed.dispatchEvent(new InputEvent("input",{bubbles:true})); }
       }
       return true;
@@ -153,7 +155,10 @@ const ZSGenericProvider = (() => {
   async function typeAndSend(text, images){
     const ed=getEditor(); if(!ed) throw new Error("Input not found");
     text=truncateForSend(text);
-    await setEditorText(ed, text);
+    const wasLocked=ed.getAttribute('contenteditable')==='false';
+    if(wasLocked)ed.setAttribute('contenteditable','true');
+    try { await setEditorText(ed, text); }
+    finally { if(wasLocked)ed.setAttribute('contenteditable','false'); }
     if(images && images.length){ try{ const dt=new DataTransfer(); images.forEach((img,i)=>{ try{ const bin=atob(img.data); const arr=new Uint8Array(bin.length); for(let j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j); const f=new File([arr],`img_${i}.jpg`,{type:img.mimeType||"image/jpeg"}); dt.items.add(f);}catch{}}); ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData:dt,bubbles:true})); }catch{} }
     await sleep(300);
     const btn=sendButton();

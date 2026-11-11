@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // core/transport.js — ZeroScript MAX transport abstraction v3.0.0
 // Content-script thin client to background.js (service worker) with MAX features:
-// coalescing, cache, retry, metrics, batch, webtransport hedge.
+// Read-only cache/coalescing, metrics and non-replayed tool/batch calls.
 // All GUIs/colors untouched — pure logic MAX.
 // All GUIs/colors untouched — this is pure logic.
 (() => {
@@ -20,7 +20,7 @@
       if(cacheTtl){
         const h=_getCache(k); if(h) return h;
       }
-      if(_inflight.has(k)) return _inflight.get(k);
+      if(cacheTtl && _inflight.has(k)) return _inflight.get(k);
       const p=(async()=>{
         for(let attempt=0; attempt<=retry; attempt++){
           const r=await new Promise(res=>{
@@ -31,7 +31,7 @@
               });
             }catch(e){ res({ok:false, error:String(e)}); }
           });
-          if(r && r.ok) {
+          if(r && (r.ok || (msg.type==="status" && typeof r.connected==="boolean"))) {
             if(cacheTtl) _setCache(k,r,cacheTtl);
             return r;
           }
@@ -40,7 +40,7 @@
           else return r;
         }
       })();
-      _inflight.set(k,p);
+      if(cacheTtl) _inflight.set(k,p);
       p.finally(()=> _inflight.delete(k));
       return p;
     }
@@ -48,13 +48,13 @@
     async function status(){ return _bg({type:"status"}, {cacheTtl:120}); } // MAX 120ms
     async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:400}); } // MAX 400ms
     async function callTool(name, args, timeout=120000){
-      return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:2});
+      return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:0});
     }
     async function callBatch(calls){
       if(!calls || !calls.length) return {ok:false, error:"no calls"};
       if(calls.length===1) return callTool(calls[0].name, calls[0].arguments, calls[0].timeout);
-      // MAX batch: 24 tools, hedge 120ms
-      return _bg({type:"call_batch", calls}, {retry:1});
+      // Up to 24 sequential calls. No hedging or automatic replay.
+      return _bg({type:"call_batch", calls}, {retry:0});
     }
     async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:600}); }
     async function ping(){ return _bg({type:"ping"}, {cacheTtl:0}); }

@@ -1,3 +1,5 @@
+> Historical release notes. Earlier performance, compatibility and security claims below are not current guarantees. See the repository README and 3.1 repair notes.
+
 # Changelog
 
 All notable changes to ZeroScript Free are documented here.

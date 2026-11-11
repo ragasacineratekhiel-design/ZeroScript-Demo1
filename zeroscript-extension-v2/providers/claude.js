@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // providers/claude.js — Anthropic Claude (claude.ai) MAX provider v3.0
-// Exports ZSProvider interface — copied 1:1 from deepseek/chatgpt quality, adapted for Claude's ProseMirror SPA.
-// Claude DOM notes (claude.ai 2025-2026, validated):
+// Website adapter; selectors are heuristics, not a live compatibility guarantee.
+// Claude DOM assumptions (covered by local fixtures, not live-site validation):
 // - Conversations: /chat/<uuid>, /new, /projects/<id>/chat/<uuid>
 // - Messages: data-testid="user-message" / "assistant-message" OR data-is-user-message, fallback .font-claude-response / .group with role
 // - Thinking: collapsible [data-testid="thinking"] / .thinking / details with summary
@@ -56,7 +56,7 @@ const ZSProvider = (() => {
     if (item.getAttribute && item.getAttribute('data-message-author-role')==='user') return true;
     return false;
   }
-  const isAssistantItem = (item) => !!item && !isUserItem(item);
+  const isAssistantItem = (item) => !!item && !isUserItem(item) && item.matches("[data-testid='assistant-message'], [data-is-user-message='false'], [data-message-author-role='assistant'], .font-claude-response");
 
   function textWithout(root, excludeSel){
     if(!root) return "";
@@ -65,7 +65,7 @@ const ZSProvider = (() => {
       if(n.nodeType===3){ t+=n.nodeValue; return; }
       if(n.nodeType!==1) return;
       if(excludeSel && n.matches && n.matches(excludeSel)) return;
-      if(n.matches && n.matches(".zs-chip, .zs-hidden")) return;
+      if(n.matches && n.matches(".zs-chip")) return;
       if(n.tagName==="BR"){ t+="\n"; return; }
       const isBlock = /^(P|DIV|PRE|LI|UL|OL|BLOCKQUOTE|H[1-6]|TABLE|TR|SECTION|ARTICLE|HR)$/.test(n.tagName);
       if(isBlock && t && !t.endsWith("\n")) t+="\n";
@@ -80,14 +80,14 @@ const ZSProvider = (() => {
     if(!item) return "";
     if(isAssistantItem(item)){
       const md = item.querySelector(S.reply) || item;
-      return textWithout(md, ".zs-chip");
+      return textWithout(md, ".zs-chip, " + S.thinking);
     }
     return textWithout(item, ".zs-chip");
   }
   function classifyText(item, excludeSel){
     if(isAssistantItem(item)){
       const md = item.querySelector(S.reply) || item;
-      return textWithout(md, excludeSel || ".zs-chip");
+      return textWithout(md, (excludeSel || ".zs-chip") + ", " + S.thinking);
     }
     return textWithout(item, excludeSel);
   }
@@ -95,20 +95,9 @@ const ZSProvider = (() => {
   // MAX allItems — ultra resilient like deepseek/chatgpt, handles 2026 Claude DOM churn
   const allItems = () => {
     let items = [...document.querySelectorAll(S.anyMessage)].filter(e=> !e.closest("#zs-root") && e.textContent.trim().length>2);
-    if(items.length) return items;
-    // Fallback: Claude's group containers
-    items = [...document.querySelectorAll("div.group, div[data-test-render-count], div[class*='message'], div.font-claude-response, main div[class*='flex']")].filter(e=>{
-      if(e.closest("#zs-root")) return false;
-      const txt=(e.textContent||"").trim();
-      if(txt.length<12) return false;
-      // must look like a message bubble, not the whole page
-      const rect=e.getBoundingClientRect();
-      return rect.height < window.innerHeight*0.85 && rect.width>120;
-    });
-    if(items.length) return items.slice(-60); // last 60 to avoid page chrome
-    const c = document.querySelector(S.container);
-    if(c) items = [...c.children].filter(ch=> ch.textContent.trim().length>15 && !ch.closest("#zs-root"));
-    return items.filter(el=> !el.closest("#zs-root") && el.textContent.trim().length>0);
+    if(items.length) return items.filter(e=>!items.some(parent=>parent!==e && parent.contains(e)));
+    // Fail closed: page layout, navigation and composer text are not AI replies.
+    return [...document.querySelectorAll('.font-claude-response')].filter(e=>!e.closest('#zs-root') && !e.closest('[contenteditable]'));
   };
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
@@ -116,43 +105,23 @@ const ZSProvider = (() => {
 
   // MAX getEditor — copies deepseek stability MAX with Claude fallbacks
   function getEditor(){
-    // Primary: visible contenteditable ProseMirror
-    let cands = [...document.querySelectorAll(S.editor)].filter(e=> !e.closest("#zs-root"));
-    // Deep filter: visible + not zero-size + inside composer area
-    for(let i=cands.length-1;i>=0;i--){
-      const e=cands[i];
-      if(!e) continue;
-      const r=e.getBoundingClientRect();
-      const vis = e.offsetParent!==null || r.height>8;
-      if(vis && r.width>60) return e;
-    }
-    // Fallbacks: Claude-specific selectors
-    const alts = [
-      "div.ProseMirror[contenteditable='true']",
-      "div[contenteditable='true'][data-placeholder]",
-      "div[contenteditable][role='textbox']",
-      "div[data-placeholder*='Claude']",
-      "textarea",
-      "[role='textbox']"
-    ];
-    for(const sel of alts){
-      try{
-        const e=document.querySelector(sel);
-        if(e && !e.closest("#zs-root") && e.getBoundingClientRect().width>0) return e;
-      }catch{}
-    }
-    // Last resort: any bottom contenteditable
-    try{
-      const all=[...document.querySelectorAll("[contenteditable=true], textarea")].filter(e=>!e.closest("#zs-root"));
-      if(all.length) return all[all.length-1];
-    }catch{}
-    return cands[0]||null;
+    // Prefer the chat composer over unrelated artifact/search editors. Keep a
+    // locked composer discoverable; never return a detached or hidden candidate.
+    const candidates = [...document.querySelectorAll(
+      "[data-testid='composer'] .ProseMirror, form .ProseMirror, .ProseMirror[role='textbox'], form [contenteditable], [contenteditable='true'][role='textbox'], textarea, .ProseMirror[data-zs-locked='1']"
+    )];
+    return candidates.find(e=>{
+      if(e.closest('#zs-root, [hidden], [aria-hidden="true"]'))return false;
+      const style=getComputedStyle(e),r=e.getBoundingClientRect();
+      return e.isConnected && style.display!=='none' && style.visibility!=='hidden' && r.width>0 && r.height>0;
+    }) || null;
   }
+
   const editorText = () => {
     const e=getEditor();
     if(!e) return "";
     // Claude ProseMirror: innerText preserves line breaks better than textContent
-    return (e.innerText||e.textContent||"").trim();
+    return (e.matches("textarea") ? e.value : (e.innerText||e.textContent||"")).trim();
   };
   const lastAssistant = () => { const a=assistantItems(); return a.length? a[a.length-1]: null; };
   const chatIsEmpty = () => allItems().length===0;
@@ -345,7 +314,7 @@ const ZSProvider = (() => {
       const thEl = it.querySelector(S.thinking);
       if(thEl) thinking = textWithout(thEl, ".zs-chip").trim();
     }catch{}
-    return{present:true, reply: textWithout(it,".zs-chip").trim(), thinking, item:it};
+    return{present:true, reply: textWithout(it,".zs-chip, " + S.thinking).trim(), thinking, item:it};
   }
   async function waitFor(pred, timeout){
     const t0=Date.now();
@@ -440,27 +409,20 @@ const ZSProvider = (() => {
       }
       if(images && images.length){
         try{ await attachImages(images); }catch{}
-        const t0=Date.now();
-        while(Date.now()-t0<25000){
-          const b=sendButton();
-          if(b && !b.disabled){ try{b.click();}catch{} }
-          if(await waitFor(()=> editorText().trim()==="" || !!stopButton(), 1200)) return;
-        }
+        await waitFor(()=>{const b=sendButton();return b && !b.disabled;},25000);
+        const b=sendButton();
+        if(!b || b.disabled)throw new Error("Claude attachment send not ready; nothing was sent");
+        b.click(); // one submission, never repeat a potentially accepted click
         return;
       }
+      if(!editorText().includes(text.slice(0,12)))throw new Error("Claude composer rejected the text; nothing was sent");
       await waitFor(()=>!!sendButton(),1500);
       if(!sendButton()) await unwedgeStopPersistently();
       const btn=sendButton();
       if(btn){
-        if(btn.disabled){ diag("send.disabled",{}); return; }
+        if(btn.disabled) throw new Error("Claude send button is disabled; nothing was sent");
         btn.click();
-        // Also dispatch Enter as backup for Claude's ProseMirror
-        await sleep(80);
-        if(editorText().trim()!==""){
-          const o={key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true,cancelable:true};
-          ed.dispatchEvent(new KeyboardEvent("keydown",o));
-          ed.dispatchEvent(new KeyboardEvent("keyup",o));
-        }
+        // A slow click may still succeed. Never follow it with Enter (duplicate send).
         return;
       }
       // Enter fallback
@@ -619,7 +581,7 @@ const ZSProvider = (() => {
 
   // MAX PROMPT EXTRA — ANTI-HALLUCINATION + MAX EFFORT for Claude
   const PROMPT_EXTRA = `━━━ CLAUDE MAX PROTOCOL — ANALYTICAL PERFECTION ━━━
-You are Claude MAX — Anthropic's most capable model. You execute with 1000× precision:
+You are the Claude tab registered with ZeroScript. Model tier and accuracy are not established by the extension.
 - NEVER HALLUCINATE: If you need an Instance path/property, inspect_instance FIRST. If command needs param, list_commands FIRST. Ground every claim in returned JSON.
 - MAX SPEED: One execute_luau = entire folder tree (20+ Instance.new via loop). Batch where possible. Use return to verify, not description.
 - STUDIO TOTAL CONTROL: You OWN Workspace, Lighting, ReplicatedStorage, ServerScriptService, StarterGui, Teams, SoundService, HttpService etc. For Play/Stop use start_stop_play {is_start:true/false}. For settings, execute_luau direct mutation + return verification.
@@ -628,6 +590,7 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
 
   return {
     id: "claude",
+    strictEditor: true,
     displayName: "Claude",
     timings,
     supportsVision: true,
@@ -637,6 +600,7 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
     coverTarget,
     coverMaxH: 320,
     init({diag:d}={}){ if(d) diag=d; try{document.documentElement.setAttribute("data-zs-claude-ver","2026-05-max")}catch{} },
+    getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,

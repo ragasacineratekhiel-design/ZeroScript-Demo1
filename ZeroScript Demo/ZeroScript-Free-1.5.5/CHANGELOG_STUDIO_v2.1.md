@@ -1,3 +1,5 @@
+> Historical release notes. Earlier performance, compatibility and security claims below are not current guarantees. See the repository README and 3.1 repair notes.
+
 # ZeroScript v2.1.0 — Studio Full-Access + Agent Super-Stability
 
 ## Release: v2.1.0 "Studio Unleashed" (on top of ULTRA v2.0.0)
