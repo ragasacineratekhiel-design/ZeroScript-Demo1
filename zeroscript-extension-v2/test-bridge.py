@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # test-bridge.py — lifecycle tests for the Python bridge.
-# 
+#
 # These exist because the bridge cannot be exercised by reading it. Each case
 # drives the real object and counts something the user would eventually feel:
 # file descriptors, surviving child processes, or tool tasks still burning time
 # for a socket that is already gone.
-# 
+#
 # Run: python test-bridge.py   (needs `websockets`; skips the WS cases without it)
 import asyncio
 import json
 import os
 import subprocess
 import sys
+import tempfile
+_TEST_DATA=tempfile.TemporaryDirectory(prefix="zs-lifecycle-")
+os.environ["ZS_DATA_DIR"]=_TEST_DATA.name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE_DIR = os.path.join(HERE, "..", "ZeroScript Demo", "ZeroScript-Free-1.5.5")
@@ -119,8 +122,8 @@ else:
                 n += sum(1 for t in tasks if not t.done())
             return n
 
-        ctx = await websockets.serve(bridge.handler, bridge.HOST, bridge.PORT, close_timeout=2)
-        uri = "ws://%s:%s" % (bridge.HOST, bridge.PORT)
+        ctx = await websockets.serve(bridge.handler, bridge.HOST, 0, close_timeout=2)
+        uri = "ws://%s:%s" % (bridge.HOST, ctx.sockets[0].getsockname()[1])
         hdr = {"X-ZS-Token": bridge.BRIDGE_TOKEN}
         ws = await websockets.connect(uri, additional_headers=hdr)
         await ws.recv()

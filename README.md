@@ -1,16 +1,30 @@
-# ZeroScript MAX 4.3.0 × Roblox Studio Agent
+# Integrated release 4.5.0 — existing MAX features + bridge teams
+
+This branch integrates main's execution modes, slash commands, static Luau sandbox, memory wall, plan wall, peer routing and fault instrumentation with authenticated bridge-team mailboxes, concurrent team startup, timestamped console, Python launcher and shared tab controls.
+
+**New setup:** run `python "ZeroScript Demo/ZeroScript-Free-1.5.5/start.py"` (`py -3` on Windows). Python and websockets must already be installed. The batch launcher is replaced, not required. See [team setup and communication evidence](docs/TEAM_SETUP.md).
+
+**Choose one orchestration path per tab:** normal Start keeps main's legacy execution/wall workflow. Joining a bridge team requires Start team in the popup; active bridge teams use their assigned role and bridge inbox, not legacy role rotation or peer-context injection. Leave the team before returning to normal Start. The legacy peer-wall channel is retained but does not appear in the bridge Team Console.
+
+**Validation:** `npm ci`, `python -m pip install -r requirements-dev.txt`, then `python scripts/validate.py`. Both the existing feature suites and new bridge/team/UI suites run. Mock tests do not establish live provider, Windows desktop or Roblox compatibility.
+
+---
+
+## Existing MAX features (retained from main)
+
+# ZeroScript MAX 4.5.0 × Roblox Studio Agent
 
 A browser extension (Chrome/Edge, MV3) that lets **any AI chat window** drive **Roblox Studio** through a
 local Python bridge. You talk to the AI; the extension reads its replies, finds the commands, runs them
 against Studio through the MCP server, and feeds the result back so the model can keep going.
 
 > **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select
-> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.3.0**.
+> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.5.0**.
 > If you still have an old `zeroscript-extension` card, remove it.
 
 ---
 
-## What 4.3.0 actually fixes
+## What 4.5.0 actually fixes
 
 This release exists because an audit of 4.2.0 (see [`ZeroScript-Audit.md`](ZeroScript-Audit.md)) found
 that several headline features were inert, and one bug stopped the product from working at all:
@@ -39,13 +53,13 @@ site redesign; the generic driver and the provider fallbacks exist for exactly t
 ## Requirements
 
 - **Node.js ≥ 18** — only for development/verification (`npm run verify`). The extension itself needs no build step and no npm install.
-- **Python 3.9+** with `websockets` — for the bridge (`start.bat` / `MacOS_START.command`).
+- **Python 3.9+** with `websockets` — for the bridge (`start.py` / `MacOS_START.command`).
 - **Roblox Studio** with *Assistant → Manage MCP Servers → Studio as MCP Server* enabled.
 
 ## Install
 
 1. `chrome://extensions` → Developer mode ON → **Load unpacked** → `zeroscript-extension-v2/`
-2. Start the bridge: **`start.bat`** (Windows) or `chmod +x MacOS_START.command && ./MacOS_START.command` (macOS).
+2. Start the bridge: **`py -3 start.py`** (Windows) or `chmod +x MacOS_START.command && ./MacOS_START.command` (macOS).
    Both live in `ZeroScript Demo/ZeroScript-Free-1.5.5/`. The bridge listens on `127.0.0.1:17613` (WS) and `127.0.0.1:17614` (HTTP).
 3. In Studio: **Assistant → Manage MCP Servers → Enable Studio as MCP Server**.
 4. Open any supported AI, start a **new chat**, press **▶ Start**.
@@ -123,11 +137,11 @@ no module calls an export that does not exist · versions agree · all four test
 
 ## Troubleshooting
 
-- **Card says 4.3.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
-- **Bar missing?** Check the extension is 4.3.0, then look for `#zs-bar` in the inspector.
+- **Card says 4.5.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
+- **Bar missing?** Check the extension is 4.5.0, then look for `#zs-bar` in the inspector.
 - **"Extension context invalidated"** — the extension was reloaded/updated under an open tab; reload the page.
 - **Loop/Continuous not continuing?** Check the Exec selector and watch for the budget banner; press Start again to continue.
-- **Nothing executes** — popup health first: bridge offline → run `start.bat`. Studio not connected → enable the MCP server in Studio.
+- **Nothing executes** — popup health first: bridge offline → run `start.py`. Studio not connected → enable the MCP server in Studio.
 - Diagnostics: `window.__zsDiag` (last 300 loop decisions), `window.__zsMemoryWall.stats()`, `window.__zsTransportStats()`.
 
 ## Licence

@@ -24,7 +24,7 @@
 //     runtime nil-derefs. No claim is made that it can.
 (() => {
   "use strict";
-  const VERSION = "4.4.0";
+  const VERSION = "4.5.0";
 
   // ── Tokenizer ────────────────────────────────────────────────────────────
   // Returns { tokens:[{type,value,line}], error } — never throws on bad input,

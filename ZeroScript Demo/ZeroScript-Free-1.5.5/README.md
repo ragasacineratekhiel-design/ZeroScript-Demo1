@@ -1,7 +1,7 @@
 # ZeroScript bridge (local MCP bridge)
 
 `bridge.py` connects the browser extension to Roblox Studio's MCP server. It is started by
-`start.bat` (Windows) or `MacOS_START.command` (macOS) and listens **only** on loopback:
+`start.py` (Windows) or `MacOS_START.command` (macOS) and listens **only** on loopback:
 
 | Endpoint | Purpose |
 |---|---|

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.4.0",
-  "description": "ZeroScript MAX 4.3.0 \u2014 verified agent loop, static Luau analyser, event-driven wall, honest telemetry",
+  "version": "4.5.0",
+  "description": "ZeroScript with bounded execution modes, memory/wall tools, authenticated bridge teams and tab recovery controls.",
   "permissions": [
     "storage",
     "alarms",
@@ -32,10 +32,7 @@
     "https://chat.mistral.ai/*",
     "https://*.mistral.ai/*",
     "http://127.0.0.1/*",
-    "http://127.0.0.1:17614/*",
-    "http://localhost/*",
-    "ws://127.0.0.1/*",
-    "ws://localhost/*"
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -413,5 +410,6 @@
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "minimum_chrome_version": "120"
 }

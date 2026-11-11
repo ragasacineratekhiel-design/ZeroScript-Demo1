@@ -94,7 +94,7 @@ check("the envelope demands a different provider", ok.envelope.requireDifferent 
 // ── 5. receiving: identity + addressing enforced ─────────────────────────
 const caught = [];
 P.onInbound((m) => caught.push(m));
-const inbound = { id: "in-1", v: "4.4.0", kind: "review", fromProvider: "claude", toProvider: "chatgpt", requireDifferent: true, payload: { text: "your loop leaks memory" } };
+const inbound = { id: "in-1", v: "4.5.0", kind: "review", fromProvider: "claude", toProvider: "chatgpt", requireDifferent: true, payload: { text: "your loop leaks memory" } };
 const r1 = P.receive(inbound, "test");
 check("a peer message is accepted", r1.ok === true, JSON.stringify(r1));
 check("it fires the inbound listener", caught.length === 1);

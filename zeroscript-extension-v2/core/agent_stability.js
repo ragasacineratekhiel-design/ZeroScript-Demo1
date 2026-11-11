@@ -8,14 +8,15 @@
 // honest: real-world polls, no fake millisecond claims
 const ZSAgentStability = (() => {
   "use strict";
-  function makeEditorHelper(getEditorFn, fallbacks = []) {
+  function makeEditorHelper(getEditorFn, fallbacks = [], strict = false) {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 2000 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
+      if (!strict && lastGood && now - lastGoodAt < 2000 && document.contains(lastGood) && lastGood.offsetParent!==null) return lastGood;
       let ed = null;
       try { ed = getEditorFn(); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.hardenedGetEditor", _e); }
-      if (ed && document.contains(ed) && ed.offsetParent!==null) { lastGood = ed; lastGoodAt = now; return ed; }
+      if (ed && document.contains(ed) && (strict || ed.offsetParent!==null)) { lastGood = ed; lastGoodAt = now; return ed; }
+      if(strict)return null;
       // ULTRA 3.4: scan all fallbacks bottom-biased instead of first-match (fixes ChatGPT fieldset drift)
       let best=null, bestY=-1;
       for (const sel of fallbacks) {
@@ -40,24 +41,26 @@ const ZSAgentStability = (() => {
           if (inner && inner.offsetParent !== null) { lastGood = inner; lastGoodAt = now; return inner; }
         }
       } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.hardenedGetEditor", _e); }
-      return ed || lastGood || null;
+      return ed && document.contains(ed) ? ed : null;
     };
   }
   function makeGenerationHelper(isGeneratingFn, opts = {}) {
-    const { idleMs = 80, streamCheck = null } = opts; // MAX 10ms 80ms tighter (was 800)
+    const { idleMs = 900, streamCheck = null } = opts; // MAX 900ms tighter
     let lastGenTrueAt = 0, lastLen = 0;
     return function hardenedIsGenerating() {
-      let gen = false;
-      try { gen = !!isGeneratingFn(); } catch { gen = false; }
+      let raw = false;
+      try { raw = !!isGeneratingFn(); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.hardenedIsGenerating", _e); }
+      let gen = raw;
       if (streamCheck) {
         try {
           const len = streamCheck();
           if (len > lastLen) { lastGenTrueAt = Date.now(); lastLen = len; gen = true; }
-          else if (gen) lastLen = len;
+          else if (len < lastLen || gen) lastLen = len;
           if (Date.now() - lastGenTrueAt < idleMs && lastLen > 0) gen = true;
         } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.hardenedIsGenerating", _e); }
       }
-      if (gen) lastGenTrueAt = Date.now();
+      // Only raw generation/growth extends the grace period; inferred truth must not feed itself.
+      if (raw) lastGenTrueAt = Date.now();
       return gen;
     };
   }
@@ -83,15 +86,17 @@ const ZSAgentStability = (() => {
         const s = await new Promise(res => { try { chrome.runtime.sendMessage({type:"status"}, r => res(r)); } catch { res(null); } });
         if (!s) return;
         const studio = s.studio;
+        if(typeof studio!=="boolean")return;
         if (lastStudio === null) lastStudio = studio;
         if (studio === false && lastStudio === true) {
           if (!dropSince) dropSince = Date.now();
-          if (Date.now() - dropSince > 2500 && onStudioDrop) try { onStudioDrop(s); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); } // ULTRA 2.5s (was 3s)
+          if (Date.now() - dropSince > 3000 && onStudioDrop) { try { onStudioDrop(s); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); } lastStudio = false; } // MAX 3s faster
           try { diag("studio.drop", {studio, since: Date.now()-dropSince}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); }
         } else if (studio === true) { dropSince = 0; lastStudio = true; }
-        if (studio !== null) lastStudio = studio;
+        // Keep the previous true state while a drop is being timed.
+        if (studio === true || (lastStudio === null && studio === false)) lastStudio = studio;
       } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); }
-    }, 400); // 400ms keepalive — a composer re-lock only needs to outpace a user edit
+    }, 1800); // MAX 1.8s poll
     return () => clearInterval(iv);
   }
   function startKeepalive(getEditor) {
@@ -131,7 +136,7 @@ const ZSAgentStability = (() => {
     try {
       const origGetEditor = P.getEditor.bind(P);
       const fb = FALLBACKS[P.id] || FALLBACKS.generic;
-      const hardGet = makeEditorHelper(origGetEditor, fb);
+      const hardGet = makeEditorHelper(origGetEditor, fb, !!P.strictEditor);
       P.getEditor = hardGet;
       if (P.editorText) {
         const origET = P.editorText.bind(P);
@@ -176,5 +181,5 @@ const ZSAgentStability = (() => {
   // undefined, while tryPatch still hardened the provider). The three setTimeout
   // retries and the 10ms/45-try interval above are the real re-patch path.
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.4.0" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.5.0" };
 })();

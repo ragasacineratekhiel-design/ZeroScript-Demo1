@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.4.0";
+  const WALL_VERSION = "4.5.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune

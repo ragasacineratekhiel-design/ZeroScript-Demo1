@@ -37,9 +37,12 @@ const ZSGenericProvider = (() => {
       if (n.nodeType === 3) { t += n.nodeValue; return; }
       if (n.nodeType !== 1) return;
       if (excludeSel && n.matches && n.matches(excludeSel)) return;
-      if (n.matches && n.matches(".zs-chip, .zs-hidden")) return;
-      if (n.tagName==="BR") { t+="\n"; return; }
+      if (n.matches && n.matches(".zs-chip")) return;
+      if(n.tagName==='BR'){t+='\n';return;}
+      const block=/^(P|DIV|PRE|LI|SECTION|ARTICLE|TR|H[1-6])$/.test(n.tagName);
+      if(block && t && !t.endsWith('\n'))t+='\n';
       for (const c of n.childNodes) walk(c);
+      if(block && !t.endsWith('\n'))t+='\n';
     };
     walk(root);
     return t;
@@ -68,12 +71,9 @@ const ZSGenericProvider = (() => {
     if (!el) return false;
     if (el.matches("[data-is-user='true'], [data-author='user'], [class*='user-message'], [data-is-user-message='true'], [data-message-author-role='user']")) return true;
     if (el.matches("[data-is-user='false'], [data-author='assistant'], [data-is-user-message='false'], [data-message-author-role='assistant']")) return false;
-    const all = allMessages();
-    const idx = all.indexOf(el);
-    if (idx >= 0) return idx % 2 === 0;
     return false;
   };
-  const isAssistantItem = (el) => !isUserItem(el);
+  const isAssistantItem = (el) => !!el && el.matches("[data-is-user='false'], [data-author='assistant'], [data-is-user-message='false'], [data-message-author-role='assistant'], [class*='assistant-message']");
   const allItems = () => allMessages();
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
@@ -235,6 +235,6 @@ const ZSGenericProvider = (() => {
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating, enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
     scanError, modeWarning, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
-    setMeta, _setMeta:setMeta, makeMeta, version:"4.4.0"
+    setMeta, _setMeta:setMeta, makeMeta, version:"4.5.0"
   };
 })();

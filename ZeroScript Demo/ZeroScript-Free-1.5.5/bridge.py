@@ -1,44 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# bridge.py — ZeroScript Bridge v3.5.1 TURBO 10ms SUPER FAST TRUTHFUL (all logic upgraded, designs untouched)
-# ──────────────────────────────────────────────────────────────────────────
-#  ZeroScript Bridge — Ultra-Fast Middle Layer
-#  Local WebSocket + HTTP/SSE <-> Roblox Studio MCP server
-#  The browser extension talks to this over:
-#    ws://127.0.0.1:<PORT>              (primary, binary-capable, compressed)
-#    http://127.0.0.1:<PORT_HTTP>/api/* (fallback, SSE, batch, long-poll)
-#
-#  Transport methods implemented (all possible for localhost):
-#    1) WebSocket (RFC6455) — primary, multiplexed, per-message-deflate,
-#       binary frames (msgpack/JSON), 16MB max, ping 5s, zero-copy where possible
-#    2) HTTP REST — POST /api/call, GET /api/tools, GET /api/status, POST /api/batch
-#    3) Server-Sent Events — GET /api/events (real-time status + tool progress)
-#    4) Long-Poll — GET /api/poll?since=... (fallback for strict CSP)
-#    5) In-memory queue via BroadcastChannel handled extension-side (shared WS)
-#    6) Batch endpoint — POST /api/batch (atomic multi-tool)
-#    7) Streaming tool output — incremental chunks over WS + SSE
-#
-#  Performance features:
-#    - asyncio-first MCP manager with thread-pool fallback for legacy stdio
-#    - Request pipelining & multiplexing (N concurrent calls over 1 WS)
-#    - Binary framing (JSON + optional msgpack if installed)
-#    - Response caching (tools list TTL 2s, studio probe TTL 1s)
-#    - TCP_NODELAY + SO_KEEPALIVE + TCP keepalive tuning (where OS allows)
-#    - orjson fast path if available, stdlib json otherwise
-#    - Parallel MCP server launch, parallel tool routing
-#    - Adaptive heartbeat 2s active / 10s idle, stale detection 4s active
-#    - Zero-copy pending queue via asyncio.Queue
-#    - Prefetch + coalesce duplicate in-flight requests
-#    - Connection pre-warming (extension opens at startup)
-#    - Keep-alive HTTP/1.1 with gzip where client accepts it
-#
-#  Reliability:
-#    - Exponential backoff with jitter, circuit breaker per server
-#    - Auth token (auto-generated, stored alongside config.json)
-#    - CORS + origin allowlist for local AI sites
-#    - Rate limit (token bucket per IP, generous for localhost)
-#    - Graceful shutdown, drain, auto-restart, zombie reclaim (kept from v1.5.5)
-#    - Metrics endpoint GET /api/metrics
-# ──────────────────────────────────────────────────────────────────────────
+# ZeroScript Bridge 3.1: authenticated loopback WebSocket/HTTP MCP proxy.
+# Studio mutations are never automatically hedged or replayed. Batches are
+# sequential, non-transactional and limited to 24 calls. The team hub stores
+# bounded in-memory mailboxes and delivery evidence; it does not call AI APIs.
+# Browser-origin bootstrap is restricted to extension backgrounds. Set
+# ZS_EXTENSION_ID to pin pairing to a particular unpacked extension ID.
+# Closing a chat/console cannot cancel Studio operations already in progress.
 import asyncio
 import base64
 import collections
@@ -47,6 +14,9 @@ import hashlib
 import json
 import os
 import queue
+import re
+import functools
+from team_hub import TeamHub, TeamError
 import secrets
 import socket
 import subprocess
@@ -105,14 +75,16 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="3.5.1 TURBO 10ms"
+BRIDGE_VERSION="4.5.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
 # WS on PORT (17613) and HTTP on PORT_HTTP (17614). Also HTTP multiplex on PORT via WS upgrade path.
 HERE=os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH=os.path.join(HERE,"config.json")
-TOKEN_PATH=os.path.join(HERE,".zs_token")
+DATA_DIR=os.environ.get("ZS_DATA_DIR", HERE)
+os.makedirs(DATA_DIR, exist_ok=True)
+CONFIG_PATH=os.path.join(DATA_DIR,"config.json")
+TOKEN_PATH=os.path.join(DATA_DIR,".zs_token")
 PRIMARY_SERVER_ID="roblox"
 
 if _enable_ansi_colors():
@@ -120,7 +92,7 @@ if _enable_ansi_colors():
 else:
     C={k:"" for k in ("reset","dim","gr","yl","rd","cy","act")}
 
-LOGS_DIR=os.path.join(HERE,"logs")
+LOGS_DIR=os.path.join(DATA_DIR,"logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 LOG_PATH=os.path.join(LOGS_DIR,"bridge_debug.log")
 try: _log_file=open(LOG_PATH,"a",encoding="utf-8",errors="replace")
@@ -183,7 +155,7 @@ class Metrics:
         }
 metrics=Metrics()
 
-# ── rate limit (token bucket, per IP, generous for localhost) ─────────
+# ── shared loopback rate limit (token bucket) ─────────
 class RateLimiter:
     def __init__(self, rps=250, burst=500):  # v2.2: higher throughput for batch/bulk ops
         self.rps=rps; self.burst=burst; self.tokens=burst; self.last=time.monotonic(); self.lock=threading.Lock()
@@ -195,7 +167,7 @@ class RateLimiter:
             return False
 _rate_limiter=RateLimiter()
 
-# ── agent hub temp store (bounded, TTL) ───────────────────────────────
+# ── LRU cache for idempotent queries ──────────────────────────────────
 _AGENT_TEMP = {}
 _AGENT_TEMP_LOCK = threading.Lock()
 _AGENT_TEMP_MAX = 256
@@ -227,10 +199,11 @@ def _agent_temp_keys():
             _AGENT_TEMP.pop(k, None)
         return list(_AGENT_TEMP.keys())
 
-# ── LRU cache for idempotent queries ──────────────────────────────────
 class TTLCache:
     def __init__(self, ttl=1.2, maxsize=512):  # v2.2: tighter TTL, larger cache for ultra-fast
         self.ttl=ttl; self.maxsize=maxsize; self.store={}; self.lock=threading.Lock()
+    def clear(self):
+        with self.lock: self.store.clear()
     def get(self,k):
         with self.lock:
             e=self.store.get(k)
@@ -246,15 +219,8 @@ class TTLCache:
                 oldest=min(self.store, key=lambda kk: self.store[kk][1])
                 self.store.pop(oldest,None)
             self.store[k]=(v, time.monotonic()+self.ttl)
-# HONEST (max-speed pass): these TTLs were shorter than the work they cache.
-# A status build fans out to _roblox_studio_app_running() (PowerShell/tasklist,
-# budgeted 8s) — caching that for 60ms means the cache missed on essentially every
-# request, so we paid for the cache AND re-ran the probe. A 0.5s/0.4s window
-# absorbs bursts (the popup, several provider tabs and a batch all ask at once)
-# while staying far below human perception for a status dot. Freshness that
-# matters (a tool call) never goes through these caches at all.
-_cache_tools=TTLCache(ttl=0.5)
-_cache_status=TTLCache(ttl=0.4)
+_cache_tools=TTLCache(ttl=1.2)
+_cache_status=TTLCache(ttl=0.8)  # v2.2: tighter for instant Studio drop detection
 
 # ── Spinner/log/banner (kept from v1.5.5) ───────────────────────────────
 class _Spinner:
@@ -325,14 +291,8 @@ def _roblox_studio_app_running():
     return "RobloxStudioBeta.exe" in out
 
 def _kill_orphan_studio_mcp():
-    if sys.platform!="win32": return
-    if _roblox_studio_app_running() is not False: return
-    try: out=subprocess.run(["tasklist","/FI","IMAGENAME eq StudioMCP.exe"],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=8).stdout
-    except: return
-    if "StudioMCP.exe" not in out: return
-    log("Found leftover StudioMCP.exe with no Studio running — cleaning up (phantom 'Studio connected').","yl")
-    try: subprocess.run(["taskkill","/F","/IM","StudioMCP.exe"],capture_output=True,text=True,timeout=8)
-    except Exception as e: log(f"could not clean up orphaned StudioMCP.exe: {e}","rd")
+    # Other MCP clients may own these processes. Never kill them by image name.
+    return False
 
 def _descendant_pids(root_pid):
     if sys.platform!="win32": return None
@@ -351,19 +311,8 @@ def _descendant_pids(root_pid):
     return pids
 
 def _reclaim_studio_port(client):
-    owner=_port_owner(STUDIO_MCP_PORT)
-    if not owner: return False
-    pid,name,path=owner
-    if "studiomcp" not in (name or "").lower(): return False
-    try: pid_i=int(pid)
-    except: return False
-    if client is not None and client.proc is not None and client.is_alive():
-        tree=_descendant_pids(client.proc.pid)
-        if tree is None or pid_i in tree: return False
-    log(f"port {STUDIO_MCP_PORT} held by StudioMCP.exe pid {pid_i} not launched by us — reclaiming.","yl")
-    try: subprocess.run(["taskkill","/F","/PID",str(pid_i)],capture_output=True,text=True,timeout=8)
-    except Exception as e: log(f"could not kill leftover StudioMCP.exe: {e}","rd"); return False
-    log(f"killed leftover StudioMCP.exe pid {pid_i}","cy"); return True
+    # A port conflict is not permission to terminate another client's process.
+    return False
 
 def _process_cmdline(pid):
     if sys.platform!="win32": return ""
@@ -372,38 +321,14 @@ def _process_cmdline(pid):
     return (out or "").strip()
 
 def _reclaim_bridge_port():
-    owner=_port_owner(PORT)
-    if not owner: return False
-    pid,name,path=owner
-    try: pid_i=int(pid)
-    except: return False
-    if pid_i==os.getpid(): return False
-    if "python" not in (name or "").lower() and "py"!=(name or "").lower(): return False
-    cmdline=_process_cmdline(pid_i)
-    if "bridge.py" not in cmdline.lower():
-        log(f"port {PORT} held by pid {pid_i} ('{name}') — not a ZeroScript bridge, leaving alone.","yl"); return False
-    log(f"port {PORT} held by leftover bridge pid {pid_i} — killing so this one can start.","yl")
-    try: subprocess.run(["taskkill","/F","/PID",str(pid_i)],capture_output=True,text=True,timeout=8)
-    except Exception as e: log(f"could not kill leftover bridge pid {pid_i}: {e}","rd"); return False
-    log(f"killed leftover bridge pid {pid_i}","cy"); return True
+    owner = _port_owner(PORT)
+    if owner:
+        log(f"Port {PORT} is occupied by {owner[1]} (PID {owner[0]}). Close the old bridge yourself; no process was killed.", "yl")
+    return False
 
 def _kill_port_squatter():
-    owner=_port_owner(STUDIO_MCP_PORT)
-    if owner:
-        pid,name,path=owner
-        if "roblox" in (path or "").lower() or "studiomcp" in (name or "").lower(): return False,None
-        log(f"port {STUDIO_MCP_PORT} hijacked by '{name}' pid {pid} {path}","yl")
-        try: subprocess.run(["taskkill","/F","/PID",str(pid)],capture_output=True,text=True,timeout=8)
-        except Exception as e: log(f"could not kill '{name}': {e}","rd"); return False,name
-        log(f"killed '{name}'","cy"); return True,name
-    log(f"port {STUDIO_MCP_PORT} hijacked but owner unresolvable (IPv6?)","yl")
-    killed_name=None
-    for img in ("ropilot-infra-helper.exe","ropilot-infra.exe","ropilot.exe"):
-        try: res=subprocess.run(["taskkill","/F","/IM",img],capture_output=True,text=True,timeout=8)
-        except: continue
-        if res.returncode==0: killed_name=img; log(f"killed '{img}' (known squatter)","cy")
-    if killed_name: return True,killed_name
-    log(f"    netstat -ano | findstr {STUDIO_MCP_PORT} then taskkill that PID","yl"); return False,None
+    log(f"Port {STUDIO_MCP_PORT} conflicts with another app. No application was terminated.", "yl")
+    return False, None
 
 def _print_squatter_hint(name):
     app=name or "the other app"
@@ -435,31 +360,50 @@ def _read_config():
     except Exception as e:
         log(f"config.json unreadable: {e}","rd"); return {"mcpServers":{}}
 
+_config_lock=threading.RLock()
+def _serialized_config(fn):
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        with _config_lock: return fn(*args, **kwargs)
+    return wrapped
+
+def _write_config(cfg):
+    temp=CONFIG_PATH+".tmp"
+    with open(temp,"w",encoding="utf-8") as f:
+        json.dump(cfg,f,indent=2); f.flush(); os.fsync(f.fileno())
+    os.replace(temp,CONFIG_PATH)
+
+@_serialized_config
 def config_add_server(server_id, command, args, env):
-    if not server_id or not command: return False, "server_id and command required"
+    if not isinstance(server_id,str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}",server_id): return False,"invalid server ID"
+    if not isinstance(command,str) or not command.strip() or len(command)>4096: return False,"command required"
+    if args is not None and (not isinstance(args,list) or len(args)>100 or any(not isinstance(a,str) for a in args)): return False,"args must be strings"
+    if env is not None and (not isinstance(env,dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in env.items())): return False,"env must map strings to strings"
     if server_id==PRIMARY_SERVER_ID: return False, "cannot modify primary server"
     cfg=_read_config(); servers=cfg.setdefault("mcpServers",{})
     if server_id in servers: return False, "server already exists"
     servers[server_id]={"command":command,"args":args or [],"env":env or {}}
     try:
-        with open(CONFIG_PATH,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2)
+        _write_config(cfg)
     except Exception as e: return False,f"could not write config.json: {e}"
     return True,None
 
+@_serialized_config
 def config_remove_server(server_id):
     if server_id==PRIMARY_SERVER_ID: return False,"cannot remove primary server"
     cfg=_read_config(); servers=cfg.get("mcpServers",{})
     if server_id not in servers: return False,"server not found"
     del servers[server_id]
     try:
-        with open(CONFIG_PATH,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2)
+        _write_config(cfg)
     except Exception as e: return False,f"could not write config.json: {e}"
     return True,None
 
 def restart_self():
     log("restarting bridge to reload config...","yl")
-    try: mgr.stop_all()
-    except Exception: pass
+    try:
+        mgr.stop_all()
+    except: pass
     if _log_file:
         try: _log_file.flush()
         except: pass
@@ -520,18 +464,21 @@ class MCPClient:
                 self.saw_foreign_ws_host=False
                 self._reader_thread=threading.Thread(target=self._reader,args=(self.proc,),daemon=True); self._reader_thread.start()
                 threading.Thread(target=self._stderr_drain,args=(self.proc,),daemon=True).start()
-                self._request("initialize",{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"zeroscript-bridge","version":BRIDGE_VERSION}},timeout=30)
+                init=self._request("initialize",{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"zeroscript-bridge","version":BRIDGE_VERSION}},timeout=15)
+                if not init or "result" not in init or init.get("error"):
+                    self.stop()
+                    raise RuntimeError(f"MCP initialize failed: {init}")
                 self._notify("notifications/initialized")
                 for _ in range(12):
                     if self.refresh_tools(timeout=3): break
                     if not self.is_alive(): break
-                    time.sleep(0.01)  # TURBO 10ms
+                    time.sleep(1.0)
             log(f"[{self.id}] MCP up ({len(self.tools_cache)} tools)","cy")
 
     def is_alive(self): return self.proc is not None and self.proc.poll() is None
 
     def restart(self):
-        log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.01); self.start()  # TURBO 10ms
+        log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.4); self.start()
 
     def stop(self):
         with self.pend_lock:
@@ -539,25 +486,16 @@ class MCPClient:
                 try: q.put_nowait(None)
                 except: pass
             self.pending.clear()
-        proc=self.proc
-        self.proc=None
-        if proc is None: return
-        try:
-            if sys.platform=="win32": subprocess.run(["taskkill","/F","/T","/PID",str(proc.pid)],capture_output=True,timeout=8)
-            else: proc.terminate()
-        except Exception: pass
-        # wait() + closed pipes. Without these every restart leaks three pipe
-        # descriptors and (on POSIX) leaves an unreaped child, so a bridge that
-        # restarted a studio MCP server a few dozen times ran out of fds.
-        try: proc.wait(timeout=5)
-        except Exception:
-            # still running: the terminate was ignored, so make it certain
-            try: proc.kill(); proc.wait(timeout=3)
-            except Exception: pass
-        for stream in (proc.stdin,proc.stdout,proc.stderr):
+        if self.proc:
             try:
-                if stream is not None: stream.close()
-            except Exception: pass
+                if sys.platform=="win32": subprocess.run(["taskkill","/F","/T","/PID",str(self.proc.pid)],capture_output=True,timeout=8)
+                else:
+                    self.proc.terminate()
+                    try: self.proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired: self.proc.kill(); self.proc.wait(timeout=3)
+            except: pass
+        self.proc=None
+        self.tools_cache=[]
 
     def _reader(self,proc):
         stream=proc.stdout
@@ -577,10 +515,11 @@ class MCPClient:
                 except: pass
         code=proc.poll(); self.last_exit=code
         log(f"[{self.id}] stdout closed (exit {code})","rd")
-        with self.pend_lock:
-            for q in self.pending.values():
-                try: q.put_nowait(None)
-                except: pass
+        if proc is self.proc:
+            with self.pend_lock:
+                for q in self.pending.values():
+                    try: q.put_nowait(None)
+                    except: pass
 
     def _stderr_drain(self,proc):
         try:
@@ -615,38 +554,40 @@ class MCPClient:
 
     def refresh_tools(self,timeout=20):
         msg=self._request("tools/list",{},timeout=timeout)
-        if msg and "result" in msg: self.tools_cache=msg["result"].get("tools",[])
+        if msg and "result" in msg and not msg.get("error"):
+            self.tools_cache=msg["result"].get("tools",[])
+        else:
+            self.tools_cache=[]
         return self.tools_cache
 
     def call_tool(self,name,arguments,timeout):
-        with self.call_lock:
+        deadline=time.monotonic()+timeout
+        if not self.call_lock.acquire(timeout=timeout):
+            raise TimeoutError("Server busy; request was not executed")
+        try:
             # circuit breaker check
             if time.monotonic() < self._circuit_open_until:
                 raise RuntimeError(f"server '{self.id}' circuit open — cooling down, try again briefly")
-            for attempt in (1,2):
-                if not self.is_alive(): self.restart()
-                msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
-                if msg is None:
-                    if not self.is_alive():
-                        self.restart()
-                        msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
-                    if msg is None:
-                        self._fail_count+=1
-                        if self._fail_count>=3: self._circuit_open_until=time.monotonic()+10
-                        raise TimeoutError(f"No response from '{self.id}' after {timeout}s")
-                if msg.get("error"):
-                    err=msg["error"]; err_text=err.get("message",json.dumps(err))
-                    if attempt==1 and _looks_like_transient_studio_drop(err_text):
-                        log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.01); continue  # TURBO 10ms
-                    self._fail_count+=1; raise RuntimeError(err_text)
-                content=msg.get("result",{}).get("content",[])
-                text="\n".join(it.get("text","") for it in content if it.get("type")=="text")
-                images=[{"data":it["data"],"mimeType":it.get("mimeType","image/jpeg")} for it in content if it.get("type")=="image" and it.get("data")]
-                if not text and not images and content: text=json.dumps(content)[:4000]
-                if attempt==1 and _looks_like_transient_studio_drop(text):
-                    log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(0.01); continue  # TURBO 10ms
-                self._fail_count=0  # success resets circuit
-                return {"text":text,"images":images}
+            if not self.is_alive(): self.restart()
+            remaining=deadline-time.monotonic()
+            if remaining<=0: raise TimeoutError("Request expired before execution")
+            msg=self._request("tools/call",{"name":name,"arguments":arguments},remaining)
+            if msg is None:
+                self._fail_count+=1
+                if self._fail_count>=3: self._circuit_open_until=time.monotonic()+10
+                raise TimeoutError(f"No response from '{self.id}' after {timeout}s. Outcome unknown; not retried. Inspect state before retrying a mutation.")
+            result=msg.get("result",{})
+            content=result.get("content",[])
+            text="\n".join(it.get("text","") for it in content if it.get("type")=="text")
+            if msg.get("error") or result.get("isError"):
+                self._fail_count+=1
+                if self._fail_count>=3: self._circuit_open_until=time.monotonic()+10
+                raise RuntimeError(msg.get("error",{}).get("message") or text or "MCP tool reported isError")
+            images=[{"data":it["data"],"mimeType":it.get("mimeType","image/jpeg")} for it in content if it.get("type")=="image" and it.get("data")]
+            if not text and not images and content: text=json.dumps(content)[:4000]
+            self._fail_count=0
+            return {"text":text,"images":images}
+        finally: self.call_lock.release()
 
 # ── MANAGER ─────────────────────────────────────────────────────────────
 class MCPManager:
@@ -658,14 +599,16 @@ class MCPManager:
     def stop_all(self):
         for sid,client in list(self.clients.items()):
             try: client.stop()
-            except Exception as e: log(f"[{sid}] stop failed: {e}","yl")
+            except Exception as exc: log(f"[{sid}] stop failed: {exc}","yl")
         with self.index_lock: self.index={}
 
     def start_all(self):
         threads=[]
         for sid,client in self.clients.items():
             def _run(sid=sid,client=client):
-                try: client.start()
+                try:
+                    client.start()
+                    self.rebuild_index()  # publish fast servers without waiting for slow addons
                 except Exception as e: log(f"[{sid}] failed: {e}","rd")
             t=threading.Thread(target=_run,daemon=True); t.start(); threads.append(t)
         for t in threads: t.join()
@@ -693,15 +636,16 @@ class MCPManager:
                 spec=None
                 for t in (holder.tools_cache or []):
                     if t.get("name")==real: spec=t; break
-                if spec: out.append({"name":adv,"description":spec.get("description",""),"inputSchema":spec.get("inputSchema",{})})
-                else: out.append({"name":adv,"description":"","inputSchema":{}})
+                if spec: out.append({"name":adv,"description":spec.get("description",""),"inputSchema":spec.get("inputSchema",{}),"server":holder.id})
+                else: out.append({"name":adv,"description":"","inputSchema":{},"server":holder.id})
             return out
     def call(self,name,arguments,timeout):
         with self.index_lock: entry=self.index.get(name)
         if entry is None:
             # try bare fallback
-            for adv,(h,r) in self.index.items():
-                if r==name: entry=(h,r); break
+            with self.index_lock:
+                matches=[(h,r) for adv,(h,r) in self.index.items() if r==name]
+            if len(matches)==1: entry=matches[0]
         if entry is None: raise RuntimeError(f"unknown tool '{name}' — valid: {', '.join(self.index.keys()) or 'none'}")
         holder,real=entry
         return holder.call_tool(real,arguments,timeout)
@@ -726,7 +670,7 @@ clients_lock=threading.Lock()
 # ── studio probe ────────────────────────────────────────────────────────
 STUDIO_PROBE_TOOL="list_roblox_studios"
 STUDIO_STATE_TOOL="get_studio_state"
-NO_PLACE_MARKERS=("doesn't have a place","no place opened","place opened","has disconnected","no active studio")
+NO_PLACE_MARKERS=("doesn't have a place","no place opened","has disconnected","no active studio")
 def _probe_tool_text(tool):
     with mgr.index_lock: entry=mgr.index.get(tool)
     if entry is None: return None
@@ -760,21 +704,13 @@ def probe_studio():
 # DataModel tree, bulk ops, asset handling, and never loses Studio connection.
 STUDIO_ALL_SERVICES = [
     "Workspace","Lighting","ReplicatedStorage","ReplicatedFirst","ServerStorage",
-    "ServerScriptService","StarterGui","StarterPack","StarterPlayer","StarterPlayerScripts",
-    "StarterCharacterScripts","Teams","SoundService","Chat","LocalizationService",
+    "ServerScriptService","StarterGui","StarterPack","StarterPlayer",
+    "Teams","SoundService","Chat","LocalizationService",
     "TestService","HttpService","TweenService","RunService","UserInputService",
     "ContextActionService","CollectionService","DataStoreService","MemoryStoreService",
     "MarketplaceService","InsertService","AssetService","ContentProvider",
-    "StarterPlayerScripts","Players","ReplicatedStorage","ServerScriptService"
+    "Players"
 ]
-# HONEST (max-speed pass): this constant was DECLARED AND NEVER READ — a fake
-# tuning knob. The values that actually drive latency are below, and they are the
-# ones that matter. probe_studio() shells out (PowerShell/tasklist, up to 8s), so
-# its cadence is deliberately conservative: polling it faster would only spawn
-# more processes, not make Studio appear sooner.
-STUDIO_PROBE_CONFIRM_S = 0.35   # re-probe after "app running" to reject a flapping read (was 1.5s)
-STUDIO_PROBE_RETRY_S   = 0.5    # gap between retries while waiting for Studio to attach (was 1.0s)
-STUDIO_PROBE_RETRIES   = 12     # 12 x 0.5s = 6s window (was 8 x 1.0s)
 _studio_last_ok = time.time()
 _studio_consec_fails = 0
 
@@ -793,55 +729,51 @@ def studio_heartbeat_check():
         _studio_consec_fails += 1
         return False
 
-def studio_full_tree(max_depth=4):
-    # Access full Studio hierarchy via inspect_instance on root services
-    root = {"services": {}, "ok": True, "truncated": False}
-    for svc in STUDIO_ALL_SERVICES[:14]:  # batch first 14 core services to avoid flood
-        try:
-            txt = _probe_tool_text("inspect_instance")
-            # fallback: use direct call if probe not available
-            with mgr.index_lock:
-                entry = mgr.index.get("inspect_instance")
-            if not entry:
-                continue
-            holder, real = entry
-            if not holder.is_alive():
-                continue
-            # call with short timeout to avoid hanging bridge
-            msg = holder._request("tools/call", {"name": real, "arguments": {"path": svc}}, timeout=4)
-            if msg and msg.get("result"):
-                content = msg["result"].get("content",[])
-                text = "\n".join(it.get("text","") for it in content if it.get("type")=="text")
-                if text:
-                    root["services"][svc] = text[:3000]
-        except: pass
+def studio_full_tree(max_depth=2):
+    # inspect_instance returns a summary, not a recursively complete DataModel.
+    root={"services":{},"ok":True,"truncated":True,"requested_depth":max_depth,"note":"Service summaries only; inspect child paths separately.","errors":{}}
+    for svc in dict.fromkeys(STUDIO_ALL_SERVICES):
+        if svc in ("StarterPlayerScripts","StarterCharacterScripts"): continue
+        result=safe_call("inspect_instance",{"path":svc},4)
+        if result.get("ok"): root["services"][svc]=result["text"]
+        else: root["errors"][svc]=result.get("error")
+    root["ok"]=not root["errors"]
     return root
 
-def studio_exec_sandbox(code, timeout=20, datamodel="Edit"):
-    # Hardened execute_luau with timeout + retry + truncation guard
+def studio_exec(code, timeout=20, datamodel="Edit"):
+    # Forward once. Studio/MCP supplies any execution restrictions, not this wrapper.
     try:
         return safe_call("execute_luau", {"code": code, "datamodel_type": datamodel}, timeout)
     except Exception as e:
         return {"ok": False, "error": str(e), "kind": "exec_fail"}
 
 def studio_bulk_ops(ops):
-    # ops: list of {tool, arguments} — executed transactionally with rollback hint
+    # Sequential operations; no rollback or transaction is promised.
     results = []
-    for op in ops[:16]:
+    if not isinstance(ops,list) or len(ops)>24 or any(not isinstance(op,dict) for op in ops): raise ValueError("Maximum 24 object operations; nothing executed")
+    for op in ops:
+        _timeout(op.get("timeout",12000))
+        if not isinstance(op.get("arguments",op.get("args",op.get("params",{}))),dict): raise ValueError("operation arguments must be an object")
+    for op in ops:
         name = op.get("tool") or op.get("command") or op.get("name") or ""
         args = op.get("arguments") or op.get("args") or op.get("params") or {}
-        t = float(op.get("timeout", 12000))/1000.0 if "timeout" in op else 12
-        # cap to 16 ops
+        t = _timeout(op.get("timeout",12000))
         results.append({"tool": name, **safe_call(name, args, t)})
-        # if critical failure, stop but don't hide previous successes
-        if not results[-1].get("ok") and "unknown tool" in results[-1].get("error","").lower():
-            break
-    return {"ok": True, "results": results}
+    return {"ok": all(r.get("ok") for r in results), "results": results, "atomic": False}
 
+_tool_slots=threading.BoundedSemaphore(16)
 def safe_call(name,arguments,timeout):
-    try: result=mgr.call(name,arguments,timeout); return {"ok":True,"text":result["text"],"images":result["images"]}
-    except TimeoutError as e: return {"ok":False,"error":str(e)+ " — TIP: large simulator builds may hit timeout; split into smaller execute_luau blocks or multi_edits.","kind":"timeout"}
+    if not isinstance(name,str) or not name or not isinstance(arguments,dict): return {"ok":False,"error":"tool name and object arguments required","kind":"validation"}
+    if not isinstance(timeout,(int,float)) or not 0 < timeout <= 120: return {"ok":False,"error":"timeout must be 1–120000 ms","kind":"validation"}
+    if not _tool_slots.acquire(blocking=False): return {"ok":False,"error":"Bridge busy; no execution started","kind":"busy"}
+    try:
+        result=mgr.call(name,arguments,timeout)
+        return {"ok":True,"text":result["text"],"images":result["images"]}
+    except TimeoutError as e: return {"ok":False,"error":str(e)+ " — Inspect Studio state before retrying: an already-started operation may have completed.","kind":"timeout"}
     except Exception as e: return {"ok":False,"error":str(e),"kind":type(e).__name__}
+    finally:
+        _cache_status.clear()
+        _tool_slots.release()
 
 async def run_tool_task(ws,name,args,timeout,rid):
     t0=time.monotonic()
@@ -851,7 +783,7 @@ async def run_tool_task(ws,name,args,timeout,rid):
     tag="gr" if res.get("ok") else "rd"; summary=(res.get("text") or res.get("error") or "")[:80].replace("\n"," "); slow="  [SLOW]" if elapsed>5 else ""
     log(f"<- {name} ({elapsed:.1f}s){slow}: {summary}",tag, terminal=not res.get("ok") or elapsed>5)
     # Invalidate caches that may be stale after a mutating tool
-    try: _cache_tools.store.clear(); _cache_status.store.clear()
+    try: _cache_tools.clear(); _cache_status.clear()
     except: pass
     # Broadcast update to SSE clients via event queue
     _push_event({"type":"tool_result","tool":name,"ok":res.get("ok"),"elapsed":round(elapsed,2)})
@@ -884,88 +816,47 @@ async def broadcast_status():
         except: pass
 
 # ── HTTP handler (all methods) ─────────────────────────────────────────
-# HONEST FIX (audit #23): this list had 11 entries while the extension ships
-# content scripts for 20 hosts, so claude.ai / grok.com / x.ai / poe.com /
-# copilot.microsoft.com / chat.mistral.ai / perplexity.ai all received
-# "Access-Control-Allow-Origin: *" — i.e. any origin was trusted on those sites.
-ALLOWED_ORIGINS=[
-    "https://chat.deepseek.com","https://deepseek.com","https://chatgpt.com","https://chat.openai.com",
-    "https://gemini.google.com","https://claude.ai","https://www.kimi.ai","https://kimi.ai",
-    "https://chat.z.ai","https://chat.qwen.ai","https://arena.ai","https://www.meta.ai","https://meta.ai",
-    "https://www.perplexity.ai","https://perplexity.ai","https://copilot.microsoft.com",
-    "https://grok.com","https://x.ai","https://poe.com","https://chat.mistral.ai",
-    # the extension's own pages / devtools and the local origin used by the popup
-    "chrome-extension://","http://127.0.0.1","http://localhost","null",
-]
+# Browser pages never call this API directly: only the extension background does.
+# Set ZS_EXTENSION_ID to pin bootstrap and WS origins to one installed extension.
+def _allowed_origin(origin):
+    if not origin: return True  # local console / extension GET may omit Origin
+    extension_id=os.environ.get("ZS_EXTENSION_ID", "")
+    return bool(re.fullmatch(r"chrome-extension://[a-p]{32}",origin)) and (not extension_id or origin=="chrome-extension://"+extension_id)
 
-def _cors_headers(handler, origin="*"):
-    # exact match, or a chrome-extension:// origin (extension id is unknown at build time).
-    # Anything else gets NO allow-origin header at all — the browser then blocks the
-    # response instead of us handing out "*" to every origin on the internet.
-    allow = None
-    if origin in ALLOWED_ORIGINS: allow = origin
-    elif isinstance(origin,str) and origin.startswith("chrome-extension://") and "chrome-extension://" in ALLOWED_ORIGINS: allow = origin
-    if allow: handler.send_header("Access-Control-Allow-Origin", allow)
+def _cors_headers(handler, origin=""):
+    if origin and _allowed_origin(origin):
+        handler.send_header("Access-Control-Allow-Origin",origin)
+        handler.send_header("Vary","Origin")
     handler.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers","Content-Type, Authorization, X-ZS-Token, X-Requested-With")
-    handler.send_header("Access-Control-Expose-Headers","Content-Type")
+    handler.send_header("Access-Control-Allow-Headers","Content-Type, Authorization, X-ZS-Token, X-ZS-Client")
 
 def _check_auth(handler):
-    """SECURITY (honest fix, audit #22).
-
-    The old version returned True when NO token was supplied, with the comment
-    "local bridge allows unauth for backwards compat". That made the token
-    decorative: any local process - or a web page abusing DNS rebinding - could
-    POST /api/call and run arbitrary Luau in the user's Roblox Studio.
-
-    Now: the token is REQUIRED for every state-changing endpoint. It is accepted
-    from the X-ZS-Token header, the Authorization header, or a query parameter
-    (query param is needed by the SSE/EventSource path, which cannot set headers).
-    A short allowlist of read-only endpoints stays open so `/health` and
-    `/api/status` can be used by installers and the popup before a token is known.
-    Set ZS_NO_AUTH=1 to restore the old behaviour for local development.
-    """
     if NO_AUTH: return True
-    tok = handler.headers.get("X-ZS-Token") or handler.headers.get("Authorization","").replace("Bearer ","").strip()
-    if not tok:
-        try:
-            qs = parse_qs(urlparse(handler.path).query)
-            tok = (qs.get("token") or qs.get("t") or [""])[0]
-        except Exception:
-            tok = ""
-    if not tok:
-        # optional trusted local caller: a browser extension that cannot know the
-        # token yet still gets read-only access, never tool execution.
-        if _is_read_only(handler): return True
-        log("[auth] REJECTED unauthenticated request to " + str(getattr(handler, "path", "?")), "yl")
-        return False
-    try:
-        return secrets.compare_digest(str(tok), str(BRIDGE_TOKEN))
-    except Exception:
-        return False
+    tok=handler.headers.get("X-ZS-Token") or handler.headers.get("Authorization","").removeprefix("Bearer ").strip()
+    return bool(tok) and secrets.compare_digest(tok,BRIDGE_TOKEN)
 
-READ_ONLY_PATHS = ("/", "/health", "/api/health", "/api/status", "/status", "/api/metrics", "/metrics")
-def _is_read_only(handler):
-    try:
-        path = urlparse(handler.path).path
-    except Exception:
-        return False
-    if getattr(handler, "_zs_method", "GET") not in ("GET", "HEAD", "OPTIONS"):
-        return False
-    return path in READ_ONLY_PATHS
+def _timeout(value=120000):
+    if isinstance(value,bool): raise ValueError("invalid timeout")
+    val=float(value)
+    if not 0 < val <= 120000: raise ValueError("timeout must be greater than 0 and at most 120000 ms")
+    return val/1000
+
+team_hub=TeamHub()
 
 class ZSHttpHandler(BaseHTTPRequestHandler):
-    _zs_method = "GET"
-    def _zs_set_method(self, m): self._zs_method = m
     def log_message(self, format, *args):  # suppress default stderr noise, use our log
         try: log(f"[http] {self.address_string()} {format%args}","dim",terminal=False)
         except: pass
     def _set_headers(self, code=200, ctype="application/json", origin="*"):
         self.send_response(code); _cors_headers(self, origin); self.send_header("Content-Type",ctype); self.send_header("Cache-Control","no-store"); self.end_headers()
     def do_OPTIONS(self):
-        origin=self.headers.get("Origin","*"); self._set_headers(200,ctype="text/plain",origin=origin)
+        origin=self.headers.get("Origin","")
+        if not _allowed_origin(origin): self._send_json({"ok":False,"error":"origin forbidden"},403); return
+        self._set_headers(204,ctype="text/plain",origin=origin)
     def _read_body(self):
+        self.connection.settimeout(10)
         n=int(self.headers.get("Content-Length","0") or 0)
+        if not 0 <= n <= 2*1024*1024: raise ValueError("body exceeds 2 MiB")
         if n: return self.rfile.read(n)
         return b""
     def _send_json(self,obj,code=200,origin="*"):
@@ -976,13 +867,26 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(code); _cors_headers(self,origin); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        self._zs_set_method("GET")
         metrics.http_requests+=1
         if not _rate_limiter.allow(): self._send_json({"ok":False,"error":"rate limited"},429); return
         origin=self.headers.get("Origin","*")
         parsed=urlparse(self.path); path=parsed.path
         # auth optional for GET status
-        if not _check_auth(self): self._send_json({"ok":False,"error":"unauthorized"},401,origin); return
+        if path in ("/api/token","/token"):
+            if not _allowed_origin(self.headers.get("Origin","")) or self.headers.get("X-ZS-Client")!="extension":
+                self._send_json({"ok":False,"error":"extension bootstrap required"},403); return
+            self._send_json({"ok":True,"token":BRIDGE_TOKEN},origin=origin); return
+        if path not in ("/","/health","/api/health") and not _check_auth(self): self._send_json({"ok":False,"error":"unauthorized"},401,origin); return
+        if path in ("/api/agent_temp","/agent_temp"):
+            qs=parse_qs(parsed.query); k=(qs.get("key") or [""])[0]
+            if k:
+                rec=_agent_temp_get(k)
+                self._send_json({"ok":bool(rec), **({"key":k,"value":rec["value"],"from":rec["from"],"ts":rec["ts"]} if rec else {"value":None})},origin=origin)
+            else:
+                self._send_json({"ok":True,"keys":_agent_temp_keys()},origin=origin)
+            return
+        if path=="/api/team/events":
+            self._send_json(team_hub.event_log(int((parse_qs(parsed.query).get("since") or ["0"])[0])),origin=origin); return
         if path in ("/","/health","/api/health"):
             self._send_json({"ok":True,"version":BRIDGE_VERSION,"port":PORT,"http_port":PORT_HTTP,"mcp_alive":mgr.any_alive(),"status":"ok"},origin=origin)
             return
@@ -1003,14 +907,6 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok":True,"tools":tools,"servers":mgr.health()},origin=origin)
             except Exception as e: self._send_json({"ok":False,"error":str(e)},500,origin)
             return
-        if path in ("/api/agent_temp","/agent_temp"):
-            qs=parse_qs(parsed.query); k=(qs.get("key") or [""])[0]
-            if k:
-                rec=_agent_temp_get(k)
-                self._send_json({"ok":bool(rec), **({"key":k,"value":rec["value"],"from":rec["from"],"ts":rec["ts"]} if rec else {"value":None})},origin=origin)
-            else:
-                self._send_json({"ok":True,"keys":_agent_temp_keys()},origin=origin)
-            return
         if path in ("/api/studio/tree","/studio/tree"):
             try:
                 qs=parse_qs(parsed.query); depth=int((qs.get("depth") or ["2"])[0])
@@ -1028,13 +924,10 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             return
         if path in ("/api/metrics","/metrics"):
             self._send_json({"ok":True,**metrics.snapshot()},origin=origin); return
-        if path in ("/api/token","/token"):
-            # expose token to local extension (localhost only, already restricted to 127.0.0.1 bind)
-            self._send_json({"ok":True,"token":BRIDGE_TOKEN},origin=origin); return
         if path in ("/api/events","/events"):
             # SSE stream
             self.send_response(200); self.send_header("Content-Type","text/event-stream"); self.send_header("Cache-Control","no-cache"); self.send_header("Connection","keep-alive"); _cors_headers(self,origin); self.end_headers()
-            q=queue.Queue()
+            q=queue.Queue(maxsize=100)
             with _event_lock: _event_queues.append(q)
             try:
                 self.wfile.write(b": connected\n\n"); self.wfile.flush()
@@ -1059,7 +952,7 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         if path in ("/api/poll","/poll"):
             qs=parse_qs(parsed.query); since=float((qs.get("since") or ["0"])[0] or 0)
             # long-poll: wait up to 20s for new event
-            q=queue.Queue()
+            q=queue.Queue(maxsize=100)
             with _event_lock: _event_queues.append(q)
             try:
                 # flush old
@@ -1081,54 +974,65 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         self._send_json({"ok":False,"error":"not found"},404,origin)
 
     def do_POST(self):
-        self._zs_set_method("POST")
         metrics.http_requests+=1
         if not _rate_limiter.allow(): self._send_json({"ok":False,"error":"rate limited"},429); return
         origin=self.headers.get("Origin","*")
         parsed=urlparse(self.path); path=parsed.path
         if not _check_auth(self): self._send_json({"ok":False,"error":"unauthorized"},401,origin); return
         body=self._read_body()
-        try: data=_loads(body) if body else {}
-        except: data={}
-        if path in ("/api/call","/api/call_tool","/call_tool","/call"):
-            name=data.get("name") or data.get("tool") or data.get("command") or ""
-            args=data.get("arguments") or data.get("args") or data.get("params") or {}
-            timeout=float(data.get("timeout",120000))/1000.0
-            if not name: self._send_json({"ok":False,"error":"missing tool name"},400,origin); return
-            t0=time.monotonic(); res=safe_call(name,args,timeout); elapsed=time.monotonic()-t0
-            metrics.record_tool(elapsed, ok=res.get("ok"))
-            self._send_json(res,origin=origin); return
-        if path in ("/api/batch","/batch"):
-            calls=data.get("calls") or data.get("tools") or []
-            if not isinstance(calls,list): self._send_json({"ok":False,"error":"calls must be array"},400,origin); return
-            # execute sequentially (per-server lock ensures safety), but pipeline fast
-            results=[]
-            for c in calls:
-                n=c.get("name") or c.get("tool") or c.get("command") or ""
-                a=c.get("arguments") or c.get("args") or c.get("params") or {}
-                t=float(c.get("timeout",120000))/1000.0
-                # cap batch size
-                if len(results)>=12: break
-                results.append({"name":n, **safe_call(n,a,t)})
-            self._send_json({"ok":True,"results":results},origin=origin); return
-        # ── AGENT HUB temp storage (audit #4) ────────────────────────────────
-        # The 4.2.0 extension has been calling /api/agent_temp for the
-        # extension-in-extension handoff, but the bridge never implemented it, so
-        # every write 404'd into an empty catch block. Implemented here with a
-        # bounded TTL store; the extension also keeps a chrome.storage mirror, so
-        # this is the cross-process fast path, not the only one.
+        data=_loads(body) if body else {}
+        if not isinstance(data,dict): raise ValueError("JSON body must be an object")
         if path in ("/api/agent_temp","/agent_temp"):
             k=str(data.get("key") or "")[:200]
             if not k: self._send_json({"ok":False,"error":"missing key"},400,origin); return
             ttl=float(data.get("ttl",120000))/1000.0
             _agent_temp_set(k, data.get("value"), data.get("from","agent"), ttl)
             self._send_json({"ok":True,"key":k},origin=origin); return
+        if path.startswith("/api/team/"):
+            member=data.get("member_id")
+            action=path.rsplit("/",1)[-1]
+            if action=="register": res=team_hub.register(member,data.get("name"),data.get("role"),data.get("team","studio"))
+            elif action=="status": res=team_hub.status(member)
+            elif action=="ready": res=team_hub.ready(member)
+            elif action=="leave": res=team_hub.leave(member)
+            elif action=="inbox": res=team_hub.inbox(member)
+            elif action=="ack": res=team_hub.ack(member,data.get("ids"))
+            elif action=="send": res=team_hub.send(member,data.get("to","all"),data.get("text"),data.get("message_id"))
+            elif action=="start": res=team_hub.start(data.get("team","studio"))
+            elif action=="stop": res=team_hub.stop(data.get("team","studio"))
+            else: raise ValueError("Unknown team action")
+            self._send_json(res,origin=origin); return
+        if path in ("/api/call","/api/call_tool","/call_tool","/call"):
+            name=data.get("name") or data.get("tool") or data.get("command") or ""
+            args=data.get("arguments") or data.get("args") or data.get("params") or {}
+            timeout=_timeout(data.get("timeout",120000))
+            if not name: self._send_json({"ok":False,"error":"missing tool name"},400,origin); return
+            t0=time.monotonic(); res=safe_call(name,args,timeout); elapsed=time.monotonic()-t0
+            metrics.record_tool(elapsed, ok=res.get("ok"))
+            _cache_status.clear()
+            self._send_json(res,origin=origin); return
+        if path in ("/api/batch","/batch"):
+            calls=data.get("calls") or data.get("tools") or []
+            if not isinstance(calls,list): self._send_json({"ok":False,"error":"calls must be array"},400,origin); return
+            if len(calls)>24 or any(not isinstance(c,dict) for c in calls): raise ValueError("Maximum 24 object calls; nothing executed")
+            for c in calls:
+                _timeout(c.get("timeout",120000))
+                if not isinstance(c.get("arguments",c.get("args",c.get("params",{}))),dict): raise ValueError("arguments must be an object")
+            results=[]
+            for c in calls:
+                n=c.get("name") or c.get("tool") or c.get("command") or ""
+                a=c.get("arguments") or c.get("args") or c.get("params") or {}
+                t=_timeout(c.get("timeout",120000))
+                # cap batch size
+                # Every accepted operation receives a result; never silently truncate.
+                results.append({"name":n, **safe_call(n,a,t)})
+            self._send_json({"ok":all(r.get("ok") for r in results),"results":results,"atomic":False},origin=origin); return
         if path in ("/api/studio/exec","/studio/exec"):
             code=data.get("code") or data.get("luau") or ""
             dm=data.get("datamodel_type") or data.get("datamodel") or "Edit"
-            timeout=float(data.get("timeout",20000))/1000.0
+            timeout=_timeout(data.get("timeout",20000))
             if not code: self._send_json({"ok":False,"error":"missing code"},400,origin); return
-            res=studio_exec_sandbox(code, timeout, dm); self._send_json(res,origin=origin); return
+            res=studio_exec(code, timeout, dm); self._send_json(res,origin=origin); return
         if path in ("/api/studio/bulk","/studio/bulk"):
             ops=data.get("ops") or data.get("calls") or []
             if not isinstance(ops,list): self._send_json({"ok":False,"error":"ops must be array"},400,origin); return
@@ -1156,9 +1060,45 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok":ok,"error":err,"alive":mgr.any_alive(),"servers":mgr.health(),"tools":mgr.list_tools()},origin=origin); return
         self._send_json({"ok":False,"error":"not found"},404,origin)
 
+def _guard_http(fn):
+    @functools.wraps(fn)
+    def guarded(self):
+        host=self.headers.get("Host","").split(":")[0]
+        origin=self.headers.get("Origin","")
+        if host not in ("127.0.0.1","localhost") or not _allowed_origin(origin):
+            self._send_json({"ok":False,"error":"host or origin forbidden"},403); return
+        try: return fn(self)
+        except (ValueError,TypeError,KeyError,OverflowError) as exc:
+            self._send_json({"ok":False,"error":str(exc)},400,origin)
+        except (BrokenPipeError,ConnectionError,TimeoutError): pass
+        except Exception as exc:
+            log(f"HTTP handler failed: {exc}","rd")
+            self._send_json({"ok":False,"error":"Internal bridge error; see log"},500,origin)
+    return guarded
+ZSHttpHandler.do_GET=_guard_http(ZSHttpHandler.do_GET)
+ZSHttpHandler.do_POST=_guard_http(ZSHttpHandler.do_POST)
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    def __init__(self,*args,**kwargs):
+        self.slots=threading.BoundedSemaphore(32)
+        super().__init__(*args,**kwargs)
+    def get_request(self):
+        request,address=super().get_request()
+        request.settimeout(10)
+        return request,address
+    def process_request(self,request,address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request); return
+        try: super().process_request(request,address)
+        except BaseException:
+            self.slots.release(); raise
+    def process_request_thread(self,request,address):
+        try: super().process_request_thread(request,address)
+        finally: self.slots.release()
+
 def _start_http_server():
     # Bind to 127.0.0.1 only
-    server=ThreadingHTTPServer((HOST,PORT_HTTP), ZSHttpHandler)
+    server=BoundedHTTPServer((HOST,PORT_HTTP), ZSHttpHandler)
     # socket tuning
     try:
         server.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -1177,37 +1117,22 @@ def _start_http_server():
     return server
 
 # ── WebSocket handler (upgraded) ────────────────────────────────────────
-# Fire-and-forget tasks must be retained: `asyncio.create_task` returns a weak
-# reference only, so an unreferenced task can be garbage-collected mid-flight and
-# its exception is never retrieved (asyncio logs it as "never retrieved" at best,
-# silently at worst). Everything spawned per-connection is registered here and
-# cancelled when that connection goes away.
-_CONN_TASKS={}   # id(ws) -> set[Task]; keyed by id() so the key is hashable and
-                 # the socket is not kept alive by the registry itself
-
-def _spawn(ws, coro, label):
-    key=id(ws)
-    tasks=_CONN_TASKS.setdefault(key,set())
-    task=asyncio.create_task(coro)
-    tasks.add(task)
-    def _done(t, key=key, label=label):
-        held=_CONN_TASKS.get(key)
-        if held is not None: held.discard(t)
-        if t.cancelled(): return
-        try: err=t.exception()
-        except asyncio.CancelledError: return
-        if err: log(f"[{label}] task failed: {err}","yl")
-    task.add_done_callback(_done)
-    return task
-
-def _cancel_conn_tasks(ws):
-    key=id(ws)
-    for t in list(_CONN_TASKS.get(key,())):
-        t.cancel()
-    _CONN_TASKS.pop(key,None)
+_CONN_TASKS = {}
 
 async def handler(ws):
+    headers=getattr(getattr(ws,"request",None),"headers",None) or getattr(ws,"request_headers",{})
+    path=getattr(getattr(ws,"request",None),"path",None) or getattr(ws,"path","")
+    token=headers.get("X-ZS-Token","") or (parse_qs(urlparse(path).query).get("token") or [""])[0]
+    if not _allowed_origin(headers.get("Origin","")) or (not NO_AUTH and (not token or not secrets.compare_digest(token,BRIDGE_TOKEN))):
+        await ws.close(code=1008,reason="Authentication required"); return
     peer=getattr(ws,"remote_address",("?",))[0]
+    task_slots=asyncio.Semaphore(16)
+    tasks=set()
+    _CONN_TASKS[ws]=tasks
+    def spawn(coro):
+        task=asyncio.create_task(coro); tasks.add(task); task.add_done_callback(tasks.discard)
+    async def bounded_tool(name,args,timeout,rid):
+        async with task_slots: await run_tool_task(ws,name,args,timeout,rid)
     with clients_lock: clients.add(ws)
     metrics.ws_connections=len(clients)
     # socket tuning if underlying socket accessible
@@ -1218,8 +1143,8 @@ async def handler(ws):
     log(f"extension connected ({peer}) [{len(clients)} client(s)]","gr")
     try:
         # initial hello with ultra capabilities
-        _st=await asyncio.to_thread(probe_studio)
-        hello={"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health(),"tools":mgr.list_tools(),"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION,"token":BRIDGE_TOKEN if not NO_AUTH else None,"caps":["ws","http","sse","poll","batch","binary" if HAS_MSGPACK else "json"]}
+        _st={"place":None,"app":None}
+        hello={"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health(),"tools":mgr.list_tools(),"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION,"caps":["ws","http","sse","poll","batch","binary" if HAS_MSGPACK else "json"]}
         await ws.send(_dumps(hello))
         async for raw in ws:
             # support binary msgpack frames
@@ -1233,90 +1158,96 @@ async def handler(ws):
                 metrics.bytes_in+=len(raw.encode() if isinstance(raw,str) else b"")
                 try: msg=_loads(raw) if isinstance(raw,(bytes,bytearray)) else json.loads(raw)
                 except: continue
-            mtype=msg.get("type"); rid=msg.get("id")
-            if mtype=="hello":
-                # client hello — negotiate caps, no-op but ack
-                await ws.send(_dumps({"type":"hello_ack","id":rid,"version":BRIDGE_VERSION,"caps":["ws","http","sse","poll","batch","binary"] }))
-            elif mtype=="ping":
-                await ws.send(_dumps({"type":"pong","id":rid,"ts":time.time()}))
-            elif mtype=="studio_status":
-                st=await asyncio.to_thread(probe_studio)
-                await ws.send(_dumps({"type":"studio_status","id":rid,"studio":st["place"],"studio_app":st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"mcp_alive":mgr.any_alive()}))
-            elif mtype=="list_tools":
-                # cache-aware with optional refresh flag
-                if msg.get("refresh") is False:
-                    tools=mgr.list_tools(refresh=False)
-                else:
-                    # use cache if fresh
-                    cached=_cache_tools.get("list_tools")
-                    if cached and not msg.get("force"): tools=cached
+            if not isinstance(msg,dict):
+                await ws.send(_dumps({"type":"error","error":"object message required"})); continue
+            try:
+                mtype=msg.get("type"); rid=msg.get("id")
+                if len(tasks)>=16 and mtype in ("call_tool","batch","subscribe"):
+                    await ws.send(_dumps({"type":"error","id":rid,"error":"Bridge busy; request not executed"})); continue
+                if mtype=="hello":
+                    # client hello — negotiate caps, no-op but ack
+                    await ws.send(_dumps({"type":"hello_ack","id":rid,"version":BRIDGE_VERSION,"caps":["ws","http","sse","poll","batch","binary"] }))
+                elif mtype=="ping":
+                    await ws.send(_dumps({"type":"pong","id":rid,"ts":time.time()}))
+                elif mtype=="studio_status":
+                    st=await asyncio.to_thread(probe_studio)
+                    await ws.send(_dumps({"type":"studio_status","id":rid,"studio":st["place"],"studio_app":st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"mcp_alive":mgr.any_alive()}))
+                elif mtype=="list_tools":
+                    # cache-aware with optional refresh flag
+                    if msg.get("refresh") is False:
+                        tools=mgr.list_tools(refresh=False)
                     else:
-                        try: tools=await asyncio.to_thread(mgr.list_tools, True)
-                        except Exception as e: tools=mgr.list_tools(); log(f"list_tools err {e}","yl")
-                        _cache_tools.set("list_tools", tools)
-                _st=await asyncio.to_thread(probe_studio)
-                await ws.send(_dumps({"type":"tools","id":rid,"tools":tools,"mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health()}))
-            elif mtype=="call_tool":
-                name=msg.get("name",""); args=msg.get("arguments") or {}; timeout=float(msg.get("timeout",120000))/1000.0
-                log(f"-> tool {name}({', '.join(args.keys())})","cy",terminal=False)
-                _spawn(ws,run_tool_task(ws,name,args,timeout,rid),"tool_task")
-            elif mtype=="batch":
-                calls=msg.get("calls") or []
-                # start all as tasks, preserve order via index, but run in parallel where servers differ
-                # For simplicity execute sequentially to respect per-server lock, but send incremental events
-                async def _run_batch():
-                    results=[]
-                    for idx,c in enumerate(calls[:12]):
-                        n=c.get("name",""); a=c.get("arguments") or {}; t=float(c.get("timeout",120000))/1000.0
-                        r=await asyncio.to_thread(safe_call,n,a,t)
-                        results.append({"name":n,**r})
-                        # streaming partial
-                        try: await ws.send(_dumps({"type":"batch_progress","id":rid,"idx":idx,"result":r}))
+                        # use cache if fresh
+                        cached=_cache_tools.get("list_tools")
+                        if cached and not msg.get("force"): tools=cached
+                        else:
+                            try: tools=await asyncio.to_thread(mgr.list_tools, True)
+                            except Exception as e: tools=mgr.list_tools(); log(f"list_tools err {e}","yl")
+                            _cache_tools.set("list_tools", tools)
+                    _st=await asyncio.to_thread(probe_studio)
+                    await ws.send(_dumps({"type":"tools","id":rid,"tools":tools,"mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health()}))
+                elif mtype=="call_tool":
+                    name=msg.get("name",""); args=msg.get("arguments") or {}; timeout=_timeout(msg.get("timeout",120000))
+                    if not isinstance(args,dict):
+                        await ws.send(_dumps({"type":"error","id":rid,"error":"arguments must be an object"})); continue
+                    log(f"-> tool {name}","cy",terminal=False)
+                    spawn(bounded_tool(name,args,timeout,rid))
+                elif mtype=="batch":
+                    calls=msg.get("calls") or []
+                    # start all as tasks, preserve order via index, but run in parallel where servers differ
+                    # For simplicity execute sequentially to respect per-server lock, but send incremental events
+                    if not isinstance(calls,list) or len(calls)>24 or any(not isinstance(c,dict) for c in calls):
+                        await ws.send(_dumps({"type":"error","id":rid,"error":"Maximum 24 object calls; nothing executed"})); continue
+                    for c in calls:
+                        _timeout(c.get("timeout",120000))
+                        if not isinstance(c.get("arguments",{}),dict): raise ValueError("arguments must be an object")
+                    async def _run_batch(calls=calls,rid=rid):
+                        results=[]
+                        for idx,c in enumerate(calls):
+                            n=c.get("name",""); a=c.get("arguments") or {}; t=_timeout(c.get("timeout",120000))
+                            r=await asyncio.to_thread(safe_call,n,a,t)
+                            results.append({"name":n,**r})
+                            # streaming partial
+                            try: await ws.send(_dumps({"type":"batch_progress","id":rid,"idx":idx,"result":r}))
+                            except: pass
+                        try: await ws.send(_dumps({"type":"batch_result","id":rid,"ok":all(r.get("ok") for r in results),"results":results,"atomic":False}))
                         except: pass
-                    try: await ws.send(_dumps({"type":"batch_result","id":rid,"results":results}))
-                    except: pass
-                _spawn(ws,_run_batch(),"batch")
-            elif mtype=="subscribe":
-                # SSE over WS: push status every 3s while subscribed
-                async def _sub_loop():
-                    # Measured, not assumed: the `while ws in clients` condition
-                    # DID end this loop within one 3s period after a disconnect, so
-                    # it was never an unbounded leak (a first draft of this comment
-                    # claimed otherwise and was wrong). What it was: up to 3s of
-                    # pointless probe_studio + a failed send per closed client, and
-                    # an untracked task whose exceptions asyncio never retrieved.
-                    # Now it is cancelled through the connection registry.
-                    try:
-                        while ws in clients:
-                            _st=await asyncio.to_thread(probe_studio)
-                            await ws.send(_dumps({"type":"status_update","studio":_st["place"],"studio_app":_st["app"],"servers":mgr.health()}))
-                            await asyncio.sleep(3)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        log(f"status subscription ended: {e}","yl",terminal=False)
-                _spawn(ws,_sub_loop(),"sub_loop")
-                await ws.send(_dumps({"type":"subscribed","id":rid}))
-            elif mtype in ("add_server","remove_server"):
-                if mtype=="add_server": ok,err=await asyncio.to_thread(config_add_server,msg.get("server_id"),msg.get("command"),msg.get("args"),msg.get("env"))
-                else: ok,err=await asyncio.to_thread(config_remove_server,msg.get("server_id"))
-                await ws.send(_dumps({"type":"server_changed","id":rid,"ok":ok,"error":err,"restarting":ok}))
-                if ok:
-                    async def _do_restart(): await asyncio.sleep(0.4); restart_self()
-                    asyncio.create_task(_do_restart())
-            elif mtype=="restart_mcp":
-                sid=msg.get("server")
-                try: await asyncio.to_thread(mgr.restart,sid); ok,err=True,None
-                except Exception as e: ok,err=False,str(e)
-                await ws.send(_dumps({"type":"mcp_status","id":rid,"alive":mgr.any_alive(),"ok":ok,"error":err,"servers":mgr.health(),"tools":mgr.list_tools()}))
-            elif mtype=="metrics":
-                await ws.send(_dumps({"type":"metrics","id":rid,**metrics.snapshot()}))
-            else:
-                await ws.send(_dumps({"type":"error","id":rid,"error":f"unknown message type: {mtype}"}))
+                    spawn(_run_batch())
+                elif mtype=="subscribe":
+                    # SSE over WS: push status every 3s while subscribed
+                    async def _sub_loop():
+                        try:
+                            while ws in clients:
+                                _st=await asyncio.to_thread(probe_studio)
+                                await ws.send(_dumps({"type":"status_update","studio":_st["place"],"studio_app":_st["app"],"servers":mgr.health()}))
+                                await asyncio.sleep(3)
+                        except: pass
+                    spawn(_sub_loop())
+                    await ws.send(_dumps({"type":"subscribed","id":rid}))
+                elif mtype in ("add_server","remove_server"):
+                    if mtype=="add_server": ok,err=await asyncio.to_thread(config_add_server,msg.get("server_id"),msg.get("command"),msg.get("args"),msg.get("env"))
+                    else: ok,err=await asyncio.to_thread(config_remove_server,msg.get("server_id"))
+                    await ws.send(_dumps({"type":"server_changed","id":rid,"ok":ok,"error":err,"restarting":ok}))
+                    if ok:
+                        async def _do_restart(): await asyncio.sleep(0.4); restart_self()
+                        asyncio.create_task(_do_restart())
+                elif mtype=="restart_mcp":
+                    sid=msg.get("server")
+                    try: await asyncio.to_thread(mgr.restart,sid); ok,err=True,None
+                    except Exception as e: ok,err=False,str(e)
+                    await ws.send(_dumps({"type":"mcp_status","id":rid,"alive":mgr.any_alive(),"ok":ok,"error":err,"servers":mgr.health(),"tools":mgr.list_tools()}))
+                elif mtype=="metrics":
+                    await ws.send(_dumps({"type":"metrics","id":rid,**metrics.snapshot()}))
+                else:
+                    await ws.send(_dumps({"type":"error","id":rid,"error":f"unknown message type: {mtype}"}))
+            except (ValueError,TypeError,KeyError,OverflowError) as exc:
+                await ws.send(_dumps({"type":"error","id":msg.get("id"),"error":str(exc)}))
     except ConnectionClosed: pass
     except Exception as e: log(f"handler error: {e}","rd")
     finally:
-        _cancel_conn_tasks(ws)
+        for task in tuple(tasks): task.cancel()
+        if tasks: await asyncio.gather(*tuple(tasks),return_exceptions=True)
+        _CONN_TASKS.pop(ws,None)
         with clients_lock: clients.discard(ws)
         metrics.ws_connections=len(clients)
         log(f"extension disconnected [{len(clients)} client(s)]","yl")
@@ -1413,12 +1344,7 @@ async def main():
     await asyncio.to_thread(_kill_orphan_studio_mcp)
     mgr.load_config()
     # load but don't block WS on it — start_all in background
-    # Retain the task. create_task keeps only a weak reference, so this future was
-    # collectable: if it got collected before _boot_and_diagnose awaited it, the
-    # diagnosis silently lost its "did MCP actually start" signal.
     start_task=asyncio.create_task(asyncio.to_thread(mgr.start_all))
-    _BOOT_TASKS.add(start_task)
-    start_task.add_done_callback(_BOOT_TASKS.discard)
     # reclaim bridge port before bind
     if await asyncio.to_thread(_reclaim_bridge_port): await asyncio.sleep(0.6)
     check_studio_port()
@@ -1426,7 +1352,7 @@ async def main():
     http_server=_start_http_server()
     # WebSocket server with compression & tuned ping
     try:
-        server_ctx=await websockets.serve(handler,HOST,PORT,ping_interval=5,ping_timeout=8,max_size=16*1024*1024,compression="deflate",close_timeout=5)
+        server_ctx=await websockets.serve(handler,HOST,PORT,ping_interval=5,ping_timeout=8,max_size=2*1024*1024,compression="deflate",close_timeout=5)
     except OSError as e:
         if getattr(e,"errno",None) in (98,10048) or "10048" in str(e):
             owner=await asyncio.to_thread(_port_owner,PORT); who=f" by '{owner[1]}' pid {owner[0]}" if owner else ""
@@ -1467,11 +1393,11 @@ async def main():
             _st=await asyncio.to_thread(probe_studio)
             if _st["app"] is False:
                 with _Spinner("    waiting for Roblox Studio to attach..."):
-                    for _ in range(STUDIO_PROBE_RETRIES):
-                        await asyncio.sleep(STUDIO_PROBE_RETRY_S); _st=await asyncio.to_thread(probe_studio)
+                    for _ in range(8):
+                        await asyncio.sleep(1); _st=await asyncio.to_thread(probe_studio)
                         if _st["app"] is not False: break
             if _st["app"] is True:
-                await asyncio.sleep(STUDIO_PROBE_CONFIRM_S); confirm=await asyncio.to_thread(probe_studio)
+                await asyncio.sleep(1.5); confirm=await asyncio.to_thread(probe_studio)
                 if confirm["app"] is not True: _st=confirm
             if roblox_client and (roblox_total==0 or _st["app"] is False):
                 if killed_squatter or reclaimed: log("    still waiting for Studio MCP toggle (see action box above)...","yl")
@@ -1494,12 +1420,12 @@ async def _supervised(name, coro_fn):
             except: pass
             await asyncio.sleep(2)
 
-_BOOT_TASKS=set()
-
 if __name__=="__main__":
     try: asyncio.run(main())
     except KeyboardInterrupt:
         log("shutting down...","yl")
-        try: mgr.stop_all()
-        except Exception: pass
-    finally: log("===== BRIDGE STOP =====","cy")
+        mgr.stop_all()
+    finally:
+        mgr.stop_all()
+        log("===== BRIDGE STOP =====","cy")
+        if _log_file: _log_file.close()
