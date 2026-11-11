@@ -1,3 +1,7 @@
+> **ARCHIVED (historical).** This file describes work done before 4.3.0 and contains claims that were
+> later found to be inaccurate (see `/ZeroScript-Audit.md`). It is kept for history only — do not treat
+> any number here as a current measurement. Current documentation: `/README.md`.
+
 # ZeroScript ULTRA v2.0.0 — Ultra-Fast Middle Layer
 
 > **All logic upgraded. Designs, GUIs, colors untouched.**
@@ -28,7 +32,7 @@ The bridge (`bridge.py`) and extension (`background.js` + `core/transport.js`) n
 
 **Bridge logic (`bridge.py` v2.0.0):**
 - Asyncio + `ThreadingHTTPServer` on `PORT+1` (17614) alongside WS on `PORT` (17613).
-- `orjson` fast path if installed (pip auto-installed via `start.bat`), else stdlib JSON.
+- `orjson` fast path if installed (pip auto-installed via `start.py`), else stdlib JSON.
 - `msgpack` binary framing if installed.
 - `TCP_NODELAY` + `SO_KEEPALIVE` + keepalive tuning (30s idle, 10s intvl, 3 probes).
 - TTL caches: tools 1.5s, status 1s — coalesces burst polling.
@@ -43,13 +47,13 @@ The bridge (`bridge.py`) and extension (`background.js` + `core/transport.js`) n
 
 - **Parser (`core/parser.js`)**: LRU cache (64 entries, 800ms TTL) + fast-path `hasToolSignature` (cheap `indexOf` before regex) + `parseToolCallsCached`/`hasOpenToolBlockCached`. Zero change to output, 2–5× less CPU on long turns.
 - **Config (`core/config.js`)**: Added `ZS.TRANSPORT` + `ZS.APP_VERSION="2.0.0"` — exposes all methods to UI/diagnostics without touching GUI.
-- **Main loop (`core/main.js`)**: 
+- **Main loop (`core/main.js`)**:
   - `ULTRA` metrics, `MutationObserver` wake (`waitForDOMChange`) — settle 500ms→280ms, sleeps 200→80/60ms, event-driven instead of blind poll.
   - `bg()` now dedupes + caches status 400ms + measures tool latency.
   - `bgBatch()` for atomic multi-tool.
   - `TOOLS_TTL_MS` 30s→8s so Studio MCP attach seen faster.
 - **Providers**: Untouched — only core/bridge/middle-layer changed (as requested).
-- **Launchers**: `start.bat` + `MacOS_Start.command` now handle **both ports** (17613 WS + 17614 HTTP), auto-install `orjson`/`msgpack` best-effort, and kill orphan bridges on both ports.
+- **Launchers**: `start.py` + `MacOS_Start.command` now handle **both ports** (17613 WS + 17614 HTTP), auto-install `orjson`/`msgpack` best-effort, and kill orphan bridges on both ports.
 
 ## Ports
 
@@ -85,7 +89,7 @@ A 6-tool sequence (inspect → read → edit → execute → capture → generat
 - `zeroscript-extension/core/main.txt` → ultra sleeps + MO + bg dedupe + batch
 - `zeroscript-extension/core/transport.js/.txt` → new Transport client
 - `zeroscript-extension/manifest` → v2.0.0, alarms permission, http ports, transport.js
-- `start.txt` (`start.bat`) + `MacOS_START.txt` → dual-port + optional deps
+- `start.txt` (`start.py`) + `MacOS_START.txt` → dual-port + optional deps
 - `launch_studio_mcp.py` materialized from `.txt` (so `import launch_studio_mcp` works)
 
 ## GUIs/Colors/Designs
@@ -108,4 +112,3 @@ curl http://127.0.0.1:17614/api/metrics
 ```
 
 Extension: open DeepSeek/ChatGPT, observe `[zs-bg] WS connected` + `[zs-bg] fastestTransport ws|http` in background service worker console.
-

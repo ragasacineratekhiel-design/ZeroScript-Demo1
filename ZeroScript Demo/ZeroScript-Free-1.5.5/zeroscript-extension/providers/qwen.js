@@ -75,12 +75,12 @@ const ZSProvider = (() => {
   };
 
   const timings = {
-    GEN_IDLE_MS: 1500,
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 45000,
+    GEN_IDLE_MS: 800,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 25000,
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 9000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Monaco code-block cache (the CRITICAL fix) ─────────────────────────────
@@ -114,9 +114,28 @@ const ZSProvider = (() => {
     const best = cached.length >= live.length ? cached : live;
     return best || pre.textContent || "";
   }
+  // Every long-lived observer in this provider registers its own teardown here,
+  // so the page can never accumulate observers it cannot release. `pagehide`
+  // fires on navigation and bfcache entry; `once` keeps the listener from
+  // outliving its purpose.
+  const scanHooks = [];
+  let _hooksBound = false;
+  function bindObserverRelease() {
+    if (_hooksBound) return;
+    _hooksBound = true;
+    const release = () => {
+      while (scanHooks.length) {
+        const fn = scanHooks.pop();
+        try { fn(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.releaseObserver", _e); }
+      }
+      _hooksBound = false;
+    };
+    try { window.addEventListener("pagehide", release, { once: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.pagehideHook", _e); }
+  }
   let _codeObs = null;
   function ensureCodeObserver() {
     if (_codeObs) return;
+    bindObserverRelease();
     // [TRACE] Suspect #1 for the "15-20s freeze after N tools": this observer
     // fires on EVERY characterData/childList mutation across document.body and
     // re-scans EVERY code block in the whole conversation. Cost grows with the
@@ -141,10 +160,31 @@ const ZSProvider = (() => {
         _snCount = 0; _snMaxMs = 0; _snMaxBlocks = 0; _snWinStart = now;
       }
     };
-    _codeObs = new MutationObserver(snapAll);
+    // COALESCING: `snapAll` re-queries and re-walks every code block, and Monaco
+    // mutates its DOM many times per streamed token. Running it per mutation is
+    // what the trace comment above suspected as the freeze source. Run at most
+    // once per task instead - a 0ms timeout collapses a burst into one pass and
+    // still lands before Monaco can dispose a block.
+    let _pending = 0;
+    const scheduleSnap = () => {
+      if (_pending) return;
+      _pending = setTimeout(() => { _pending = 0; if (!document.hidden) snapAll(); }, 0);
+    };
+    // A hidden tab renders no code; skipping saves the whole walk. Coming back
+    // visible runs one immediate pass so nothing that changed while hidden is
+    // left un-cached.
+    const onVis = () => { if (!document.hidden) snapAll(); };
+    _codeObs = new MutationObserver(scheduleSnap);
     try {
       _codeObs.observe(document.body, { subtree: true, childList: true, characterData: true });
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.ms", _e); }
+    try { document.addEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeVis", _e); }
+    scanHooks.push(() => {
+      try { _codeObs && _codeObs.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeObsRelease", _e); }
+      try { if (_pending) clearTimeout(_pending); _pending = 0; } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeObsTimer", _e); }
+      try { document.removeEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.codeVisRelease", _e); }
+      _codeObs = null;
+    });
     snapAll(); // seed any blocks already present
   }
 
@@ -595,6 +635,7 @@ const ZSProvider = (() => {
   function readAssistant() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
+
     return {
       present: true,
       reply: assistantReplyText(item).trim(),
@@ -607,10 +648,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ───────────────────────────────────────────────────────────────
   // Native textarea setter drives React's synthetic event system. After setting
@@ -661,7 +702,7 @@ const ZSProvider = (() => {
       // site's binding between the pending upload and the message being sent).
       // Guard: submitAndGetBase RETRIES typeAndSend up to 4x; only attach if
       // nothing is staged yet, else each retry pastes ANOTHER duplicate copy.
-      if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch {} }
+      if (images && images.length && !hasPendingAttachment()) { try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.typeAndSend", _e); } }
       await waitFor(() => !!sendButton(), 2000);
       const btn = sendButton();
       if (btn) { btn.click(); return; }
@@ -676,7 +717,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.stopGeneration", _e); }
   }
 
   function enforceComposer() { return { ready: !!getEditor() }; }
@@ -694,7 +735,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && (RE.contextLimit.test(t) || RE.usageLimit.test(t))) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -735,7 +776,7 @@ const ZSProvider = (() => {
     const ed = getEditor();
     if (!ed || !images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.attachImages", _e); } });
     if (!dt.items.length) return false;
     // Qwen's composer accepts a synthetic image PASTE (validated live: it uploads
     // to Qwen's OSS backend and mounts the `.vision-item-image` preview). Setting
@@ -753,8 +794,8 @@ const ZSProvider = (() => {
     try {
       // Each pending preview carries a `.close-button` remove control.
       document.querySelectorAll(".file-card-list .vision-item-container .close-button")
-        .forEach((b) => { try { b.click(); } catch {} });
-    } catch {}
+        .forEach((b) => { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.clearAttachments", _e); }
   }
 
   const conversationKey = () =>
@@ -845,7 +886,7 @@ const ZSProvider = (() => {
   // BUMP this whenever qwen.js changes in a way worth verifying live.
   const QWEN_VER = "2026-07_per-model-vision3";
   function setVersionBeacon() {
-    try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch {}
+    try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.setVersionBeacon", _e); }
   }
 
   // NOTE: an "⚠ unstable" badge used to be injected next to Qwen's "Auto"/"Think"
@@ -892,7 +933,7 @@ const ZSProvider = (() => {
   try {
     const saved = JSON.parse(localStorage.getItem(MODEL_VIS_LS) || "{}");
     for (const [k, v] of Object.entries(saved)) modelVis.set(k, !!v);
-  } catch {}
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.startModeWatch", _e); }
 
   const currentModelName = () => {
     const el = document.querySelector('[class*="model-selector-text"]');
@@ -932,7 +973,7 @@ const ZSProvider = (() => {
       if (modelVis.get(nm) !== cap) { modelVis.set(nm, cap); changed = true; }
     });
     if (changed) {
-      try { localStorage.setItem(MODEL_VIS_LS, JSON.stringify(Object.fromEntries(modelVis))); } catch {}
+      try { localStorage.setItem(MODEL_VIS_LS, JSON.stringify(Object.fromEntries(modelVis))); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.nm", _e); }
       diag("model.caps", { current: currentModelName(), known: modelVis.size });
     }
   }
@@ -959,8 +1000,21 @@ const ZSProvider = (() => {
         }
       }
     });
-    try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch {}
+    try { _modelCapObs.observe(document.body, { subtree: true, childList: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.startModelCapWatch", _e); }
+    bindObserverRelease();
+    scanHooks.push(() => {
+      try { _modelCapObs && _modelCapObs.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.modelCapObsRelease", _e); }
+      _modelCapObs = null;
+    });
   }
+
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Qwen composer not found — open a new chat";
+      return null;
+    } catch { return null; }
+  };
 
   return {
     id: "qwen",
@@ -1006,7 +1060,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn, replyUnsettled, isComparisonTurn, resolveComparison,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
@@ -1016,14 +1070,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
 
 })();

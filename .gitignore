@@ -1,0 +1,16 @@
+# Node (tools/verify.js only — the extension itself needs no build)
+node_modules/
+
+# Generated / local
+.DS_Store
+Thumbs.db
+*.log
+
+__pycache__/
+*.py[cod]
+.zs_token
+config.json.tmp
+logs/
+.venv/
+node_modules/
+ZeroScript Demo/config.json

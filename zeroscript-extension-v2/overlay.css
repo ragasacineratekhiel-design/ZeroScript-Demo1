@@ -268,6 +268,81 @@ html.zs-light #zs-unstable {
 }
 #zs-discord:hover, #zs-support:hover { background: rgba(255, 255, 255, 0.11); color: #ededf0; }
 
+/* ── Switch Plan — same design as Switch Model, on LEFT of Stop ── */
+#zs-plan {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 9px;
+  background: rgba(99, 102, 241, 0.18); color: #c7d2fe;
+  border: 1px solid rgba(129, 140, 248, 0.30); border-radius: 8px;
+  font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: background 0.14s ease, filter 0.14s ease;
+}
+#zs-plan:hover { background: rgba(99, 102, 241, 0.30); color: #e0e7ff; }
+#zs-plan svg { opacity: 0.7; }
+#zs-plan[data-plan="direct"] { background: rgba(255,255,255,0.06); color: #d0d0d6; border-color: rgba(255,255,255,0.12); }
+#zs-plan[data-plan="direct"]:hover { background: rgba(255,255,255,0.11); }
+#zs-plan[data-plan="agent"] { background: linear-gradient(135deg, rgba(99,102,241,0.28), rgba(139,92,246,0.28)); border-color: rgba(129,140,248,0.4); }
+#zs-plan[data-plan="plan"] { background: rgba(16,185,129,0.18); color: #a7f3d0; border-color: rgba(16,185,129,0.32); }
+#zs-plan[data-plan="checker"] { background: rgba(245,158,11,0.18); color: #fde68a; border-color: rgba(245,158,11,0.32); }
+
+/* Plan popup — small compact orchestrated selector (fits next to bar) */
+#zs-plan-menu {
+  position: fixed; box-sizing: border-box; z-index: 2147483601;
+  width: 252px; max-height: 52vh; overflow-y: auto;
+  padding: 8px; background: #161618; color: #ececee;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+  font-size: 11px; animation: zs-pop 0.16s ease-out;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.22) transparent;
+}
+#zs-plan-menu h3 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; color: #f4f4f6; }
+#zs-plan-menu .zs-plan-note { font-size: 10px; color: #9a9aa0; margin: 0 0 7px; line-height: 1.4; }
+.zs-plan-opt { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 6px 7px; margin: 3px 0; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); color: #d8d8de; cursor: pointer; text-align: left; transition: background 0.12s, border-color 0.12s; }
+.zs-plan-opt:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+.zs-plan-opt.zs-plan-active { background: rgba(99,102,241,0.18); border-color: rgba(129,140,248,0.45); color: #e0e7ff; }
+.zs-plan-opt strong { font-size: 11px; }
+.zs-plan-opt span { font-size: 9.5px; color: #8a8a92; }
+.zs-plan-roles { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.07); }
+.zs-plan-role-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.zs-plan-role-row label { flex: none; width: 58px; font-size: 10px; font-weight: 600; color: #a1a1aa; text-transform: capitalize; }
+.zs-plan-role-row select { flex: 1; height: 24px; padding: 0 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); background: #1e1e22; color: #ececee; font-size: 11px; }
+.zs-plan-save { width: 100%; margin-top: 8px; padding: 7px; border-radius: 8px; border: 0; background: linear-gradient(135deg,#6366f1,#818cf8); color: #fff; font-weight: 700; font-size: 11px; cursor: pointer; }
+.zs-plan-save:hover { filter: brightness(1.08); }
+.zs-plan-ais { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+.zs-plan-ais b { background: rgba(99,102,241,0.22); padding: 1px 4px; border-radius: 4px; font-size: 9px; }
+.zs-plan-warn { margin-top: 8px; padding: 7px 8px; border-radius: 7px; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.28); color: #fecaca; font-size: 10px; line-height: 1.4; }
+
+/* ── Exec Mode — left of Agent Plan, same design but 3 modes ── */
+#zs-exec {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 8px;
+  background: rgba(255, 255, 255, 0.06); color: #d0d0d6;
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+  font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: background 0.14s ease;
+}
+#zs-exec:hover { background: rgba(255,255,255,0.11); }
+#zs-exec[data-exec="single"] { background: rgba(255,255,255,0.06); color: #d0d0d6; }
+#zs-exec[data-exec="continuous"] { background: rgba(16,185,129,0.18); color: #a7f3d0; border-color: rgba(16,185,129,0.32); }
+#zs-exec[data-exec="loop"] { background: linear-gradient(135deg, rgba(99,102,241,0.28), rgba(236,72,153,0.28)); border-color: rgba(129,140,248,0.4); color: #e0e7ff; }
+#zs-exec svg { opacity: 0.7; }
+#zs-exec-menu {
+  position: fixed; box-sizing: border-box; z-index: 2147483601;
+  width: 286px; max-height: 52vh; overflow-y: auto;
+  padding: 10px; background: #161618; color: #ececee;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+  font-size: 11px; animation: zs-pop 0.16s ease-out;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.22) transparent;
+}
+#zs-exec-menu h3 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; color:#f4f4f6; }
+#zs-exec-menu .zs-plan-note{ font-size:10px; color:#9a9aa0; margin:0 0 7px; line-height:1.4; }
+#zs-exec-menu .zs-plan-opt{ display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%; padding:6px 7px; margin:3px 0; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#d8d8de; cursor:pointer; text-align:left; transition: background 0.12s, border-color 0.12s; }
+#zs-exec-menu .zs-plan-opt:hover{ background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.14); }
+#zs-exec-menu .zs-plan-opt.zs-plan-active{ background:rgba(99,102,241,0.18); border-color:rgba(129,140,248,0.45); color:#e0e7ff; }
+#zs-exec-menu .zs-plan-ais b{ background:rgba(99,102,241,0.22); padding:1px 4px; border-radius:4px; font-size:9px; }
+
+
 /* model switcher: names the current AI and opens the panel at Switch AI */
 #zs-switch {
   flex: none; display: flex; align-items: center; gap: 5px;
@@ -436,29 +511,19 @@ button.zs-site-opt:hover .zs-site-go { opacity: 1; transform: translateX(0); }
 /* ── composer mode enforcement (force Expert / DeepThink etc.) ────────────── */
 .zs-hide-el { display: none !important; }
 
-/* ── input cover: fully hides the text the extension types + sends ──
-   background colour is set inline at runtime to match the input box,
-   so the masked input simply looks empty. */
+/* ── composer cover: REMOVED (user request) ──────────────────────────────
+   #zs-input-cover used to be a full-bleed "Agent is working…" panel over the
+   chat box. It is gone: the composer stays visible and typeable while the agent
+   runs. The rule below is intentionally a no-op kept only so an older injected
+   page (extension updated without a reload) cannot render a stale panel; main.js
+   also removes any such node on load. */
 #zs-input-cover {
-  position: fixed; z-index: 2147483500;
-  display: flex; align-items: center; gap: 8px;
-  box-sizing: border-box; padding-left: 16px;
-  border-radius: 14px;
-  background: #ffffff;
-  color: rgba(140, 140, 150, 0.9);
-  font-size: 12px; font-family: ui-sans-serif, "Segoe UI", sans-serif;
-  white-space: nowrap; overflow: hidden;
-  /* Capture pointer events: the cover sits over the composer while the agent
-     works, so eating clicks/focus stops the user from clicking THROUGH it into
-     the input box and typing (contenteditable=false alone leaks - Vue/Angular
-     re-renders can reset it). The place() loop hides the cover whenever a modal
-     or captcha is up, so this never traps clicks the user actually needs. */
-  pointer-events: auto;
-  cursor: default;
+  display: none !important;
+  pointer-events: none !important;
 }
 
-/* belt-and-suspenders: the typed text itself is rendered invisible
-   (DeepSeek's composer is a <textarea>; the Kimi build used a contenteditable)
+
+/* (the invisible-typed-text block was removed with the cover)
    Matched on [contenteditable] with NO VALUE, deliberately. These rules used to
    require [contenteditable='true'], but a provider that locks the composer by
    flipping the attribute to "false" (ChatGPT's setInputLock does exactly that)
@@ -466,27 +531,16 @@ button.zs-site-opt:hover .zs-site-go { opacity: 1; transform: translateX(0); }
    colour rgba(0,0,0,0) to rgb(255,255,255) and max-height 140px to none the
    instant it was locked. So the mask and the height cap were inert for the whole
    time the input was locked - precisely when they are needed. */
-textarea.zs-typing,
-div[contenteditable].zs-typing,
-div[contenteditable].zs-typing * { color: transparent !important; }
-textarea.zs-typing,
-div[contenteditable].zs-typing { caret-color: transparent !important; }
+/* The typing mask is gone with the cover: the user asked to SEE the text being
+   typed. main.js still strips the class defensively, so these selectors are
+   deliberately empty rather than deleted — an older stylesheet reference must
+   not resurrect transparent text. */
 
-/* Keep the composer from ballooning while the extension injects the (large)
-   system prompt or a big tool output. The typed text is transparent and hidden
-   under #zs-input-cover anyway, so there is nothing to see - but without a cap
-   the editor grows to fit every line (e.g. Kimi's inner .chat-input-editor hit
-   ~1500px), which then makes the cover (sized to the editor rect) a giant white
-   slab over the page, and on composers with no clipping ancestor (DeepSeek's
-   textarea, Gemini's Quill) balloons the visible box itself. Clipping the height
-   only affects DISPLAY; the full value/content is intact and still sent. The
-   class is present only during agent injection, never while the user types, so
-   this never clips real typing. */
-textarea.zs-typing,
-div[contenteditable].zs-typing {
-  max-height: 140px !important;
-  overflow-y: hidden !important;
-}
+/* The composer no longer needs a height cap: the extension stops forcing its
+   large system prompt into a hidden editor. A visible composer is the site's own
+   layout problem. */
+/* Height cap removed with the mask: it existed to stop a hidden system-prompt
+   injection ballooning the composer. A visible composer is the site's own job. */
 
 /* ── spinner element ───────────────────────────────────────── */
 .zs-spin {
@@ -634,11 +688,11 @@ html.zs-site-meta .zs-hidden > .zs-chip {
 /* DeepSeek (its own "ds-" design system) portals tooltips and popovers - e.g.
    the "Think before responding…" tooltip on the DeepThink pill - into a
    body-level .ds-floating-container at z-index 1024, far below #zs-root
-   (2147483600) and #zs-input-cover (2147483500). While the composer cover sits
-   over the input during agent activity, it visually covered the tooltip
-   (reported live: hovering DeepThink while the agent was working showed the
-   tooltip clipped/behind the bar). Lift every DeepSeek floating portal above
-   ZeroScript's own overlays. */
+   (2147483600). ZeroScript's status bar sits over that area, and it visually
+   covered the tooltip (reported live: hovering DeepThink while the agent was
+   working showed the tooltip clipped behind the bar - this was diagnosed as the
+   composer cover, which has since been removed, but the bar can still overlap).
+   Lift every DeepSeek floating portal above ZeroScript's own overlays. */
 .ds-floating-container { z-index: 2147483646 !important; }
 
 /* Arena (Radix UI) portals its header dropdowns - the model picker and the
@@ -1019,3 +1073,7 @@ html.zs-light .zs-tip-sub,
 html.zs-light .zs-rbx-cur,
 html.zs-light .zs-tip-sep { color: #6b7280; }
 html.zs-light .zs-tip-rbx { color: #374151; }
+
+/* ULTRA 3.2.0 perf — no color change, pure logic speed */
+#zs-bar, #zs-menu, .zs-chip { will-change: transform; contain: layout style; }
+.zs-chip-body pre { contain: layout; }

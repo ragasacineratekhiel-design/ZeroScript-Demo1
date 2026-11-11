@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import signal
 import sys
 from pathlib import Path
 from typing import Iterable, Optional
@@ -41,7 +42,7 @@ def _candidate_roots() -> list[Path]:
 
 
 def _resolve_override_path(path_value: str) -> Optional[Path]:
-    path = Path(path_value).expanduser()
+    path = Path(os.path.expandvars(path_value)).expanduser()
     if path.is_file():
         return path
     if path.is_dir():
@@ -55,10 +56,11 @@ def _resolve_override_path(path_value: str) -> Optional[Path]:
 
 
 def _newest_path(paths: Iterable[Path]) -> Optional[Path]:
-    try:
-        return max(paths, key=lambda p: p.stat().st_mtime)
-    except (ValueError, OSError):
-        return None
+    candidates=[]
+    for path in paths:
+        try: candidates.append((path.stat().st_mtime,path))
+        except OSError: continue
+    return max(candidates,key=lambda item:item[0])[1] if candidates else None
 
 
 def _find_studio_mcp_windows() -> Optional[Path]:
@@ -146,6 +148,9 @@ def main() -> int:
     sys.stderr.write(f"launch_studio_mcp: using {exe}\n")
     sys.stderr.flush()
     proc = subprocess.Popen([str(exe)] + sys.argv[1:])
+    # Forward bridge shutdown to our owned child on macOS too; never kill by name.
+    if sys.platform != "win32":
+        signal.signal(signal.SIGTERM, lambda signum, frame: proc.terminate() if proc.poll() is None else None)
     try:
         return proc.wait()
     except KeyboardInterrupt:
