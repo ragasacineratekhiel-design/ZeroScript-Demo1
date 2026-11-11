@@ -221,6 +221,14 @@ class BridgeTests(unittest.TestCase):
             self.b._reclaim_studio_port(None)
             run.assert_not_called()
 
+    def test_retained_main_agent_temp_http(self):
+        code,written,_=self.request("/api/agent_temp",{"key":"integration","value":{"hello":"main"},"ttl":10000})
+        self.assertEqual(code,200)
+        self.assertTrue(written["ok"])
+        code,result,_=self.request("/api/agent_temp?key=integration")
+        self.assertEqual(code,200)
+        self.assertEqual(result["value"],{"hello":"main"})
+
     def test_team_http_routes_and_console_real_messages(self):
         for role,name in (("planner","Claude"),("coder","DeepSeek"),("checker","Gemini")):
             code,result,_=self.request("/api/team/register",{"member_id":"http-"+role,"name":name,"role":role,"team":"http-team"})

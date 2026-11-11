@@ -90,6 +90,17 @@ async function main(){
   c.chrome.tabs.sendMessage=async()=>{active++;maxActive=Math.max(maxActive,active);await new Promise(r=>setTimeout(r,20));active--;return {ok:true};};
   const started=await c.api.handle({type:'team_start',team:'studio'},{id:'extension-id'});
   check('three team startup submissions run concurrently',()=>{assert.equal(started.ok,true);assert.equal(maxActive,3);});
+  const sent=[];
+  c.chrome.storage.local={get:async()=>({zsPlan:'agent',zsPlanRoles:{planner:'Claude',coder:'DeepSeek',checker:'Gemini'}}),set:async()=>{}};
+  c.chrome.tabs.query=async()=>[{id:1,url:'https://claude.ai/new'},{id:2,url:'https://chat.deepseek.com/new'}];
+  c.chrome.tabs.sendMessage=async(id,msg)=>{sent.push({id,msg});return {ok:true};};
+  const routed=await c.api.handle({type:'peer_route',envelope:{fromProvider:'claude',toProvider:'deepseek',payload:{text:'retained legacy route'}}},sender);
+  check('main legacy peer routing remains functional alongside bridge teams',()=>{assert.equal(routed.ok,true);assert.equal(routed.delivered,1);assert.equal(sent[0].id,2);assert.equal(sent[0].msg.type,'zs-peer-inbound');});
+  const who=await c.api.handle({type:'peer_whoami'},sender);
+  check('main role assignments are retained',()=>{assert.equal(who.roles.coder,'DeepSeek');assert.equal(who.plan,'agent');});
+  await c.api.handle({type:'agent_temp_write',key:'integration',value:{text:'retained temp'}},sender);
+  const temp=await c.api.handle({type:'agent_temp_read',key:'integration'},sender);
+  check('main agent temp hub remains functional',()=>assert.equal(temp.payload.value.text,'retained temp'));
   console.log(`\n${passed} extension regression checks passed.`);
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,4 +1,6 @@
-> Historical release notes. Earlier performance, compatibility and security claims below are not current guarantees. See the repository README and 3.1 repair notes.
+> **ARCHIVED (historical).** This file describes work done before 4.3.0 and contains claims that were
+> later found to be inaccurate (see `/ZeroScript-Audit.md`). It is kept for history only — do not treat
+> any number here as a current measurement. Current documentation: `/README.md`.
 
 # Changelog
 

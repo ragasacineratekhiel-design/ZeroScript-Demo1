@@ -1,103 +1,149 @@
-# ZeroScript Team 3.1 — bridge-mediated planner, coder, checker
+# Integrated release 4.5.0 — existing MAX features + bridge teams
 
-A Chrome/Edge extension connects open AI chat tabs to a local Python bridge and Roblox Studio's MCP server. **Team messages travel through bridge mailboxes, not through Roblox scripts or a shared website.** The bridge does not contain AI models and does not call model APIs.
+This branch integrates main's execution modes, slash commands, static Luau sandbox, memory wall, plan wall, peer routing and fault instrumentation with authenticated bridge-team mailboxes, concurrent team startup, timestamped console, Python launcher and shared tab controls.
 
-## Install and start
+**New setup:** run `python "ZeroScript Demo/ZeroScript-Free-1.5.5/start.py"` (`py -3` on Windows). Python and websockets must already be installed. The batch launcher is replaced, not required. See [team setup and communication evidence](docs/TEAM_SETUP.md).
 
-1. In Chrome/Edge 120+, open `chrome://extensions` / `edge://extensions`, enable Developer mode, and **Load unpacked → `zeroscript-extension-v2/`**. For an existing install, Reload the extension and refresh all AI tabs.
-2. On Windows, run **`python "ZeroScript Demo/ZeroScript-Free-1.5.5/start.py"`** (or `py -3` instead of `python`). It launches the bridge and a separate **ZeroScript Team Console** window (`team_console.py`) showing timestamped real events. Close any old bridge first: startup no longer kills port owners.
-3. On macOS, run `ZeroScript Demo/ZeroScript-Free-1.5.5/MacOS_START.command`. Open another Terminal in that directory and run `python3 team_console.py` for the viewer.
-4. Open three signed-in AI chats. In the extension popup on each tab, use the same Team name (default `studio`), choose a different role, and click **Join active AI tab**. Example: Claude → planner; DeepSeek → coder; Gemini → checker. These are examples, not hard-coded role assignments.
-5. Click **Start all three team tabs** in the popup. Leave the tabs open. Role prompts are submitted concurrently; the planner receives its introduction invitation in that first prompt, avoiding a redundant model turn. Real introductions are authorized in order: **planner → coder → checker**. Starting `start.py` opens the viewer, not logged-in AI tabs or an unattended task; starting a team requires your explicit click.
-6. Give the **planner** your coding request. Its role is to plan and hand work to the coder using `team_send`; the checker independently checks the result. These are model instructions, not a deterministic workflow engine. Watch actual messages and outcomes in the console.
-7. For Roblox work, open a place in Studio and enable **Studio as MCP Server** in Assistant Settings / Manage MCP Servers. Team-only communication does **not** require Studio. Roblox editing does.
+**Choose one orchestration path per tab:** normal Start keeps main's legacy execution/wall workflow. Joining a bridge team requires Start team in the popup; active bridge teams use their assigned role and bridge inbox, not legacy role rotation or peer-context injection. Leave the team before returning to normal Start. The legacy peer-wall channel is retained but does not appear in the bridge Team Console.
 
-**Background tabs:** opting into a team permits background message submission and tool execution, unlike the normal single-agent visibility gate. Websites and browsers may throttle or reject background interaction. Bring a stalled tab forward. This has not been live-tested on all provider websites. Do not rely on an unattended team for destructive edits.
+**Validation:** `npm ci`, `python -m pip install -r requirements-dev.txt`, then `python scripts/validate.py`. Both the existing feature suites and new bridge/team/UI suites run. Mock tests do not establish live provider, Windows desktop or Roblox compatibility.
 
-## Truthful status, not simulated conversation
+---
 
-The extension teaches the agents to use real bridge results before saying:
+## Existing MAX features (retained from main)
 
-> I am communicating with Claude, Gemini and ready to help in your code
+# ZeroScript MAX 4.5.0 × Roblox Studio Agent
 
-Only actual, acknowledged peer names are included; the wording depends on the peers. Without delivery evidence, agents are instructed to say:
+A browser extension (Chrome/Edge, MV3) that lets **any AI chat window** drive **Roblox Studio** through a
+local Python bridge. You talk to the AI; the extension reads its replies, finds the commands, runs them
+against Studio through the MCP server, and feeds the result back so the model can keep going.
 
-> I am not directly communicating with the others try [concrete solutions]
+> **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select
+> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.5.0**.
+> If you still have an old `zeroscript-extension` card, remove it.
 
-Solutions include joining all three roles, starting the team, checking the console, bringing a throttled tab forward, or reconnecting the bridge. A prompt cannot guarantee a model will follow the wording. The bridge supplies evidence rather than generating flattering or invented AI replies.
+---
 
-Console event meanings:
+## What 4.5.0 actually fixes
 
-| Event | What it actually establishes |
+This release exists because an audit of 4.2.0 (see [`ZeroScript-Audit.md`](ZeroScript-Audit.md)) found
+that several headline features were inert, and one bug stopped the product from working at all:
+
+| Was | Now |
 |---|---|
-| `joined` | An extension tab registered a name and role; not proof the AI is ready. |
-| `ready` | The extension submitted the role prompt; not proof the AI understood it. |
-| `message` | A tab's parsed `team_send` command sent text through the bridge. |
-| `queued` | A mailbox has a message awaiting tab submission. |
-| `delivered` | The recipient extension acknowledged submission into its chat; not proof of understanding or a reply. |
-| `stopped` / `left` | Relay paused, or a tab left/navigated. Already-running Studio operations are not undone. |
+| `currentExec` read by the agent loop but declared inside `ui()` → **ReferenceError on Start**, on every site | Session state lives at module scope (`SESSION`) and is mirrored to `window.__zsExecMode` / `__zsPlan` / `__zsPlanRoles` |
+| Exec modes Continuous/Loop only stored a string; nothing read it | Real bounded engine: iteration budget (24 / 40 turns), progress check, planner→coder→checker rotation |
+| "10× wall" delivered nothing between tabs (BroadcastChannel never reached the executor) | Wall envelopes are re-published as runtime messages (`sendWallTask`); `plan_wall` is event-driven |
+| A 10 ms `chrome.storage` busy-poll (~360k reads/hour/tab) | Event-driven delivery; a 5 s safety poll switches itself off after the first real event |
+| Dry-run "sandbox" rejected **valid** Luau (counted `do` as an opener, ignored comments) | Real Luau tokenizer + block-balance analyser with line-numbered errors; warnings never block |
+| `agent_hub.pushTemp/getTemp`, `sandbox.executeLuau` called but never defined | Implemented (`pushTemp`/`getTemp`/`loadTemp`); wall tasks now run the real `execute_luau` tool |
+| Memory Wall built, wired to nothing | Injected into the system prompt **and** every agent turn (query-trimmed, budgeted) |
+| Slash commands worked on Claude only | `wrapTypeAndSend` is installed for **every** provider by `core/main.js` |
+| Five providers mutated the shared generic identity (last file won) | Per-object immutable identity via `ZSMakeMeta`; no shared mutation |
+| `bridge.py` accepted requests with **no token**; CORS listed 11 of 20 hosts | Token required for every state-changing endpoint; CORS matches the 20 supported hosts |
+| Prompt contradicted itself (plain text vs fenced code block) and over-claimed the sandbox/transport | Prompt states the real behaviour of the static check and the WS+HTTP transport |
 
-Introductions are **not** pre-written by the bridge. The console will show no fabricated `[Claude]: Hi...` / `[Gemini]: Nice to meet you...` conversation. It displays what the tabs actually send. Names identify website adapters; they do not certify the exact model/tier selected within that website.
+Still honest about limits: **15 hosts ship a content script, 7 have bespoke DOM drivers**
+(DeepSeek, ChatGPT, Gemini, Claude, Kimi, GLM, Qwen, Arena, Meta) and 5 are thin wrappers over one
+generic driver (Perplexity, Copilot, Grok, Poe, Mistral). No AI integration can be guaranteed against a
+site redesign; the generic driver and the provider fallbacks exist for exactly that reason.
 
-## Team tools
+---
 
-The content-script core implements these virtual tools independently of Studio's tool catalogue. Emit **one** command in a fenced JSON block per reply:
+## Requirements
 
-```json
-{"command":"team_status","params":{}}
+- **Node.js ≥ 18** — only for development/verification (`npm run verify`). The extension itself needs no build step and no npm install.
+- **Python 3.9+** with `websockets` — for the bridge (`start.py` / `MacOS_START.command`).
+- **Roblox Studio** with *Assistant → Manage MCP Servers → Studio as MCP Server* enabled.
+
+## Install
+
+1. `chrome://extensions` → Developer mode ON → **Load unpacked** → `zeroscript-extension-v2/`
+2. Start the bridge: **`py -3 start.py`** (Windows) or `chmod +x MacOS_START.command && ./MacOS_START.command` (macOS).
+   Both live in `ZeroScript Demo/ZeroScript-Free-1.5.5/`. The bridge listens on `127.0.0.1:17613` (WS) and `127.0.0.1:17614` (HTTP).
+3. In Studio: **Assistant → Manage MCP Servers → Enable Studio as MCP Server**.
+4. Open any supported AI, start a **new chat**, press **▶ Start**.
+
+The popup shows bridge/Studio health. If it says *bridge offline*, the Python process is not running.
+
+## Using it
+
+Type normally — the AI writes plain-text commands, the extension executes them.
+
+| Command | What it does |
+|---|---|
+| `/truth <ask>` | Answer only from tool-verified facts; say "not verified" otherwise |
+| `/code <build>` | Maximum-effort build: bulk `execute_luau`, full scripts, no placeholders |
+| `/prompt <do>` | Execute exactly what was asked, inspect → mutate → verify, once |
+| `/force <do>` | Never give up: break the task down and retry with different approaches |
+| `/smart <do>` | Extra planning/verification scaffolding for weaker models |
+
+Slash modes are combinable (`/truth /force fix Workspace.Gravity`). Where the extension can rewrite the
+prompt it does so; otherwise the slash arrives as plain text and the system prompt tells the model to
+honour it.
+
+### Exec modes (left of the agent button)
+
+- **Single** (default) — one prompt, one answer.
+- **Continuous** — keeps building until the model reports completion or the 24-turn budget is reached.
+- **Loop** — rotates planner → coder → checker for up to 40 turns, state shared through the wall + agent hub.
+
+### Switch Plan (Direct / Agent / Plan / Checker)
+
+Assign roles to open AI tabs. In Agent/Plan/Checker mode the extension wakes the other tabs, shares the
+magic-word handshake and passes tasks between them. **This requires the tabs to be open and the plan
+saved.**
+
+---
+
+## Architecture
+
 ```
-```json
-{"command":"team_send","params":{"to":"coder","text":"Here is the plan and the paths you own..."}}
-```
-```json
-{"command":"team_read","params":{}}
-```
-
-Recipients can be `planner`, `coder`, `checker`, an exact live peer name, or `all`. `team_read` is a non-consuming inspection; automatic delivery handles acknowledgements. Messages are capped at 12,000 characters, mailboxes at 100 entries, the event history at 1,000 events, and registrations at 64 tabs. Message IDs deduplicate retries within a bridge run. **Mailboxes and event history are in memory and disappear when the bridge restarts.** There is no exactly-once delivery guarantee across crashes between chat submission and acknowledgement; ambiguous delivery is paused for manual recovery, not silently retried.
-
-Stop the team from the popup before reassigning roles. Use **Leave active team tab** to free a role, then rejoin; free both roles before swapping them. Closing/navigating a joined tab stops its team; other live tabs can remain joined, but the missing role must rejoin. After bridge restart, rejoin if necessary and explicitly Start again. Multiple teams use different names; the viewer shows each event's team.
-
-## Safety and transport
-
-- WebSocket `127.0.0.1:17613`, HTTP `127.0.0.1:17614`. Keep these defaults for the extension; changing bridge-only environment ports does not reconfigure the extension.
-- Mutations are sent **once** over one transport. No WS/HTTP hedging, automatic mutation replay, or fallback batch replay after a timeout.
-- A timed-out or stopped Studio operation can still have completed. Inspect actual state before retrying.
-- Bridge transport batches accept at most **24 calls**, execute sequentially, preserve each result, and are **not transactions**. Earlier changes are not rolled back on failure. Ordinary AI replies still allow one command at a time.
-- HTTP API calls require `X-ZS-Token`; WS requires the token during connection. Ordinary website origins and non-loopback Host headers are rejected. Extension bootstrap uses `X-ZS-Client: extension`; Origin-less local clients are still trusted for bootstrap if they supply this marker. This protects against ordinary remote pages, **not hostile local processes/extensions**.
-- For stronger extension-origin pinning, set `ZS_EXTENSION_ID` to your unpacked extension ID before launching. The optional `ZS_NO_AUTH=1` is for deliberate local development only; do not use it routinely.
-- The bridge executes configured MCP server commands with your user account's permissions. Add only trusted servers. `execute_luau` is not sandboxed by this Python wrapper.
-- Registered peers are untrusted task data, not system instructions. Models can still misunderstand or ignore instructions. Coordinate file/instance ownership to avoid conflicting edits; there is no automatic semantic merge of multiple agents' changes.
-- Unknown Studio health is not displayed as verified ready. Generic provider adapters fail closed when message ownership cannot be determined; they may need site-specific selectors after website updates.
-
-Supported adapters include Claude, ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena (Direct), Meta AI, and experimental generic wrappers for Perplexity, Copilot, Grok, Poe and Mistral. **Adapters existing in the manifest is not proof of current live compatibility.**
-
-## Startup improvements and verification limits
-
-Team startup uses one shorter role prompt per tab, submitted concurrently, rather than serial Studio catalogue/bootstrap/readiness exchanges. It does not wait for Studio discovery. Optional `orjson`/`msgpack` installation has been removed from the launch path. Read-only requests can share an in-flight result; independent mutations do not share placeholder results.
-
-There is **no claimed percentage speedup for real websites**: model latency, login state, captchas, tab throttling and provider DOM changes are outside the bridge's control. Local tests verify concurrent submissions and no duplicate hedging, not a real Claude/Gemini/DeepSeek conversation.
-
-## Development and tests
-
-Canonical extension: `zeroscript-extension-v2/`. Canonical Python files: `ZeroScript Demo/ZeroScript-Free-1.5.5/`. Compatibility copies are checked by `scripts/sync_copies.py`.
-
-```sh
-python -m venv .venv
-# Windows: .venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m unittest discover -s tests -v
-npm ci --ignore-scripts
-npm test
-python scripts/sync_copies.py --check
+manifest.json             MV3: 16 content-script blocks, 20 AI hosts, 27 host_permissions
+core/config.js            App identity, plans, system prompt, tool categories, feedback text
+core/parser.js            Command extraction + JSON salvage (the most-tested module)
+core/sandbox.js           Luau tokenizer + block-balance static analyser (no VM, by design)
+core/memory_wall.js       Persistent project memory (chrome.storage + DOM beacon)
+core/plan_wall.js         Event-driven inter-tab wall (BroadcastChannel + storage events)
+core/agent_hub.js         Agent temp storage (memory → BC → chrome.storage → bridge)
+core/prompt_enhancer.js   Slash modes + spec/template expansion
+core/agent_stability.js   Editor/generation hardening for flaky composers
+core/main.js              Agentic loop, exec modes, UI, chips, diagnostics
+providers/*.js            Per-site DOM drivers (7 bespoke) + generic driver + 5 thin wrappers
+background.js             Service worker: bridge link (WS + HTTP), plan wake, agent temp
+bridge.py                 Local MCP bridge: WS + REST + SSE, token auth, process supervision
+tools/verify.js           Verification suite (see below)
 ```
 
-After editing canonical files: `python scripts/sync_copies.py --write`. Tests use temporary bridge data and mocked MCP responses; they do not launch/kill Studio or execute project mutations. See [the repair notes](docs/REPAIR_NOTES.md) for what changed and what still needs live validation. Historical changelogs describe older versions, not current guarantees.
+### Verification
 
-### Python launcher prerequisites
-`start.py --check` validates Python and websockets without launching anything. Install missing dependencies explicitly with `python -m pip install "websockets>=13,<16"` (use a virtual environment if your system requires it). Unlike the old batch launcher, it does not install Python, run pip during startup, or restart after crashes. A `.py` file cannot bootstrap a missing Python installation. On Windows it requests a separate communication window; on other systems the viewer shares the terminal unless you open it separately.
+```bash
+npm install          # acorn (AST scope checking); optional but recommended
+npm run verify
+```
 
-### Claude: what is actually tested
-Claude has a dedicated adapter and manifest entry. Local fixture tests are not proof of compatibility with your live account, rollout or browser. Reload the extension **and refresh existing Claude tabs** after updating. The toolbar needs an available chat composer; login, billing and error pages are not chat support. If it is missing, inspect extension errors and the tab console instead of assuming the bridge is connected.
+`verify` checks: every file parses · the manifest is valid and every referenced file exists ·
+content-script dependency order · **no identifier is read from a scope that cannot see its declaration**
+(the 4.2.0 bug class, verified with an AST, with a self-test fixture that proves the checker works) ·
+no module calls an export that does not exist · versions agree · all four test suites pass.
 
-## Shared tab controls (all provider adapters)
-The popup now includes **Active chat tab** status, **Restore toolbar**, and **Stop this tab**. Status distinguishes an available composer, an attached toolbar, its detected visibility, the local loop, model-generation detection, and team membership. It does not read/export your draft or chat text and does not claim the model understood anything. Restore reattaches the existing toolbar without refreshing the website or sending a prompt. If no content script responds, reload the extension and refresh the supported chat tab. Local stop does not undo running bridge operations or stop other team tabs; use **Stop team** for the team. Visibility is DOM/layout detection, not a guarantee against overlap or clipping by website CSS.
+## Security notes
+
+- The bridge binds to `127.0.0.1` only and **requires a token** for every state-changing endpoint
+  (`X-ZS-Token`, `Authorization`, or `?token=`). The token is `ZeroScript Demo/…/.zs_token`, created on first run.
+- Read-only endpoints (`/health`, `/api/status`, `/api/metrics`) stay open so the popup can show health before a token is known. Set `ZS_NO_AUTH=1` only on a machine you control.
+- CORS is an explicit allowlist of the 20 supported AI hosts plus `chrome-extension://`. Unknown origins get no allow-origin header.
+- The bridge log records tool names and arguments. It can contain your project's Lua, so treat `logs/` as sensitive (it is git-ignored).
+
+## Troubleshooting
+
+- **Card says 4.5.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
+- **Bar missing?** Check the extension is 4.5.0, then look for `#zs-bar` in the inspector.
+- **"Extension context invalidated"** — the extension was reloaded/updated under an open tab; reload the page.
+- **Loop/Continuous not continuing?** Check the Exec selector and watch for the budget banner; press Start again to continue.
+- **Nothing executes** — popup health first: bridge offline → run `start.py`. Studio not connected → enable the MCP server in Studio.
+- Diagnostics: `window.__zsDiag` (last 300 loop decisions), `window.__zsMemoryWall.stats()`, `window.__zsTransportStats()`.
+
+## Licence
+
+GPL-3.0-or-later — see [`LICENSE`](LICENSE).

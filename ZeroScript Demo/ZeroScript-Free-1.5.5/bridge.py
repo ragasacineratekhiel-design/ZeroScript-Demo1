@@ -75,7 +75,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="3.1.0"
+BRIDGE_VERSION="4.5.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -168,6 +168,37 @@ class RateLimiter:
 _rate_limiter=RateLimiter()
 
 # ── LRU cache for idempotent queries ──────────────────────────────────
+_AGENT_TEMP = {}
+_AGENT_TEMP_LOCK = threading.Lock()
+_AGENT_TEMP_MAX = 256
+
+def _agent_temp_set(key, value, src="agent", ttl=120.0):
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        if len(_AGENT_TEMP) >= _AGENT_TEMP_MAX:
+            # drop the oldest entry first — bounded memory, never unbounded growth
+            oldest = min(_AGENT_TEMP.items(), key=lambda kv: kv[1].get("ts", 0))[0]
+            _AGENT_TEMP.pop(oldest, None)
+        _AGENT_TEMP[key] = {"value": value, "from": src, "ts": now, "exp": now + max(1.0, ttl)}
+    return True
+
+def _agent_temp_get(key):
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        rec = _AGENT_TEMP.get(key)
+        if not rec: return None
+        if rec.get("exp", 0) < now:
+            _AGENT_TEMP.pop(key, None)
+            return None
+        return rec
+
+def _agent_temp_keys():
+    now = time.time()
+    with _AGENT_TEMP_LOCK:
+        for k in [k for k, v in _AGENT_TEMP.items() if v.get("exp", 0) < now]:
+            _AGENT_TEMP.pop(k, None)
+        return list(_AGENT_TEMP.keys())
+
 class TTLCache:
     def __init__(self, ttl=1.2, maxsize=512):  # v2.2: tighter TTL, larger cache for ultra-fast
         self.ttl=ttl; self.maxsize=maxsize; self.store={}; self.lock=threading.Lock()
@@ -371,7 +402,7 @@ def config_remove_server(server_id):
 def restart_self():
     log("restarting bridge to reload config...","yl")
     try:
-        for c in mgr.clients.values(): c.stop()
+        mgr.stop_all()
     except: pass
     if _log_file:
         try: _log_file.flush()
@@ -565,6 +596,12 @@ class MCPManager:
         servers=_read_config().get("mcpServers",{}) or {}
         for sid,spec in servers.items(): self.clients[sid]=MCPClient(sid,spec.get("command"),spec.get("args"),spec.get("env"))
         log(f"configured {len(self.clients)} MCP server(s): {', '.join(self.clients) or '(none)'}","cy")
+    def stop_all(self):
+        for sid,client in list(self.clients.items()):
+            try: client.stop()
+            except Exception as exc: log(f"[{sid}] stop failed: {exc}","yl")
+        with self.index_lock: self.index={}
+
     def start_all(self):
         threads=[]
         for sid,client in self.clients.items():
@@ -674,7 +711,6 @@ STUDIO_ALL_SERVICES = [
     "MarketplaceService","InsertService","AssetService","ContentProvider",
     "Players"
 ]
-STUDIO_HEARTBEAT_INTERVAL = 3.0  # v2.2: tighter 3s for super-stable Studio monitoring
 _studio_last_ok = time.time()
 _studio_consec_fails = 0
 
@@ -841,6 +877,14 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok":False,"error":"extension bootstrap required"},403); return
             self._send_json({"ok":True,"token":BRIDGE_TOKEN},origin=origin); return
         if path not in ("/","/health","/api/health") and not _check_auth(self): self._send_json({"ok":False,"error":"unauthorized"},401,origin); return
+        if path in ("/api/agent_temp","/agent_temp"):
+            qs=parse_qs(parsed.query); k=(qs.get("key") or [""])[0]
+            if k:
+                rec=_agent_temp_get(k)
+                self._send_json({"ok":bool(rec), **({"key":k,"value":rec["value"],"from":rec["from"],"ts":rec["ts"]} if rec else {"value":None})},origin=origin)
+            else:
+                self._send_json({"ok":True,"keys":_agent_temp_keys()},origin=origin)
+            return
         if path=="/api/team/events":
             self._send_json(team_hub.event_log(int((parse_qs(parsed.query).get("since") or ["0"])[0])),origin=origin); return
         if path in ("/","/health","/api/health"):
@@ -938,6 +982,12 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
         body=self._read_body()
         data=_loads(body) if body else {}
         if not isinstance(data,dict): raise ValueError("JSON body must be an object")
+        if path in ("/api/agent_temp","/agent_temp"):
+            k=str(data.get("key") or "")[:200]
+            if not k: self._send_json({"ok":False,"error":"missing key"},400,origin); return
+            ttl=float(data.get("ttl",120000))/1000.0
+            _agent_temp_set(k, data.get("value"), data.get("from","agent"), ttl)
+            self._send_json({"ok":True,"key":k},origin=origin); return
         if path.startswith("/api/team/"):
             member=data.get("member_id")
             action=path.rsplit("/",1)[-1]
@@ -1067,15 +1117,18 @@ def _start_http_server():
     return server
 
 # ── WebSocket handler (upgraded) ────────────────────────────────────────
+_CONN_TASKS = {}
+
 async def handler(ws):
     headers=getattr(getattr(ws,"request",None),"headers",None) or getattr(ws,"request_headers",{})
     path=getattr(getattr(ws,"request",None),"path",None) or getattr(ws,"path","")
-    token=(parse_qs(urlparse(path).query).get("token") or [""])[0]
+    token=headers.get("X-ZS-Token","") or (parse_qs(urlparse(path).query).get("token") or [""])[0]
     if not _allowed_origin(headers.get("Origin","")) or (not NO_AUTH and (not token or not secrets.compare_digest(token,BRIDGE_TOKEN))):
         await ws.close(code=1008,reason="Authentication required"); return
     peer=getattr(ws,"remote_address",("?",))[0]
     task_slots=asyncio.Semaphore(16)
     tasks=set()
+    _CONN_TASKS[ws]=tasks
     def spawn(coro):
         task=asyncio.create_task(coro); tasks.add(task); task.add_done_callback(tasks.discard)
     async def bounded_tool(name,args,timeout,rid):
@@ -1192,6 +1245,9 @@ async def handler(ws):
     except ConnectionClosed: pass
     except Exception as e: log(f"handler error: {e}","rd")
     finally:
+        for task in tuple(tasks): task.cancel()
+        if tasks: await asyncio.gather(*tuple(tasks),return_exceptions=True)
+        _CONN_TASKS.pop(ws,None)
         with clients_lock: clients.discard(ws)
         metrics.ws_connections=len(clients)
         log(f"extension disconnected [{len(clients)} client(s)]","yl")
@@ -1368,8 +1424,8 @@ if __name__=="__main__":
     try: asyncio.run(main())
     except KeyboardInterrupt:
         log("shutting down...","yl")
-        for c in mgr.clients.values(): c.stop()
+        mgr.stop_all()
     finally:
-        for client in mgr.clients.values(): client.stop()
+        mgr.stop_all()
         log("===== BRIDGE STOP =====","cy")
         if _log_file: _log_file.close()

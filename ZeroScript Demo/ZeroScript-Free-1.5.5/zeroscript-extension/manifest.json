@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "ZeroScript Team \u00d7 Roblox Studio Agent",
-  "version": "3.1.0",
-  "description": "Bridge-mediated planner, coder and checker mailboxes with timestamped delivery evidence. Roblox MCP tools via authenticated local bridge; open AI chat tabs required.",
+  "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
+  "version": "4.5.0",
+  "description": "ZeroScript with bounded execution modes, memory/wall tools, authenticated bridge teams and tab recovery controls.",
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "tabs"
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
@@ -43,7 +44,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript Team 3.1",
+    "default_title": "ZeroScript MAX 4.3.0",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -56,10 +57,16 @@
         "https://chat.deepseek.com/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/deepseek.js",
         "core/main.js"
       ],
@@ -74,6 +81,7 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "core/safe.js",
         "providers/chatgpt-cm.js"
       ],
       "world": "MAIN",
@@ -85,10 +93,16 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/chatgpt.js",
         "core/main.js"
       ],
@@ -102,10 +116,16 @@
         "https://gemini.google.com/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/gemini.js",
         "core/main.js"
       ],
@@ -120,10 +140,16 @@
         "https://kimi.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/kimi.js",
         "core/main.js"
       ],
@@ -137,10 +163,16 @@
         "https://chat.z.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/glm.js",
         "core/main.js"
       ],
@@ -154,10 +186,16 @@
         "https://arena.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/arena.js",
         "core/main.js"
       ],
@@ -172,10 +210,16 @@
         "https://meta.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/meta.js",
         "core/main.js"
       ],
@@ -189,6 +233,7 @@
         "https://chat.qwen.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "providers/qwen-net.js"
       ],
       "world": "MAIN",
@@ -199,10 +244,16 @@
         "https://chat.qwen.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/qwen.js",
         "core/main.js"
       ],
@@ -217,10 +268,17 @@
         "https://*.claude.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
+        "providers/claude-connector.js",
         "providers/claude.js",
         "core/main.js"
       ],
@@ -235,10 +293,16 @@
         "https://perplexity.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/generic.js",
         "providers/perplexity.js",
         "core/main.js"
@@ -253,10 +317,16 @@
         "https://copilot.microsoft.com/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/generic.js",
         "providers/copilot.js",
         "core/main.js"
@@ -272,10 +342,16 @@
         "https://x.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/generic.js",
         "providers/grok.js",
         "core/main.js"
@@ -290,10 +366,16 @@
         "https://poe.com/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/generic.js",
         "providers/poe.js",
         "core/main.js"
@@ -309,10 +391,16 @@
         "https://*.mistral.ai/*"
       ],
       "js": [
+        "core/safe.js",
         "core/config.js",
         "core/agent_stability.js",
-        "core/transport.js",
         "core/parser.js",
+        "core/memory_wall.js",
+        "core/sandbox.js",
+        "core/prompt_enhancer.js",
+        "core/plan_wall.js",
+        "core/peer_wall.js",
+        "core/agent_hub.js",
         "providers/generic.js",
         "providers/mistral.js",
         "core/main.js"

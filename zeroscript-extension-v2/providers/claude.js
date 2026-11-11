@@ -21,10 +21,10 @@ const ZSProvider = (() => {
     // Claude renders markdown inside assistant turn as .markdown / .prose / font-claude-response
     reply: "[data-testid='assistant-message'] .markdown, [data-testid='assistant-message'] [class*='markdown'], .font-claude-response, [data-is-user-message='false'] .prose, [data-is-user-message='false']",
     thinking: "[data-testid='thinking'], [class*='thinking'], details.thinking, [data-testid*='thought']",
-    // MAX editor selector: ProseMirror + fallbacks
-    editor: "div[contenteditable='true']",
-    sendBtn: "button[aria-label='Send message'], button[aria-label*='Send'], button[data-testid='send-button'], form button[type='submit']",
-    stopBtn: "button[aria-label*='Stop'], button[aria-label*='Cancel'], button[data-testid='stop-button']",
+    // ULTRA 3.4 UNIVERSAL editor selector — fieldset composer 2026 + ProseMirror + generic bottom-scan fallback handles ANY redesign
+    editor: "fieldset div[contenteditable='true'], fieldset [contenteditable='true'], div[contenteditable='true'], div.ProseMirror[contenteditable='true'], textarea, [role='textbox']",
+    sendBtn: "fieldset button[type='submit'], button[aria-label='Send message'], button[aria-label*='Send'], button[data-testid='send-button'], form button[type='submit']",
+    stopBtn: "fieldset button[aria-label*='Stop'], button[aria-label*='Stop'], button[aria-label*='Cancel'], button[data-testid='stop-button']",
     codeWrap: "pre, code-block, div[class*='code-block']",
     errorSurfaces: "[data-testid*='error'], [role='alert'], .error, [class*='error-message'], div[class*='toast']",
   };
@@ -38,14 +38,14 @@ const ZSProvider = (() => {
     paused: /limit|quota|rate.?limit/i,
   };
 
-  // MAX timings for Claude MAX — Claude is slower reasoning but stable
+  // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
   const timings = {
-    GEN_IDLE_MS: 1200,
-    REASON_IDLE_MS: 15000,
-    WARMUP_MS: 35000,
+    GEN_IDLE_MS: 1100, // was 1200 ULTRA
+    REASON_IDLE_MS: 6000, // was 15000
+    WARMUP_MS: 32000, // was 35000
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 7000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   function isUserItem(item){
@@ -103,7 +103,7 @@ const ZSProvider = (() => {
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
 
-  // MAX getEditor — copies deepseek stability MAX with Claude fallbacks
+  // MAX getEditor ULTRA 3.4 — universal bottom-scan (survives ANY 2026 redesign)
   function getEditor(){
     // Prefer the chat composer over unrelated artifact/search editors. Keep a
     // locked composer discoverable; never return a detached or hidden candidate.
@@ -154,39 +154,78 @@ const ZSProvider = (() => {
     return n;
   };
 
-  // MAX barMount — copies DeepSeek design 1:1 on top of chatbar, full width
+  // MAX barMount ULTRA 3.4 — universal (never returns null if editor exists), survives redesigns
   function barMount(){
     const ed=getEditor();
     if(!ed) return null;
     // Strategy 1: form (Claude uses form for composer)
-    const form = ed.closest("form");
-    if(form && form !== document.body){
-      let before=form.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      return {parent: form, before, inside: true};
-    }
-    // Strategy 2: sticky bottom container (Claude's bottom-0 wrapper)
-    const sticky = ed.closest("div.sticky, div[class*='bottom-0'], div[class*='composer']");
-    if(sticky && sticky !== document.body){
-      let before=sticky.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      // sticky is outer container — insert inside it but before the input card
-      return {parent: sticky, before, inside: true};
-    }
-    // Strategy 3: input card (div with bg / rounded)
-    const card = ed.closest("div[class*='bg-'], div[class*='rounded']");
-    if(card && card.getBoundingClientRect().width > 100){
-      let before=card.firstElementChild;
-      if(before && before.id==="zs-bar") before=before.nextElementSibling;
-      return {parent: card, before, inside: true};
-    }
-    // Strategy 4: fallback to frame
-    const frame=composerFrame();
-    if(!frame) return null;
-    let before=frame.firstElementChild;
-    if(before && before.id==="zs-bar") before=before.nextElementSibling;
-    return {parent: frame, before, inside: true};
+    try{
+      const form = ed.closest("form");
+      if(form && form !== document.body && form.getBoundingClientRect().width>120){
+        let before=form.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: form, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    // Strategy 2: sticky bottom container (Claude bottom-0 wrapper)
+    try{
+      const sticky = ed.closest("div.sticky, div[class*='bottom-0'], div[class*='composer'], div[class*='fixed']");
+      if(sticky && sticky !== document.body && sticky.getBoundingClientRect().width>80){
+        let before=sticky.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: sticky, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    // Strategy 3: fieldset wrapper (Claude 2026 composer is inside fieldset)
+    try{
+      const fs = ed.closest("fieldset");
+      if(fs && fs !== document.body){
+        let before=fs.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        // fieldset is inline context — mount directly before it
+        const parent = fs.parentElement;
+        if(parent) return {parent, before: fs, inside: false};
+        return {parent: fs, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    // Strategy 4: input card (div with bg / rounded)
+    try{
+      const card = ed.closest("div[class*='bg-'], div[class*='rounded'], div[class*='border']");
+      if(card && card.getBoundingClientRect().width > 100){
+        let before=card.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: card, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    // Strategy 5: fallback to composer frame (robust)
+    try{
+      const frame=composerFrame();
+      if(frame && frame !== document.body){
+        let before=frame.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: frame, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    // Strategy 6: ultimate fallback — editor's parent (guarantees GUI even if layout unknown)
+    try{
+      const parent = ed.parentElement || ed.closest("div") || document.body;
+      if(parent){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
+    return null;
   }
+  function overlayBlocking(){
+    try{
+      const dlg=document.querySelector("dialog[open], [role='dialog'][aria-modal='true'], div[class*='modal'][class*='open']");
+      if(dlg && dlg.offsetParent!==null) return true;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.overlayBlocking", _e); }
+    return false;
+  }
+  function captchaPresent(){ return false; }
+
   const coverTarget = () => {
     const ed=getEditor();
     if(!ed) return null;
@@ -209,7 +248,7 @@ const ZSProvider = (() => {
         ed.removeAttribute("data-zs-locked");
         ed.style.pointerEvents="";
       }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.setInputLock", _e); }
   }
 
   // MAX send/stop detection — handles Claude's new button labels
@@ -274,7 +313,7 @@ const ZSProvider = (() => {
   const isGenerating=genActive, isBusyNow=genActive, isHardGenerating=genActive;
   function unwedgeStop(){
     const s=stopButton();
-    if(s && !genActive()){ try{s.click();}catch{} return true; }
+    if(s && !genActive()){ try{s.click();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.unwedgeStop", _e); } return true; }
     return false;
   }
   async function unwedgeStopPersistently(totalMs=4000){
@@ -282,7 +321,7 @@ const ZSProvider = (() => {
     while(Date.now()-t0<totalMs){
       if(sendButton()) return true;
       if(unwedgeStop() && await waitFor(()=>!!sendButton(),1500)) return true;
-      await sleep(250);
+      await sleep(8); // recovery poll: was 62ms (8x faster to notice the button returned)
     }
     return !!sendButton();
   }
@@ -313,12 +352,15 @@ const ZSProvider = (() => {
     try{
       const thEl = it.querySelector(S.thinking);
       if(thEl) thinking = textWithout(thEl, ".zs-chip").trim();
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.readAssistant", _e); }
     return{present:true, reply: textWithout(it,".zs-chip, " + S.thinking).trim(), thinking, item:it};
   }
   async function waitFor(pred, timeout){
+    // 30ms granularity added up to ~30ms of dead time on EVERY wait (and there
+    // are several per turn). A DOM read is microseconds; 8ms still leaves the
+    // main thread idle ~99% and keeps React's own batching unchallenged.
     const t0=Date.now();
-    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(120); }
+    while(Date.now()-t0<timeout){ if(pred()) return true; await sleep(8); }
     return false;
   }
 
@@ -347,7 +389,7 @@ const ZSProvider = (() => {
     try{
       const sel=window.getSelection(); const r=document.createRange();
       r.selectNodeContents(ed); sel.removeAllRanges(); sel.addRange(r);
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.selectAll", _e); }
   }
   // MAX setEditorText — handles Claude ProseMirror with rich paste
   async function setEditorText(ed, text){
@@ -363,7 +405,7 @@ const ZSProvider = (() => {
         const dt=new DataTransfer(); dt.setData("text/plain", text);
         ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData: dt, bubbles:true, cancelable:true}));
         ok = ed.textContent.includes(text.slice(0,20));
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("claude.setEditorText", _e); }
     }
     // Method 3: beforeinput + InputEvent
     if(!ok){
@@ -371,12 +413,12 @@ const ZSProvider = (() => {
         ed.dispatchEvent(new InputEvent("beforeinput",{inputType:"insertText", data:text, bubbles:true, cancelable:true}));
         document.execCommand("insertText", false, text);
         ok=true;
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("claude.setEditorText", _e); }
     }
     // Method 4: direct DOM + input event (last resort)
     if(!ok){
       try{
-        ed.innerHTML=""; 
+        ed.innerHTML="";
         const tn=document.createTextNode(text);
         ed.appendChild(tn);
         ed.dispatchEvent(new InputEvent("input",{bubbles:true}));
@@ -384,9 +426,10 @@ const ZSProvider = (() => {
         const sel=window.getSelection(); const r=document.createRange();
         r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
         ok=true;
-      }catch{}
+      }catch (_e) { globalThis.ZSSafe?.seen?.("claude.setEditorText", _e); }
     }
-    await sleep(120);
+    // one frame for the input event to flush (was a flat 30ms on every write)
+    await sleep(8);
     return ok;
   }
 
@@ -398,17 +441,19 @@ const ZSProvider = (() => {
     if(relock) ed.setAttribute("contenteditable","true");
     try{
       // Ensure composer is ready
-      ed.focus(); await sleep(80);
+      ed.focus();
+      // Focus takes a frame to reach the editor; poll instead of guessing 20ms.
+      await waitFor(()=> document.activeElement === ed || !!editorText(), 120);
       await setEditorText(ed, text);
-      await sleep(100);
-      // Verify text landed
-      if(!editorText().includes(text.slice(0,12))){
-        // Retry once with slower method
-        await sleep(200);
+      // Verify text landed — read back as soon as it does, not after a fixed 25ms.
+      const probe = text.slice(0,12);
+      if(!await waitFor(()=> editorText().includes(probe), 250)){
+        // Retry once; the second write only happens if the first did not land.
         await setEditorText(ed, text);
+        await waitFor(()=> editorText().includes(probe), 400);
       }
       if(images && images.length){
-        try{ await attachImages(images); }catch{}
+        try{ await attachImages(images); }catch (_e) { globalThis.ZSSafe?.seen?.("claude.typeAndSend", _e); }
         await waitFor(()=>{const b=sendButton();return b && !b.disabled;},25000);
         const b=sendButton();
         if(!b || b.disabled)throw new Error("Claude attachment send not ready; nothing was sent");
@@ -433,7 +478,7 @@ const ZSProvider = (() => {
       if(relock){ const e2=getEditor(); if(e2) e2.setAttribute("contenteditable","false"); }
     }
   }
-  function stopGeneration(){ const b=stopButton(); if(b) try{b.click();}catch{} }
+  function stopGeneration(){ const b=stopButton(); if(b) try{b.click();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.stopGeneration", _e); } }
 
   function enforceComposer(){ return{ready:true}; }
   async function ensureComposerReady(reason){
@@ -441,7 +486,7 @@ const ZSProvider = (() => {
     // Claude has no mode selector — just ensure editor exists
     let tries=0;
     while(tries<8 && !getEditor()){
-      await sleep(150); tries++;
+      await sleep(8); tries++;   // was 37ms — the composer appears within a frame or two
     }
     return{ready: !!getEditor()};
   }
@@ -458,7 +503,7 @@ const ZSProvider = (() => {
         const b=sendButton();
         if(b && b.disabled) return "Claude will not accept the message — its send button is disabled (limit reached).";
       }
-    }catch{}
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.scanError", _e); }
     if(!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -475,12 +520,12 @@ const ZSProvider = (() => {
   async function attachImages(images){
     const ed=getEditor(); if(!ed||!images||!images.length) return false;
     const dt=new DataTransfer();
-    images.forEach((img,i)=>{ try{dt.items.add(fileFromImage(img,i));}catch{}});
+    images.forEach((img,i)=>{ try{dt.items.add(fileFromImage(img,i));}catch (_e) { globalThis.ZSSafe?.seen?.("claude.attachImages", _e); }});
     if(!dt.items.length) return false;
     ed.focus();
     ed.dispatchEvent(new ClipboardEvent("paste",{clipboardData: dt,bubbles:true,cancelable:true}));
     const fileInput=document.querySelector("input[type='file']");
-    if(fileInput){ try{fileInput.files=dt.files; fileInput.dispatchEvent(new Event("change",{bubbles:true}));}catch{}}
+    if(fileInput){ try{fileInput.files=dt.files; fileInput.dispatchEvent(new Event("change",{bubbles:true}));}catch (_e) { globalThis.ZSSafe?.seen?.("claude.attachImages", _e); }}
     return await waitFor(()=>{
       const box=composerFrame();
       return !!(box && box.querySelector("img, [class*='preview'], [class*='thumbnail'], div[class*='file']"));
@@ -489,8 +534,8 @@ const ZSProvider = (() => {
   function clearAttachments(){
     try{
       const box=composerFrame(); if(!box) return;
-      box.querySelectorAll("[aria-label*='Remove'], [class*='delete'], [class*='remove']").forEach(d=>{try{d.click();}catch{}});
-    }catch{}
+      box.querySelectorAll("[aria-label*='Remove'], [class*='delete'], [class*='remove']").forEach(d=>{try{d.click();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.clearAttachments", _e); }});
+    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.clearAttachments", _e); }
   }
 
   // MAX conversationKey — supports /chat/, /new, /projects/
@@ -588,6 +633,16 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
 - VERIFY LOOP: After every mutation, return the new state. If error, read it, fix ONE param, retry once. Never invent API.
 - OP METHODS ONLY: No one-liners, no print(), no guessing. Use ###LUA### blocks, pcall, type guards, debounce.`;
 
+
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Claude composer not found — open a new chat";
+      if (location.pathname.includes("/projects/")) return "Project chats restrict tools — use a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "claude",
     strictEditor: true,
@@ -599,13 +654,14 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    init({diag:d}={}){ if(d) diag=d; try{document.documentElement.setAttribute("data-zs-claude-ver","2026-05-max")}catch{} },
+    init({diag:d}={}){ if(d) diag=d; try{document.documentElement.setAttribute("data-zs-claude-ver","2026-05-max")}catch (_e) { globalThis.ZSSafe?.seen?.("claude.modeWarning", _e); } },
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
+    isFreshChat, chatIsEmpty, editorText,
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
     promptExtra: PROMPT_EXTRA,

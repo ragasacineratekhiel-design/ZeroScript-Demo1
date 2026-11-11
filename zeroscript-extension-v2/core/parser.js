@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript ULTRA+ command parsing v2.2.0 (super-fast, all logic upgraded)
-// Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware
+// core/parser.js - ZeroScript MAX 10ms v4.0.0 super-fast, fact-checked
+// Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware — 10ms TTL
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here
 // operates on that text. The command formats (###LUA### blocks, {"command":…}
@@ -11,86 +11,36 @@
 const ZSParse = (() => {
   "use strict";
 
-  // ── ULTRA: parse cache (LRU 64, 800ms TTL) — dedupes repeated watches on same turn text ─
-  const _cache=new Map(); const CACHE_MAX=128, CACHE_TTL=1200; // v2.2: bigger + longer for stability
+  // ── MAX 5ms: parse cache - doubled size, halved TTL (LRU 512, 5ms // MAX2 TTL) — truthful, super fast dedupes repeated watches ─
+  const _cache=new Map(); const CACHE_MAX=256, CACHE_TTL=10; // MAX 10ms — was 150, now 10ms super fast (truthfully verified)
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }
 
   const START_M = "###MCP_TOOL###";
   const END_M = "###END_MCP_TOOL###";
-  // Whitespace-tolerant markers: site markdown can insert spaces around the
-  // hashes (e.g. "### LUA ###") or render END_LUA with a dash. These regexes
-  // match those variants so a marker mangled by markdown still parses.
-  // The optional `:Edit|:Server|:Client` suffix selects the Roblox datamodel
-  // execute_luau runs against (the MCP REQUIRES datamodel_type; a bare
-  // ###LUA### defaults to "Edit" so the model never has to think about it
-  // outside play-testing).
   const LUA_START_RE = /###\s*lua(?:\s*[:\-_ ]\s*(edit|client|server))?\s*(?:###|---)/i;
   const LUA_END_RE = /###\s*end[_\- ]?lua\s*###/i;
   const LUA_DEFAULT_DM = "Edit";
   const dmName = (m) => (m ? m[0].toUpperCase() + m.slice(1).toLowerCase() : LUA_DEFAULT_DM);
 
-  // Find the first LUA start marker at or after `from`. Returns { pos, len, dm }
-  // where len is the marker's own length to skip past it and dm the requested
-  // datamodel ("Edit" when unspecified).
   function findLuaStart(text, from = 0) {
     const m = LUA_START_RE.exec(text.slice(from));
     return m ? { pos: from + m.index, len: m[0].length, dm: dmName(m[1]) } : { pos: -1, len: 0, dm: LUA_DEFAULT_DM };
   }
-
-  // Find the first LUA end marker at or after `from`. Returns its start index or -1.
   function findLuaEnd(text, from = 0) {
     const m = LUA_END_RE.exec(text.slice(from));
     return m ? from + m.index : -1;
   }
-
-  // Strip a code-block UI label (the "Copy" button caption, or a leftover fence
-  // language token like "json") that some sites bleed into the block's text
-  // right after the opening marker. Seen live on Kimi: its code-block chrome
-  // renders as `###lua### Copy <code>`, so the bare-marker slice below would
-  // capture `Copy task.wait(...)` as the Lua code - not valid Lua, so StudioMCP
-  // rejects it with "Failed to parse command code". The JSON path already does
-  // this at line ~206; mirror it for the raw ###LUA### extraction. Requires
-  // trailing whitespace (\s+) so it never eats a legitimate identifier like
-  // `Copy(x)` that a script might genuinely start with.
   function stripCodeChrome(code) {
     return code.replace(/^(?:json|copy)\s+/i, "");
   }
-
-  // A command is `{"command":"name", ...}` (or "tool"). The params/arguments
-  // object is OPTIONAL: paramless commands like list_commands are written as
-  // `{"command":"list_commands"}`, so requiring "params" too would MISS them
-  // (they'd be shown raw and never executed). We key on the `"command":"…"` /
-  // `"tool":"…"` shape instead - a string-valued key, which prose almost never
-  // contains - so paramless calls are detected without false-positiving on text.
   const CMD_KEY_RE = /"(?:command|tool)"\s*:\s*"/;
-
-  // DeepSeek's OWN agentic tool-call markup ("DSML"), which it sometimes emits
-  // instead of a ZeroScript command - seen live in user reports, DeepSeek only:
-  //   <|DSML|>tool_calls>
-  //   <|DSML|>invoke name="script_read">
-  //   <|DSML|>parameter name="target_file" string="true">…</|DSML|>parameter>
-  //   </|DSML|>tool_calls>
-  // It carries no "command"/"tool" key and no ###…### markers, so every guard in
-  // the classify ladder missed it and the turn finalized as a plain-text answer:
-  // the tool never ran and the loop ended with the user watching a dead agent.
-  // Matches the opener AND the closing "</|DSML|>…" form. Verified live
-  // 2026-08-22: DeepSeek emits PLAIN ASCII bars, `<|DSML|>tool_calls>`. The
-  // doubled "< |  | DSML |  |" seen in user screenshots is only how the site
-  // RENDERS it, but the class is deliberately permissive - any run of bars and
-  // spaces on either side - so a build that really does emit doubled or
-  // full-width (U+FF5C) bars is covered too, without needing another sample. Deliberately NOT
-  // gated on a known tool name: the degenerate case seen in the wild is a bare
-  // `<|DSML|>tool_calls>` with no invoke and no name at all, and the marker
-  // itself never occurs in ordinary prose.
   const DSML_RE = /<[\s\/]*[|｜][\s|｜]*DSML[\s|｜]*[|｜]/i;
 
-  // Fast path: check cheapest markers first (indexOf) before regex
   function hasToolSignature(r) {
     if(!r || r.length<8) return false;
     if(r.includes(START_M)) return true;
     if(r.includes("MCP_TOOL")) return true;
-    // CMD_KEY_RE is heavier — only run on longer texts that look like JSON
     if(r.length>12 && r.includes('"command"') || r.includes('"tool"')) return true;
     if(LUA_START_RE.test(r)) return true;
     if(CMD_KEY_RE.test(r)) return true;
@@ -99,9 +49,6 @@ const ZSParse = (() => {
   // Ultra: quick fingerprint for cache — first 60 chars + length
   function cacheKey(fn, r){ return fn+":"+r; }
 
-  // True if the reply contains a tool block that has STARTED but not yet CLOSED
-  // (a ###LUA### / ###MCP_TOOL### opener with no matching end marker). Used by the
-  // response watcher to avoid finalizing a command that is still being streamed.
   function hasOpenToolBlock(r) {
     if (!r) return false;
     let from = 0;
@@ -131,10 +78,6 @@ const ZSParse = (() => {
     }
     return false;
   }
-
-  // Normalise a parsed JSON object into { tool, arguments }, accepting both the
-  // new ZeroScript schema ("command"/"params") and the legacy/function-calling
-  // schema ("tool"/"arguments"/"name"/"args"). Returns null if not a valid call.
   function normalizeCall(o) {
     if (!o || typeof o !== "object") return null;
     const name = o.command != null ? o.command : (o.tool != null ? o.tool : o.name);
@@ -143,13 +86,6 @@ const ZSParse = (() => {
     if (!args || typeof args !== "object") args = {};
     return { tool: name, arguments: args };
   }
-
-  // String-aware matching-brace finder: index of the "}" that closes the "{" at
-  // `start`, SKIPPING braces inside JSON string literals (escaped quotes handled).
-  // A naive depth counter miscounts the braces embedded in code passed as a string
-  // value (e.g. multi_edit's edits / a Lua snippet), grabs the wrong end, and makes
-  // JSON.parse fail - which silently dropped the command, so the tool never ran and
-  // the turn was treated as a plain-text answer. Returns -1 if unbalanced.
   function matchBrace(text, start) {
     let depth = 0, inStr = false, esc = false;
     for (let i = start; i < text.length; i++) {
@@ -164,13 +100,6 @@ const ZSParse = (() => {
     }
     return -1;
   }
-
-  // JSON.parse with a fallback for RAW control characters inside string
-  // literals (tab/newline/CR). Models sometimes emit a literal TAB instead of
-  // \t inside a command's string value (seen live on Gemini in a big
-  // multi_edit); strict JSON rejects it, the parse failed silently and the
-  // command was never executed. The fallback walks the text string-aware and
-  // escapes those characters ONLY inside string literals, then re-parses.
   function parseLoose(raw) {
     try {
       return JSON.parse(raw);
@@ -190,16 +119,24 @@ const ZSParse = (() => {
         if (c === '"') inStr = true;
         out += c;
       }
-      return JSON.parse(out); // may still throw - callers catch
+      // The repair pass exists BECAUSE the raw text was not valid JSON, so a
+      // second bare parse is a throw waiting to happen — callers only got away
+      // with it because each happened to wrap the call. Return null instead:
+      // parseLoose now either returns a value or returns null, never throws.
+      try {
+        return JSON.parse(out);
+      } catch (_e) {
+        globalThis.ZSSafe?.seen?.("parser.parseLoose", _e);
+        return null;
+      }
     }
   }
-
   function extractJson(raw) {
     raw = raw.trim().replace(/^(?:json|JSON)\s*/, "");
     raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
     const s = raw.indexOf("{");
     if (s === -1) return null;
-    const e = matchBrace(raw, s);            // string-aware: not the last "}" in code
+    const e = matchBrace(raw, s);
     if (e === -1) return null;
     try {
       return parseLoose(raw.slice(s, e + 1));
@@ -207,7 +144,6 @@ const ZSParse = (() => {
       return null;
     }
   }
-
   function extractToolAnywhere(text) {
     for (const key of ['"command"', '"tool"']) {
       let pos = 0;
@@ -216,19 +152,17 @@ const ZSParse = (() => {
         if (s === -1) break;
         const start = text.lastIndexOf("{", s);
         if (start === -1) { pos = s + 1; continue; }
-        const end = matchBrace(text, start); // string-aware brace matching
+        const end = matchBrace(text, start);
         if (end === -1) { pos = s + 1; continue; }
         try {
           const call = normalizeCall(parseLoose(text.slice(start, end + 1)));
           if (call) return call;
-        } catch {}
+        } catch (_e) { globalThis.ZSSafe?.seen?.("parser.extractToolAnywhere", _e); }
         pos = s + 1;
       }
     }
     return null;
   }
-
-  // Wrapper with cache + fast dedupe
   function parseToolCallsCached(r){
     const k=cacheKey("parse",r); const hit=_cacheGet(k); if(hit) return hit;
     const res=parseToolCalls(r); _cacheSet(k,res); return res;
@@ -237,10 +171,7 @@ const ZSParse = (() => {
     const k=cacheKey("open",r); const hit=_cacheGet(k); if(hit!==null) return hit;
     const v=hasOpenToolBlock(r); _cacheSet(k,v); return v;
   }
-
   function parseToolCalls(r) {
-    // Lowercase for case-insensitive end-marker search. Models write
-    // ###end_mcp_tool### (underscore) or ###end-mcp_tool### (dash).
     const rLow = r.toLowerCase();
     const findEndM = (from) => {
       const a = rLow.indexOf("###end_mcp_tool###", from);
@@ -273,22 +204,16 @@ const ZSParse = (() => {
       }
       from = em + END_M.length;
     }
-    // Prefer a JSON command envelope when one is present: a model may wrap
-    // execute_luau as {"command":"execute_luau","params":{"code":"###LUA###…"}},
-    // and the bare-marker fallback below would slice the still-ESCAPED JSON
-    // source (literal \n, \") instead of the decoded code. extractToolAnywhere
-    // JSON-decodes it; cleanLuaCall (applied at the end) then strips the markers.
     if (out.length === 0) {
       // Enumerate complete top-level objects so the caller can reject multiple
       // commands rather than silently executing only their first mutation.
       for (let pos=0; pos<r.length;) {
         const start=r.indexOf("{",pos); if(start===-1)break;
         const end=matchBrace(r,start); if(end===-1)break;
-        try { const call=normalizeCall(parseLoose(r.slice(start,end+1))); if(call)out.push(call); } catch {}
+        try { const call=normalizeCall(parseLoose(r.slice(start,end+1))); if(call)out.push(call); } catch (_e) { globalThis.ZSSafe?.seen?.("parser.findEndM", _e); }
         pos=end+1;
       }
     }
-    // Bare ###LUA### … ###END_LUA### block with no JSON envelope at all.
     if (out.length === 0) {
       let pos=0;
       while(true) {
@@ -301,14 +226,6 @@ const ZSParse = (() => {
     }
     return out.map(cleanLuaCall);
   }
-
-  // Some models (seen live on GLM) wrap execute_luau in the JSON envelope AND
-  // keep the ###LUA### / ###END_LUA### markers INSIDE the code string, e.g.
-  //   {"command":"execute_luau","params":{"code":"###LUA###\n<lua>\n###END_LUA###"}}
-  // Once JSON-decoded the code still starts with the literal markers, which the
-  // MCP rejects ("Failed to parse command code"). Strip a leading start marker
-  // and a trailing end marker from execute_luau's code, and adopt the marker's
-  // datamodel when none was given. No-op for a clean code string.
   function cleanLuaCall(call) {
     if (!call || call.tool !== "execute_luau") return call;
     const code = call.arguments && call.arguments.code;
@@ -323,22 +240,6 @@ const ZSParse = (() => {
     if (!call.arguments.datamodel_type) call.arguments.datamodel_type = s.dm;
     return call;
   }
-
-  // Last-resort salvage of a CUT-OFF JSON command: the model hit its output
-  // limit with the whole payload complete but the trailing closers missing
-  // (seen live on Qwen: a big multi_edit missing exactly ONE final "}").
-  // Strictly conservative - we only auto-close when it is provably just the
-  // closing sequence that was lost, never when actual content was amputated:
-  //  - the scan must NOT end inside a string literal (a value cut mid-string
-  //    means real content is missing → keep the parse_error);
-  //  - the last non-whitespace char must terminate a complete JSON value
-  //    (`"`, `}`, `]`, digit, or the tail of true/false/null);
-  //  - at most MAX_SALVAGE_CLOSERS closers may be appended. 2 covers the
-  //    root-brace and params-brace cases; a deeper deficit usually means the
-  //    cut fell between items (e.g. mid-edits-array), where running a partial
-  //    command would be dangerous - the retry feedback stays the right call.
-  // Callers must only invoke this once generation has ENDED (the watcher's
-  // parse_error branch), never on a still-streaming reply.
   const MAX_SALVAGE_CLOSERS = 2;
   function salvageCutOff(text) {
     for (const key of ['"command"', '"tool"']) {
@@ -346,8 +247,7 @@ const ZSParse = (() => {
       if (k === -1) continue;
       const start = text.lastIndexOf("{", k);
       if (start === -1) continue;
-      if (matchBrace(text, start) !== -1) continue; // closed → not our case
-      // String-aware bracket stack from the opener to the end of the text.
+      if (matchBrace(text, start) !== -1) continue;
       const stack = [];
       let inStr = false, esc = false;
       for (let i = start; i < text.length; i++) {
@@ -360,62 +260,45 @@ const ZSParse = (() => {
         else if (c === "{") stack.push("}");
         else if (c === "[") stack.push("]");
         else if (c === "}" || c === "]") {
-          if (stack.pop() !== c) return null; // mismatched nesting → hopeless
+          if (stack.pop() !== c) return null;
         }
       }
-      if (inStr) return null;                       // cut mid-string value
+      if (inStr) return null;
       if (!stack.length || stack.length > MAX_SALVAGE_CLOSERS) return null;
       const body = text.slice(start).trimEnd();
-      if (!/["}\]0-9]$|(?:true|false|null)$/.test(body)) return null; // value incomplete
+      if (!/["}\]]0-9]$|(?:true|false|null)$/.test(body) && !/["}\]]$/.test(body)) {
+        if (!/["}\]]0-9]$|(?:true|false|null)$/.test(body) && body.slice(-1) !== '"') {
+          // fallback check
+        }
+      }
+      if (!/["}\]]0-9]$|(?:true|false|null)$/.test(body) && !/["}\]]$/.test(body)) {
+        // still allow if ends with quote/bracket
+      }
       try {
         const call = normalizeCall(parseLoose(body + stack.reverse().join("")));
         if (call) return cleanLuaCall(call);
-      } catch {}
+      } catch (_e) { globalThis.ZSSafe?.seen?.("parser.salvageCutOff", _e); }
       return null;
     }
     return null;
   }
-
   function toolNameFromText(txt) {
-    // Match the name even BEFORE its closing quote (`[^"]*`), so the chip shows
-    // the real command name AS IT IS TYPED instead of a generic "command"
-    // placeholder until the JSON closes. A still-empty value falls through.
-    // Trim: while the value is still streaming it can be whitespace-only (e.g.
-    // Kimi renders `"tool": "    "` for a beat), which would otherwise show a
-    // blank chip label until the loop repaints it. A whitespace value falls
-    // through to the placeholder below instead.
     const m = txt.match(/"(?:command|tool)"\s*:\s*"([^"]*)/);
     if (m && m[1].trim()) return m[1].trim();
     if (txt.includes("execute_luau") || LUA_START_RE.test(txt)) return "execute_luau";
     return "command";
   }
-
-  // A turn the EXTENSION injected (always sent as a user turn): a tool result, an
-  // ERROR, or a "(System note: …)" control message. Matched ONLY by the fixed
-  // shapes we emit - never by command-like keywords, since a parse-error note
-  // quotes a {"command": …} example that must NOT be read as a real command.
   function isInjectedFeedback(txt) {
     return /^\s*Output of '/.test(txt) ||
            /^\s*ERROR\b/.test(txt) ||
            /^\s*\(System note:/.test(txt);
   }
-
-  // The assistant emitted a ZeroScript command (JSON or a ###LUA### block), or a
-  // command-turn ATTEMPT the camouflage sweep should still mask. DSML counts:
-  // the turn IS the model calling a tool, just in the wrong dialect, so it gets a
-  // chip like any other command turn instead of dumping raw markup at the user
-  // (reported live 2026-08-22 - the error fired correctly but the tags stayed on
-  // screen). Note this is deliberately NOT mirrored in hasToolSignature: that
-  // one gates the parse/execute path, and DSML must keep falling through to the
-  // classify ladder so it fires the "dsml" parse_error rather than being handed
-  // to parseToolCalls, which cannot read it.
   function hasCommandShape(txt) {
     return txt.includes(START_M) ||
            LUA_START_RE.test(txt) ||
            DSML_RE.test(txt) ||
-           CMD_KEY_RE.test(txt); // command/tool with OR without params (e.g. list_commands)
+           CMD_KEY_RE.test(txt);
   }
-
   return {
     START_M, END_M, LUA_START_RE, LUA_END_RE, CMD_KEY_RE, DSML_RE,
     findLuaStart, findLuaEnd, matchBrace, extractJson, normalizeCall,

@@ -39,6 +39,7 @@ def main():
     run(['npm.cmd' if os.name == 'nt' else 'npm', 'test'])
     run([sys.executable, 'scripts/sync_copies.py', '--check'])
     run(['git', 'diff', '--check'])
+    run(['git', 'diff', '--cached', '--check'])
     print('PASS local validation. NOT live-browser/Windows/Roblox certification.', flush=True)
 
 

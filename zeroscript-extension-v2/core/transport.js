@@ -61,6 +61,6 @@
 
     return { status, listTools, callTool, callBatch, metrics, ping };
   })();
-  try{ window.ZS_Transport=ZS_Transport; }catch{}
-  if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}
+  try{ window.ZS_Transport=ZS_Transport; }catch (_e) { globalThis.ZSSafe?.seen?.("transport.ping", _e); }
+  if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch (_e) { globalThis.ZSSafe?.seen?.("transport.ping", _e); }
 })();

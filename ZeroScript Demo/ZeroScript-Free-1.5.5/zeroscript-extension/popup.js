@@ -11,10 +11,10 @@ const SUPPORTED_HOSTS = [
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
 
 function safeVer() {
-  try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
-  return "v3.1.0";
+  try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
+  return "v4.5.0";
 }
-try { document.getElementById("ver").textContent = safeVer(); } catch {}
+try { document.getElementById("ver").textContent = safeVer(); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
 
 function render(s) {
   if (!s) return;
@@ -23,6 +23,7 @@ function render(s) {
   const tools = document.getElementById("tools");
   const servers = document.getElementById("servers");
   if (!dot || !state) return;
+  renderFaults(s);
   const list = s.servers || [];
   const up = list.filter((x) => x.alive).length;
   const mcpOk = s.connected && (s.mcpAlive || up > 0 || s.tools > 0);
@@ -40,6 +41,26 @@ function render(s) {
     : "";
 }
 
+function renderFaults(s) {
+  const el = document.getElementById("faults");
+  if (!el) return;
+  const n = (s && s.faults) || 0;
+  if (!n) { el.style.display = "none"; el.textContent = ""; return; }
+  const sites = (s.faultSites || []).join(", ");
+  el.style.display = "block";
+  el.textContent = "⚠ " + n + " error" + (n === 1 ? "" : "s") + " recorded" + (sites ? ": " + sites : "");
+  el.onclick = () => {
+    try {
+      chrome.runtime.sendMessage({ type: "zs_faults" }, (r) => {
+        const diag = JSON.stringify({ status: s, faults: r && r.faults, safe: r && r.safe }, null, 2);
+        try { navigator.clipboard.writeText(diag).then(()=>{el.textContent="✓ diagnostics copied";}).catch(()=>{el.textContent="⚠ copy failed";}); }
+        catch (_e) { globalThis.ZSSafe?.seen?.("popup.sites", _e); el.textContent = "⚠ copy failed"; }
+      });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("popup.sites", _e); }
+  };
+}
+
+
 function refresh() {
   try {
     if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
@@ -56,7 +77,7 @@ function bind(id, fn) {
 }
 
 bind("reconnect", () => {
-  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 600)); } catch {}
+  try { chrome.runtime.sendMessage({ type: "reconnect" }, () => setTimeout(refresh, 600)); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 });
 bind("restart", (e) => {
   const t = e.target; t.textContent = "Restarting…";
@@ -82,13 +103,14 @@ bind("settings", () => {
 try {
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === "zs-status") render(msg); });
-} catch {}
+} catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 refresh();
-setInterval(refresh, 2000);
+const refreshTimer=setInterval(refresh, 2000);
+window.addEventListener("pagehide",()=>clearInterval(refreshTimer),{once:true});
 
 // If opened as plain file:// HTML (not extension popup), show demo state
-try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 100); } catch {}
+try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 100); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 async function teamAction(type) {
   const result=document.getElementById('team-result');
@@ -136,4 +158,4 @@ async function tabControl(type='zs-tab-status') {
 bind('tab-refresh',()=>tabControl());
 bind('tab-recover',()=>tabControl('zs-recover-toolbar'));
 bind('tab-stop',()=>tabControl('zs-stop-tab'));
-tabControl();
+tabControl().catch(console.error);
