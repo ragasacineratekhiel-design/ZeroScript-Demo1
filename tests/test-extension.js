@@ -51,6 +51,15 @@ check('team prompt is short, role-specific, honest and bridge-mediated',()=>{
   assert.match(p,/I am not directly communicating with the others try/);
   assert.ok(p.length<config.buildSystemPrompt().length/2);
 });
+check('team inbox batches never acknowledge text outside the safe prompt budget',()=>{
+  const config=new Function(source('core/config.js')+';return ZS')();
+  const messages=Array.from({length:8},(_,id)=>({id,from:'Gemini',role:'checker',timestamp:'now',text:'x'.repeat(12000)}));
+  const batch=config.buildTeamInbox(messages,30000);
+  assert.equal(batch.messages.length,1);
+  assert.ok(batch.text.length<=24000);
+  assert.equal(batch.messages[0].id,0);
+  assert.throws(()=>config.buildTeamInbox(messages,5000),/exceeds/);
+});
 async function main(){
   let drops=0;stable.studio=true;stable.api.startStudioMonitor(()=>{},()=>drops++);await tick();stable.studio=false;
   for(let i=0;i<5;i++){now+=1800;await tick();}

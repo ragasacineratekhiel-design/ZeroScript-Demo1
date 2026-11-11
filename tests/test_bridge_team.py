@@ -35,6 +35,29 @@ class TeamTests(unittest.TestCase):
         for role in ("planner", "coder", "checker"):
             self.hub.ready(role)
 
+    def test_expired_required_role_stops_run_and_clears_queues(self):
+        self.start()
+        self.hub.send("planner","coder","queued work","stale-work")
+        self.now+=30
+        self.hub.status("planner")
+        self.now+=20
+        result=self.hub.status("planner")
+        self.assertFalse(result["active"])
+        self.assertFalse(result["communication_confirmed"])
+        self.assertEqual(list(self.hub.members["coder"]["inbox"]),[])
+        self.hub.register("coder","DeepSeek","coder")
+        self.assertFalse(self.hub.status("coder")["self"]["ready"])
+        self.assertEqual(len([e for e in self.hub.events if e["kind"]=="expired"]),1)
+
+    def test_inactive_room_history_is_bounded(self):
+        hub=TeamHub()
+        for i in range(140):
+            room="room-"+str(i)
+            for role in ("planner","coder","checker"):hub.register(role,role,role,room)
+            hub.start(room)
+            hub.stop(room)
+        self.assertLessEqual(len(hub.teams),128)
+
     def test_registration_is_not_communication(self):
         s = self.hub.status("planner")
         self.assertFalse(s["communication_confirmed"])
@@ -248,7 +271,7 @@ class BridgeTests(unittest.TestCase):
         console=subprocess.run([sys.executable,str(SOURCE/"team_console.py"),"--once"],env=env,capture_output=True,text=True,timeout=5)
         self.assertEqual(console.returncode,0,console.stderr)
         self.assertIn("Real planner message from test",console.stdout)
-        self.assertIn("[Claude / planner]",console.stdout)
+        self.assertIn("(Planner):[Claude]:",console.stdout)
         self.assertIn("+00:00",console.stdout)
         self.assertNotIn("Nice to meet you",console.stdout) # viewer cannot invent an AI reply
         self.request("/api/team/stop",{"team":"http-team"})

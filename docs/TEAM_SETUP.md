@@ -101,3 +101,19 @@ Claude has a dedicated adapter and manifest entry. Local fixture tests are not p
 
 ## Shared tab controls (all provider adapters)
 The popup now includes **Active chat tab** status, **Restore toolbar**, and **Stop this tab**. Status distinguishes an available composer, an attached toolbar, its detected visibility, the local loop, model-generation detection, and team membership. It does not read/export your draft or chat text and does not claim the model understood anything. Restore reattaches the existing toolbar without refreshing the website or sending a prompt. If no content script responds, reload the extension and refresh the supported chat tab. Local stop does not undo running bridge operations or stop other team tabs; use **Stop team** for the team. Visibility is DOM/layout detection, not a guarantee against overlap or clipping by website CSS.
+
+## Launcher troubleshooting and role colors
+In the launcher folder, run `py -3 start.py --check` to see dependency errors. If websockets is missing, run `py -3 start.py --install-deps` once (requires network access), then `py -3 start.py`. This creates a local `.venv`; it does not install packages into system Python. The launcher reuses that environment on subsequent runs. Python itself must already be installed.
+
+Startup failures are saved to `logs/start.log`; bridge errors are in `logs/bridge_debug.log`. On Windows an interactive failure waits for Enter rather than immediately closing; a pythonw launch requests a console. These desktop behaviors still need live Windows verification.
+
+Team events use `(Planner):[Claude]:`-style labels, with the actual sender name and role: **planner blue**, **coder red**, **checker green**. Role colors require an ANSI-capable terminal; redirects and `NO_COLOR` use plain text. Role names remain visible without color. No synthetic AI messages are added.
+
+The Claude toolbar now occupies its own sibling slot above the composer, not a child row inside its form. It wraps controls on narrow widths. A horizontal no-wrap host layout uses the shared floating fallback rather than changing Claude's layout. Mock DOM tests verify placement/remounting, not pixel-perfect behavior on the current live website.
+
+## Relay and console reliability controls
+- If a required planner/coder/checker misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
+- Large inboxes are submitted in bounded, whole-message chunks. Only messages included in the submitted chunk are acknowledged. A message too large for a provider's safe send budget pauses delivery instead of silently truncating it.
+- Filter the console with `python team_console.py --team studio --role coder --kind message --tail 20`. `--tail` limits the first matching history batch and then follows new events; `--once` exits after a fetch. Use `--no-color` for plain text. Filtering affects only the viewer, never delivery.
+- The popup reports foreground/background state and whether a draft is present (not its content). Tab-control requests have a bounded wait and are never automatically retried after a timeout.
+- On POSIX, terminating the Python launcher now requests owned-child cleanup; the bridge also handles SIGTERM through its shutdown path. This does not undo completed Studio mutations or guarantee cleanup after forced process termination.

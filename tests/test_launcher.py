@@ -41,3 +41,49 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, 'check'), patch.object(launcher.subprocess, 'Popen', return_value=bridge):
             self.assertEqual(launcher.main(['--no-console']), 130)
             bridge.terminate.assert_called_once()
+
+    def test_explicit_dependency_install_uses_local_environment(self):
+        with patch.object(launcher, 'local_python', return_value=Path('/local/env/python')), patch('venv.EnvBuilder') as builder, patch.object(launcher.subprocess, 'run') as run:
+            self.assertEqual(launcher.main(['--install-deps']),0)
+            builder.return_value.create.assert_called_once()
+            command=run.call_args.args[0]
+            self.assertEqual(command[0],'/local/env/python')
+            self.assertIn('websockets>=13,<16',command)
+
+    @unittest.skipIf(__import__('os').name=='nt', 'POSIX subprocess smoke; Windows console requires desktop testing')
+    def test_real_launcher_reaches_bridge_health(self):
+        import json, os, signal, socket, sys, tempfile, time, urllib.request
+        sockets=[]
+        for _ in range(2):
+            sock=socket.socket();sock.bind(('127.0.0.1',0));sockets.append(sock)
+        wsport,httpport=[sock.getsockname()[1] for sock in sockets]
+        for sock in sockets:sock.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp,'config.json').write_text('{"mcpServers":{}}')
+            env={**os.environ,'ZS_DATA_DIR':tmp,'ZS_BRIDGE_PORT':str(wsport),'ZS_BRIDGE_HTTP_PORT':str(httpport)}
+            with tempfile.TemporaryFile(mode='w+') as output:
+                child=subprocess.Popen([sys.executable,str(SOURCE),'--no-console'],cwd=tmp,env=env,stdout=output,stderr=output)
+                try:
+                    deadline=time.monotonic()+10
+                    healthy=False
+                    while child.poll() is None and time.monotonic()<deadline:
+                        try:
+                            with urllib.request.urlopen(f'http://127.0.0.1:{httpport}/health',timeout=.3) as response:
+                                healthy=json.load(response)['ok']
+                            if healthy:break
+                        except OSError:time.sleep(.05)
+                    output.seek(0)
+                    self.assertTrue(healthy,output.read())
+                finally:
+                    if child.poll() is None:child.send_signal(signal.SIGTERM)
+                    try:child.wait(timeout=8)
+                    except subprocess.TimeoutExpired:child.kill();child.wait()
+                with self.assertRaises(OSError):
+                    urllib.request.urlopen(f'http://127.0.0.1:{httpport}/health',timeout=.3)
+
+    def test_reuses_local_venv_even_when_interpreter_is_symlinked(self):
+        with patch.object(launcher, 'local_python') as target, patch.object(launcher, 'wait_owned', return_value=0) as call, patch.object(launcher.sys, 'prefix', '/different/environment'):
+            target.return_value.is_file.return_value=True
+            target.return_value.__str__.return_value='/local/venv/bin/python'
+            self.assertEqual(launcher.entrypoint(),0)
+            call.assert_called_once()

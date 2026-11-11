@@ -6,8 +6,36 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import signal
+import traceback
+from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent
+
+
+def record(message):
+    """Keep startup failures available even if a double-click window closes."""
+    try:
+        folder=Path(os.environ.get('ZS_DATA_DIR', ROOT)) / 'logs'
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / 'start.log').open('a', encoding='utf-8') as log:
+            log.write(datetime.now(timezone.utc).isoformat()+' '+str(message)+'\n')
+    except OSError:
+        pass  # Failure to create a diagnostic must not stop the launcher.
+
+
+def local_python():
+    return ROOT / '.venv' / ('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+
+
+def install_dependencies():
+    import venv
+    target=local_python()
+    if not target.is_file():
+        venv.EnvBuilder(with_pip=True).create(ROOT / '.venv')
+    subprocess.run([str(target), '-m', 'pip', 'install', 'websockets>=13,<16'], check=True)
+    print('Dependencies installed locally. Run start.py again.', flush=True)
+    return 0
 
 
 def check():
@@ -36,13 +64,19 @@ def launch_console():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--install-deps', action='store_true', help='Explicitly create a local virtual environment and install websockets; requires internet')
     parser.add_argument('--check', action='store_true', help='Validate prerequisites without starting processes')
     parser.add_argument('--no-console', action='store_true', help='Run only the bridge')
     args = parser.parse_args(argv)
+    if args.install_deps:
+        return install_dependencies()
+    record("Launcher Python: "+sys.executable)
     try:
         check()
     except (RuntimeError, ValueError) as exc:
+        record('Startup failed: '+str(exc))
         print('Startup failed: ' + str(exc), file=sys.stderr)
+        print('To install dependencies locally: python start.py --install-deps', file=sys.stderr)
         return 1
     if args.check:
         return 0
@@ -55,7 +89,10 @@ def main(argv=None):
                 viewer = launch_console()
             except OSError as exc:
                 print('Could not open viewer: ' + str(exc) + '. Run team_console.py manually.', file=sys.stderr)
-        return bridge.wait()
+        code=bridge.wait()
+        record("Bridge exited with code "+str(code))
+        if code: print("Bridge stopped with an error. See logs/bridge_debug.log and logs/start.log.", file=sys.stderr)
+        return code
     except KeyboardInterrupt:
         return 130
     except OSError as exc:
@@ -72,5 +109,47 @@ def main(argv=None):
                     child.wait()
 
 
+def wait_owned(command):
+    child=subprocess.Popen(command,cwd=ROOT)
+    try:
+        return child.wait()
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try: child.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                child.kill();child.wait()
+
+
+def entrypoint():
+    # .pyw / pythonw has no terminal: request a real Python console on Windows.
+    if os.name=='nt' and Path(sys.executable).name.lower()=='pythonw.exe':
+        executable=Path(sys.executable).with_name('python.exe')
+        subprocess.Popen([str(executable), str(ROOT/'start.py'), *sys.argv[1:]], cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        return 0
+    target=local_python()
+    if target.is_file() and Path(sys.prefix).resolve()!=(ROOT/'.venv').resolve() and '--install-deps' not in sys.argv:
+        return wait_owned([str(target), str(ROOT/'start.py'), *sys.argv[1:]])
+    try:
+        code=main()
+    except Exception:
+        details=traceback.format_exc()
+        record(details)
+        print(details, file=sys.stderr)
+        code=1
+    # Keep failures visible when launched by double click. CLI --check stays scriptable.
+    if code and os.name=='nt' and '--check' not in sys.argv and sys.stdin and sys.stdin.isatty():
+        try: input('Startup failed. Press Enter to close this window…')
+        except (EOFError, KeyboardInterrupt): pass
+    return code
+
+
+def _shutdown_signal(signum, frame):
+    raise KeyboardInterrupt
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    signal.signal(signal.SIGTERM, _shutdown_signal)
+    raise SystemExit(entrypoint())
