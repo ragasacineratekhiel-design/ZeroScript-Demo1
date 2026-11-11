@@ -1077,3 +1077,15 @@ html.zs-light .zs-tip-rbx { color: #374151; }
 /* ULTRA 3.2.0 perf — no color change, pure logic speed */
 #zs-bar, #zs-menu, .zs-chip { will-change: transform; contain: layout style; }
 .zs-chip-body pre { contain: layout; }
+
+/* Claude owns the composer. Our independent sibling reserves its own height. */
+#zs-claude-toolbar-slot {
+  display: block; width: 100%; min-width: 0; box-sizing: border-box;
+  flex: 0 0 100%; grid-column: 1 / -1;
+  position: relative; isolation: isolate;
+}
+#zs-claude-toolbar-slot > #zs-bar.zs-bar-inline {
+  position: relative; inset: auto; width: 100%; max-width: 100%;
+  flex-wrap: wrap; min-width: 0; margin: 0 0 8px;
+}
+#zs-claude-toolbar-slot #zs-state { min-width: 0; overflow-wrap: anywhere; }

@@ -248,7 +248,7 @@ class BridgeTests(unittest.TestCase):
         console=subprocess.run([sys.executable,str(SOURCE/"team_console.py"),"--once"],env=env,capture_output=True,text=True,timeout=5)
         self.assertEqual(console.returncode,0,console.stderr)
         self.assertIn("Real planner message from test",console.stdout)
-        self.assertIn("[Claude / planner]",console.stdout)
+        self.assertIn("(Planner):[Claude]:",console.stdout)
         self.assertIn("+00:00",console.stdout)
         self.assertNotIn("Nice to meet you",console.stdout) # viewer cannot invent an AI reply
         self.request("/api/team/stop",{"team":"http-team"})

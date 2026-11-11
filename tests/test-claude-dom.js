@@ -18,7 +18,9 @@ async function run(){
   const p=w.adapter;
   assert.equal(p.allItems().length,0,'layout is not assistant output');
   assert.equal(p.getEditor().getAttribute('role'),'textbox');
-  assert.equal(p.barMount().parent.tagName,'FORM');
+  assert.equal(p.barMount().parent.id,'zs-claude-toolbar-slot');
+  assert.equal(p.barMount().parent.nextElementSibling,w.document.querySelector('form'));
+  assert.equal(p.barMount().inside,false);
   const deadline=Date.now()+4000;
   while(!w.document.querySelector('#zs-bar')&&Date.now()<deadline)await new Promise(r=>setTimeout(r,50));
   const bar=w.document.querySelector('#zs-bar');assert.ok(bar,'actual shared toolbar must exist on Claude fixture');
@@ -32,7 +34,9 @@ async function run(){
   const replacement=oldForm.cloneNode(true);replacement.querySelector('#zs-bar')?.remove();
   oldForm.replaceWith(replacement);
   await new Promise(r=>setTimeout(r,180));
-  assert.ok(w.document.querySelector('form #zs-bar'),'toolbar must remount after composer replacement');
+  assert.ok(w.document.querySelector('#zs-claude-toolbar-slot #zs-bar'),'toolbar must remount after composer replacement');
+  assert.equal(w.document.querySelector('form #zs-bar'),null,'toolbar must stay outside the composer');
+  assert.equal(w.document.querySelectorAll('#zs-claude-toolbar-slot').length,1,'SPA replacement must not duplicate slots');
   assert.equal(p.getEditor().isConnected,true,'cached detached editor must be discarded');
   let clicks=0,enters=0;
   const editor=p.getEditor(),button=w.document.querySelector('[aria-label="Send message"]');

@@ -154,78 +154,22 @@ const ZSProvider = (() => {
     return n;
   };
 
-  // MAX barMount ULTRA 3.4 — universal (never returns null if editor exists), survives redesigns
+  // Keep controls outside Claude's composer. Inserting into a form/fieldset
+  // can put the toolbar in the same flex/grid row as Send or the editor.
   function barMount(){
     const ed=getEditor();
-    if(!ed) return null;
-    // Strategy 1: form (Claude uses form for composer)
-    try{
-      const form = ed.closest("form");
-      if(form && form !== document.body && form.getBoundingClientRect().width>120){
-        let before=form.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        return {parent: form, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    // Strategy 2: sticky bottom container (Claude bottom-0 wrapper)
-    try{
-      const sticky = ed.closest("div.sticky, div[class*='bottom-0'], div[class*='composer'], div[class*='fixed']");
-      if(sticky && sticky !== document.body && sticky.getBoundingClientRect().width>80){
-        let before=sticky.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        return {parent: sticky, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    // Strategy 3: fieldset wrapper (Claude 2026 composer is inside fieldset)
-    try{
-      const fs = ed.closest("fieldset");
-      if(fs && fs !== document.body){
-        let before=fs.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        // fieldset is inline context — mount directly before it
-        const parent = fs.parentElement;
-        if(parent) return {parent, before: fs, inside: false};
-        return {parent: fs, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    // Strategy 4: input card (div with bg / rounded)
-    try{
-      const card = ed.closest("div[class*='bg-'], div[class*='rounded'], div[class*='border']");
-      if(card && card.getBoundingClientRect().width > 100){
-        let before=card.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        return {parent: card, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    // Strategy 5: fallback to composer frame (robust)
-    try{
-      const frame=composerFrame();
-      if(frame && frame !== document.body){
-        let before=frame.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        return {parent: frame, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    // Strategy 6: ultimate fallback — editor's parent (guarantees GUI even if layout unknown)
-    try{
-      const parent = ed.parentElement || ed.closest("div") || document.body;
-      if(parent){
-        let before=parent.firstElementChild;
-        if(before && before.id==="zs-bar") before=before.nextElementSibling;
-        return {parent, before, inside: true};
-      }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.barMount", _e); }
-    return null;
+    if(!ed)return null;
+    const frame=ed.closest("form") || ed.closest("fieldset") || ed.closest("[data-testid='composer']");
+    if(!frame || !frame.parentElement)return null;
+    const parent=frame.parentElement,style=getComputedStyle(parent);
+    // Do not change host layout to make our UI fit a horizontal flex row.
+    // The shared core uses its above-editor floating fallback in that case.
+    if(style.display==='flex' && style.flexDirection.startsWith('row') && style.flexWrap==='nowrap')return null;
+    let slot=[...parent.children].find(e=>e.id==='zs-claude-toolbar-slot');
+    if(!slot){slot=document.createElement('div');slot.id='zs-claude-toolbar-slot';}
+    if(slot.nextElementSibling!==frame)parent.insertBefore(slot,frame);
+    return {parent:slot,before:null,inside:false};
   }
-  function overlayBlocking(){
-    try{
-      const dlg=document.querySelector("dialog[open], [role='dialog'][aria-modal='true'], div[class*='modal'][class*='open']");
-      if(dlg && dlg.offsetParent!==null) return true;
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude.overlayBlocking", _e); }
-    return false;
-  }
-  function captchaPresent(){ return false; }
-
   const coverTarget = () => {
     const ed=getEditor();
     if(!ed) return null;

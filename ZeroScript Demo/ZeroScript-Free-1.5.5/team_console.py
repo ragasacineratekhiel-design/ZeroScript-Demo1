@@ -16,6 +16,38 @@ import urllib.error
 import urllib.request
 
 
+ROLE_COLORS={"planner":"\033[94m", "coder":"\033[91m", "checker":"\033[92m"}
+
+
+def enable_colors():
+    if os.environ.get("NO_COLOR") is not None or not sys.stdout.isatty():
+        return False
+    if os.name=="nt":
+        try:
+            import ctypes
+            kernel=ctypes.windll.kernel32
+            handle=kernel.GetStdHandle(-11)
+            mode=ctypes.c_ulong()
+            if not kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+                return False
+            if not kernel.SetConsoleMode(handle, mode.value | 0x0004):
+                return False
+        except (AttributeError, OSError):
+            return False
+    return True
+
+
+def format_event(event, color=False):
+    role=str(event.get("role", "control")).lower()
+    who=event.get("name", "Bridge coordinator")
+    recipient=f" -> {event['recipient']}" if event.get("recipient") else ""
+    text=event.get("text", "") if event.get("kind")!="queued" else "Message queued; waiting for recipient submission."
+    # Strip untrusted terminal controls before adding our own ANSI colors.
+    line=f"{event.get('timestamp', '')} [{event.get('team', 'studio')}] ({role.title()}):[{who}]:{recipient} ({event.get('kind', 'event')}): {text}"
+    line=re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", line)
+    return ROLE_COLORS[role]+line+"\033[0m" if color and role in ROLE_COLORS else line
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Print available events and exit")
@@ -26,6 +58,7 @@ def main():
         pass
     root = Path(os.environ.get("ZS_DATA_DIR", Path(__file__).resolve().parent))
     port = int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(int(os.environ.get("ZS_BRIDGE_PORT", "17613")) + 1)))
+    color=enable_colors()
     cursor = 0
     waiting = False
     print("ZeroScript Team Console — real bridge events, UTC timestamps", flush=True)
@@ -47,13 +80,7 @@ def main():
                 print("[Connected to bridge]", flush=True)
                 waiting = False
             for event in result.get("events", []):
-                who = event.get("name", "Bridge coordinator")
-                role = event.get("role", "control")
-                recipient = f" -> {event['recipient']}" if event.get("recipient") else ""
-                text=event.get("text", "") if event["kind"]!="queued" else "Message queued; waiting for recipient submission."
-                text=re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-                line=f"{event['timestamp']} [{event.get('team', 'studio')}] [{who} / {role}]{recipient} ({event['kind']}): {text}"
-                print(re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", line), flush=True)
+                print(format_event(event, color), flush=True)
             cursor = result.get("cursor", cursor)
             if args.once:
                 return 0
@@ -62,7 +89,7 @@ def main():
                 print(f"Bridge unavailable: {exc}", file=sys.stderr)
                 return 1
             if not waiting:
-                print("[Waiting for bridge. Check start.bat if this persists.]", flush=True)
+                print("[Waiting for bridge. Check start.py if this persists.]", flush=True)
                 waiting = True
         time.sleep(1)
 
