@@ -42,7 +42,17 @@ class TeamHub:
     def _live(self, team):
         return [m for m in self.members.values() if m["team"] == team and self.clock() - m["seen"] <= self.ttl]
 
+    def _expire_runs(self):
+        # An active run cannot silently survive a missing required role. Stop it
+        # before a heartbeat can revive an expired member with old readiness.
+        for team,state in list(self.teams.items()):
+            if state.get("active") and {m["role"] for m in self._live(team)} != set(ROLES):
+                self.stop(team, "A required tab heartbeat expired. Rejoin missing tabs and explicitly restart.")
+                self._event("expired", team=team, text="A required tab heartbeat expired. Team stopped; rejoin missing tabs and explicitly restart.")
+
     def _member(self, member_id):
+        self._expire_runs()
+        if not isinstance(member_id,str): raise TeamError("Invalid member ID")
         m = self.members.get(member_id)
         if not m or self.clock() - m["seen"] > self.ttl:
             raise TeamError("Agent tab is offline or registration expired. Join the team again.")
@@ -62,6 +72,7 @@ class TeamHub:
         if not isinstance(team, str) or not team.strip() or len(team) > 64:
             raise TeamError("Team name must contain 1–64 characters")
         with self.lock:
+            self._expire_runs()
             old = self.members.get(member_id)
             if old and (old["team"], old["role"], old["name"]) == (team, role, name.strip()):
                 old["seen"] = self.clock()
@@ -92,7 +103,7 @@ class TeamHub:
             phrase = (f"I am communicating with {names} and ready to help in your code"
                       if connected and bool(names)
                       else "I am not directly communicating with the others try joining three open AI tabs as planner, coder, checker; start the team; keep each tab visible when delivering; check the bridge console for acknowledged messages")
-            return {"ok": True, "self": self._public(m), "peers": peers, "active": state.get("active", False), "run": state.get("run"), "introduction_turn": state.get("turn"), "communication_confirmed": connected and bool(names), "phrase": phrase, "role_instructions": ROLE_TASKS[m["role"]]}
+            return {"ok": True, "self": self._public(m), "peers": peers, "active": state.get("active", False), "run": state.get("run"), "stop_reason": state.get("stop_reason"), "introduction_turn": state.get("turn"), "communication_confirmed": connected and bool(names), "phrase": phrase, "role_instructions": ROLE_TASKS[m["role"]]}
 
     def start(self, team):
         with self.lock:
@@ -101,6 +112,13 @@ class TeamHub:
                 raise TeamError("Join exactly one planner, one coder and one checker before starting")
             if self.teams.get(team, {}).get("active"):
                 raise TeamError("Team is already active; stop it before starting a new run")
+            # Keep old inactive room names bounded as well as members/events.
+            if team not in self.teams and len(self.teams)>=128:
+                for name,state in list(self.teams.items()):
+                    if not state.get("active"):
+                        del self.teams[name]
+                        if len(self.teams)<128: break
+                if len(self.teams)>=128: raise TeamError("Team history limit reached")
             run = secrets.token_hex(8)
             self.teams[team] = {"active": True, "run": run, "turn": "planner", "exchanged": False}
             for m in members:
@@ -198,10 +216,11 @@ class TeamHub:
                 self._event("delivered", team=m["team"], name=m["name"], role=m["role"], text=f"Submitted message {ev['id']} from {ev['from']} to chat input; model understanding is not verified.")
             return {"ok": True, "acknowledged": [e["id"] for e in removed]}
 
-    def stop(self, team):
+    def stop(self, team, reason=None):
         with self.lock:
             if team in self.teams:
                 self.teams[team]["active"] = False
+                self.teams[team]["stop_reason"] = reason
             for m in self.members.values():
                 if m["team"] == team:
                     m["inbox"].clear()

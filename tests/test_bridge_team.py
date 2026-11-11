@@ -35,6 +35,29 @@ class TeamTests(unittest.TestCase):
         for role in ("planner", "coder", "checker"):
             self.hub.ready(role)
 
+    def test_expired_required_role_stops_run_and_clears_queues(self):
+        self.start()
+        self.hub.send("planner","coder","queued work","stale-work")
+        self.now+=30
+        self.hub.status("planner")
+        self.now+=20
+        result=self.hub.status("planner")
+        self.assertFalse(result["active"])
+        self.assertFalse(result["communication_confirmed"])
+        self.assertEqual(list(self.hub.members["coder"]["inbox"]),[])
+        self.hub.register("coder","DeepSeek","coder")
+        self.assertFalse(self.hub.status("coder")["self"]["ready"])
+        self.assertEqual(len([e for e in self.hub.events if e["kind"]=="expired"]),1)
+
+    def test_inactive_room_history_is_bounded(self):
+        hub=TeamHub()
+        for i in range(140):
+            room="room-"+str(i)
+            for role in ("planner","coder","checker"):hub.register(role,role,role,room)
+            hub.start(room)
+            hub.stop(room)
+        self.assertLessEqual(len(hub.teams),128)
+
     def test_registration_is_not_communication(self):
         s = self.hub.status("planner")
         self.assertFalse(s["communication_confirmed"])

@@ -16,6 +16,8 @@ const root=path.join(__dirname,'..','zeroscript-extension-v2');
   unavailable=true;w.document.querySelector('#tab-refresh').click();await settle();
   assert.match(w.document.querySelector('#tab-result').textContent,/No ZeroScript adapter responding/);
   assert.equal(w.document.querySelector('#tab-refresh').disabled,false);
+  w.chrome.tabs.sendMessage=()=>new Promise(()=>{});
+  await assert.rejects(w.tabRequest(7,'zs-tab-status',10),/No automatic retry/);
   console.log('PASS real popup controls, recovery, stop warning, missing-adapter guidance and Python launcher instructions');
  }finally{w.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

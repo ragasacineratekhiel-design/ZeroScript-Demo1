@@ -110,3 +110,10 @@ Startup failures are saved to `logs/start.log`; bridge errors are in `logs/bridg
 Team events use `(Planner):[Claude]:`-style labels, with the actual sender name and role: **planner blue**, **coder red**, **checker green**. Role colors require an ANSI-capable terminal; redirects and `NO_COLOR` use plain text. Role names remain visible without color. No synthetic AI messages are added.
 
 The Claude toolbar now occupies its own sibling slot above the composer, not a child row inside its form. It wraps controls on narrow widths. A horizontal no-wrap host layout uses the shared floating fallback rather than changing Claude's layout. Mock DOM tests verify placement/remounting, not pixel-perfect behavior on the current live website.
+
+## Relay and console reliability controls
+- If a required planner/coder/checker misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
+- Large inboxes are submitted in bounded, whole-message chunks. Only messages included in the submitted chunk are acknowledged. A message too large for a provider's safe send budget pauses delivery instead of silently truncating it.
+- Filter the console with `python team_console.py --team studio --role coder --kind message --tail 20`. `--tail` limits the first matching history batch and then follows new events; `--once` exits after a fetch. Use `--no-color` for plain text. Filtering affects only the viewer, never delivery.
+- The popup reports foreground/background state and whether a draft is present (not its content). Tab-control requests have a bounded wait and are never automatically retried after a timeout.
+- On POSIX, terminating the Python launcher now requests owned-child cleanup; the bridge also handles SIGTERM through its shutdown path. This does not undo completed Studio mutations or guarantee cleanup after forced process termination.

@@ -23,3 +23,11 @@ class ConsoleTests(unittest.TestCase):
         self.assertNotIn('\033',line)
         self.assertNotIn('\r',line)
         self.assertNotIn('\x9b',line)
+
+    def test_console_filters_and_tail(self):
+        events=[{'seq':1,'team':'a','role':'coder','kind':'message'},
+                {'seq':2,'team':'b','role':'planner','kind':'joined'},
+                {'seq':3,'team':'a','role':'coder','kind':'message'}]
+        self.assertEqual([e['seq'] for e in console.select_events(events,'a','coder','message',1)],[3])
+        self.assertEqual(console.select_events(events,role='checker'),[])
+        with self.assertRaises(Exception):console.tail_count('0')

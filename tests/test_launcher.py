@@ -75,12 +75,14 @@ class LauncherTests(unittest.TestCase):
                     output.seek(0)
                     self.assertTrue(healthy,output.read())
                 finally:
-                    if child.poll() is None:child.send_signal(signal.SIGINT)
+                    if child.poll() is None:child.send_signal(signal.SIGTERM)
                     try:child.wait(timeout=8)
                     except subprocess.TimeoutExpired:child.kill();child.wait()
+                with self.assertRaises(OSError):
+                    urllib.request.urlopen(f'http://127.0.0.1:{httpport}/health',timeout=.3)
 
     def test_reuses_local_venv_even_when_interpreter_is_symlinked(self):
-        with patch.object(launcher, 'local_python') as target, patch.object(launcher.subprocess, 'call', return_value=0) as call, patch.object(launcher.sys, 'prefix', '/different/environment'):
+        with patch.object(launcher, 'local_python') as target, patch.object(launcher, 'wait_owned', return_value=0) as call, patch.object(launcher.sys, 'prefix', '/different/environment'):
             target.return_value.is_file.return_value=True
             target.return_value.__str__.return_value='/local/venv/bin/python'
             self.assertEqual(launcher.entrypoint(),0)

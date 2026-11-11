@@ -48,17 +48,35 @@ def format_event(event, color=False):
     return ROLE_COLORS[role]+line+"\033[0m" if color and role in ROLE_COLORS else line
 
 
-def main():
+def select_events(events, team=None, role=None, kind=None, tail=None):
+    selected=[e for e in events if (not team or e.get('team')==team)
+              and (not role or e.get('role')==role) and (not kind or e.get('kind')==kind)]
+    return selected[-tail:] if tail else selected
+
+
+def tail_count(value):
+    number=int(value)
+    if not 1<=number<=1000: raise argparse.ArgumentTypeError('tail must be between 1 and 1000')
+    return number
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Print available events and exit")
-    args = parser.parse_args()
+    parser.add_argument("--team", help="Show only this exact team name")
+    parser.add_argument("--role", choices=["planner","coder","checker","control"], help="Filter by event role")
+    parser.add_argument("--kind", help="Filter event kind, e.g. message or delivered")
+    parser.add_argument("--tail", type=tail_count, help="Show only the last N matching historical events, then follow new ones")
+    parser.add_argument("--no-color", action="store_true", help="Disable role colors")
+    args = parser.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except AttributeError:
         pass
     root = Path(os.environ.get("ZS_DATA_DIR", Path(__file__).resolve().parent))
     port = int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(int(os.environ.get("ZS_BRIDGE_PORT", "17613")) + 1)))
-    color=enable_colors()
+    color=not args.no_color and enable_colors()
+    initial=True
     cursor = 0
     waiting = False
     print("ZeroScript Team Console — real bridge events, UTC timestamps", flush=True)
@@ -79,8 +97,9 @@ def main():
             if waiting:
                 print("[Connected to bridge]", flush=True)
                 waiting = False
-            for event in result.get("events", []):
+            for event in select_events(result.get("events", []), args.team, args.role, args.kind, args.tail if initial else None):
                 print(format_event(event, color), flush=True)
+            initial=False
             cursor = result.get("cursor", cursor)
             if args.once:
                 return 0

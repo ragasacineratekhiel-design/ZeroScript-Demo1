@@ -21,6 +21,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import signal
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1420,7 +1421,12 @@ async def _supervised(name, coro_fn):
             except: pass
             await asyncio.sleep(2)
 
+def _shutdown_signal(signum, frame):
+    raise KeyboardInterrupt
+
+
 if __name__=="__main__":
+    signal.signal(signal.SIGTERM, _shutdown_signal)
     try: asyncio.run(main())
     except KeyboardInterrupt:
         log("shutting down...","yl")

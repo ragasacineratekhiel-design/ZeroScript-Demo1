@@ -6,7 +6,7 @@ const path=require('node:path');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.join(__dirname,'..','zeroscript-extension-v2');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-async function scenario({sendWorks=true,hidden=false,deliverInbox=false}={}){
+async function scenario({sendWorks=true,hidden=false,deliverInbox=false,largeInbox=false}={}){
   const errors=[];
   const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',e=>errors.push(e));
   const dom=new JSDOM('<!doctype html><html><body><main id="messages"></main><form><textarea id="editor"></textarea></form></body></html>',{url:'https://claude.ai/new',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole});
@@ -38,7 +38,7 @@ async function scenario({sendWorks=true,hidden=false,deliverInbox=false}={}){
   w.chrome={runtime:{id:'test-extension',getManifest:()=>({version:'3.1.0'}),onMessage:{addListener:fn=>listeners.push(fn)},lastError:null,
     sendMessage:(msg,callback)=>{
       requests.push(msg);
-      const r=msg.type==='team_register'?status:msg.type==='team_status'?status:msg.type==='team_ready'?(ready++,status.self.ready=true,status):msg.type==='team_inbox'?{ok:true,messages:deliverInbox&&ready&&!requests.some(m=>m.type==='team_ack')?[{id:17,timestamp:'2026-11-11T00:00:00+00:00',from:'Gemini',role:'checker',text:'Please inspect this task.'}]:[]}:msg.type==='status'?{connected:false,tools:0,servers:[]}:{ok:true};
+      const r=msg.type==='team_register'?status:msg.type==='team_status'?status:msg.type==='team_ready'?(ready++,status.self.ready=true,status):msg.type==='team_inbox'?{ok:true,messages:deliverInbox&&ready&&!requests.some(m=>m.type==='team_ack')?Array.from({length:largeInbox?8:1},(_,i)=>({id:17+i,timestamp:'2026-11-11T00:00:00+00:00',from:'Gemini',role:'checker',text:largeInbox?'Please inspect '+ 'x'.repeat(11900):'Please inspect this task.'})):[]}:msg.type==='status'?{connected:false,tools:0,servers:[]}:{ok:true};
       queueMicrotask(()=>callback?.(r));
     }},storage:{local:{get:(key,callback)=>queueMicrotask(()=>callback({})),set(){}}}};
   try {
@@ -56,6 +56,7 @@ async function scenario({sendWorks=true,hidden=false,deliverInbox=false}={}){
       assert.ok(requests.some(m=>m.type==='team_ack'&&m.ids.includes(17)),'background team inbox must be submitted and acknowledged');
       assert.equal(submissions.length,2,'one startup and one real inbox submission');
       assert.match(submissions[1],/Gemini \/ checker/);
+      if(largeInbox){assert.equal(requests.find(m=>m.type==='team_ack').ids.length,1,'only fully submitted message is acknowledged');assert.ok(submissions[1].length<=24000);}
     }
     assert.ok(!requests.some(m=>m.type==='list_tools'),'team startup does not wait for Studio catalogue');
     await message({type:'zs-team-stop'});
@@ -64,4 +65,4 @@ async function scenario({sendWorks=true,hidden=false,deliverInbox=false}={}){
     console.log('PASS actual core DOM startup:',sendWorks?'submitted':'refused empty-editor false positive',hidden?'(background tab)':'');
   } finally {dom.window.close();}
 }
-(async()=>{await scenario();await scenario({hidden:true,deliverInbox:true});await scenario({sendWorks:false});})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{await scenario();await scenario({hidden:true,deliverInbox:true,largeInbox:true});await scenario({sendWorks:false});})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import signal
 import traceback
 from datetime import datetime, timezone
 
@@ -108,6 +109,20 @@ def main(argv=None):
                     child.wait()
 
 
+def wait_owned(command):
+    child=subprocess.Popen(command,cwd=ROOT)
+    try:
+        return child.wait()
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try: child.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                child.kill();child.wait()
+
+
 def entrypoint():
     # .pyw / pythonw has no terminal: request a real Python console on Windows.
     if os.name=='nt' and Path(sys.executable).name.lower()=='pythonw.exe':
@@ -116,7 +131,7 @@ def entrypoint():
         return 0
     target=local_python()
     if target.is_file() and Path(sys.prefix).resolve()!=(ROOT/'.venv').resolve() and '--install-deps' not in sys.argv:
-        return subprocess.call([str(target), str(ROOT/'start.py'), *sys.argv[1:]], cwd=ROOT)
+        return wait_owned([str(target), str(ROOT/'start.py'), *sys.argv[1:]])
     try:
         code=main()
     except Exception:
@@ -131,5 +146,10 @@ def entrypoint():
     return code
 
 
+def _shutdown_signal(signum, frame):
+    raise KeyboardInterrupt
+
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, _shutdown_signal)
     raise SystemExit(entrypoint())

@@ -137,6 +137,15 @@ bind('team-leave',()=>teamAction('leave'));
 chrome.storage.local.get('zsTeamName',r=>{if(r.zsTeamName)document.getElementById('team-name').value=r.zsTeamName;});
 
 // Shared, explicit controls for the active tab. No page text/drafts in reports.
+async function tabRequest(tabId,type,timeout=5000) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(()=>chrome.tabs.sendMessage(tabId,{type})),
+      new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Tab did not respond in time. No automatic retry; a requested action may still complete. Bring the tab forward and refresh status.')),timeout);})
+    ]);
+  }finally{clearTimeout(timer);}
+}
 let tabControlBusy=false;
 async function tabControl(type='zs-tab-status') {
   if(tabControlBusy)return;
@@ -148,10 +157,10 @@ async function tabControl(type='zs-tab-status') {
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     if(!tab)throw new Error('No active tab found.');
     let r;
-    try {r=await chrome.tabs.sendMessage(tab.id,{type});}
-    catch {throw new Error('No ZeroScript adapter responding. Open a supported chat, reload the extension and refresh that tab.');}
+    try {r=await tabRequest(tab.id,type);}
+    catch(e) {if(String(e.message||e).includes('No automatic retry'))throw e;throw new Error('No ZeroScript adapter responding. Open a supported chat, reload the extension and refresh that tab.');}
     if(!r?.ok)throw new Error(r?.error||'No adapter response.');
-    output.textContent=`${r.name} · ${r.version}\nComposer: ${r.composer?'detected':'not detected'}\nToolbar: ${r.toolbarVisible?'visible':r.toolbar?'present but hidden':'missing'}\nLoop: ${r.running?'running':r.starting?'starting':'idle'} · Model generation: ${r.generating?'detected':'not detected'}\nTeam: ${r.team.active?'active':r.team.joined?'joined, inactive':'not joined'}${r.team.role?' / '+r.team.role:''}`+(r.note?'\n'+r.note:'');
+    output.textContent=`${r.name} · ${r.version}\nComposer: ${r.composer?'detected':'not detected'}\nToolbar: ${r.toolbarVisible?'visible':r.toolbar?'present but hidden':'missing'}\nLoop: ${r.running?'running':r.starting?'starting':'idle'} · Model generation: ${r.generating?'detected':'not detected'}\nTeam: ${r.team.active?'active':r.team.joined?'joined, inactive':'not joined'}${r.team.role?' / '+r.team.role:''}`+`\nPage: ${r.background?'background (may be throttled)':'foreground'}${r.draftPresent?' · draft present; automatic sends wait':''}\nChecked: ${new Date().toLocaleTimeString()}`+(r.note?'\n'+r.note:'');
   }catch(e){output.textContent=String(e.message||e);}
   finally {tabControlBusy=false;buttons.forEach(b=>b.disabled=false);}
 }
