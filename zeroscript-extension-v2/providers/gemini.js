@@ -692,7 +692,7 @@ try {
 
   return {
     id: "gemini",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "Gemini",
     // Gemini's web model is natively multimodal (image understanding), so
     // screen_capture is safe to expose here. Other providers default this
@@ -729,7 +729,7 @@ try {
     unstableWarning:
       "Gemini tends to stop using the Roblox tools after a while in long sessions (model behavior, not the extension). " +
       "If it starts answering in plain text instead of acting, remind it to use the commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-gemini-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-gemini-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "4.6.0"
+VERSION = "4.7.0"
 ROOT = Path(__file__).resolve().parents[1]
 NPM = "npm.cmd" if os.name == "nt" else "npm"
 NODE = "node.exe" if os.name == "nt" else "node"

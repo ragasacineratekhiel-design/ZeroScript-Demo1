@@ -580,7 +580,7 @@ try {
 
   return {
     id: "glm",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "GLM",
     // GLM-5.2 is multimodal and z.ai's composer accepts image uploads (png/jpg via
     // the always-mounted file input; chip staged in .chip-scroll, upload complete
@@ -620,7 +620,7 @@ try {
     // Assistant turns expose a stable message-<uuid> identity (lastAssistantId),
     // so the core's watcher can refuse finalizing before this send's reply exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-glm-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-glm-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,

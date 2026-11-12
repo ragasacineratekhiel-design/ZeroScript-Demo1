@@ -4,18 +4,24 @@ All callers must be authenticated by bridge.py. A member represents one chat tab
 not a model API connection. Delivery means the extension acknowledged submission;
 it does not prove that the model read or understood the message.
 
-4.6.0 upgrades (brutal-honest, speed + features):
-- Hard role permissions: only the coder may mutate Studio. Planner/checker
-  mutation attempts are rejected with a redirect (send a plan / defect list via
-  team_send instead). Enforced here so the bridge can reject them too, not
-  just prompt text.
-- Introduction-turn timeout: a stalled introduction turn auto-advances after
-  INTRO_TIMEOUT seconds instead of deadlocking the whole team forever.
-- Handoff tracking: planner->coder plans, coder->checker evidence and
-  checker->coder defects are recorded and exposed in status() + console.
-- Throttled expiry checks (at most once per second) instead of a full scan on
-  every call — faster under heartbeat load.
-- inbox() reports total pending so callers know when more is queued.
+4.7.0 upgrades (brutal-honest, speed + features):
+- TWO OR MORE agents form a team. The joined role set IS the team: a planner +
+  coder pair is a valid team, and the introduction order is DERIVED from the
+  roles that actually joined (planner -> coder -> checker) instead of a
+  hardcoded three. One tab is still not a team.
+- The chat is ACTIVE, not optional. The coordinator invites one role at a
+  time, escalates when the invited role stays silent, and then drives the
+  collaboration protocol with directed control messages:
+      planner  -> coder    plan + reference code (ideas the coder can use)
+      coder    -> checker  evidence of what actually changed
+      checker  -> coder    defects + the exact fix (never an edit)
+  The planner supplies ideas/reference code to the coder; the checker points
+  the coder at fixes. Only the coder mutates Studio - unchanged, still enforced
+  here and in the bridge.
+- Every coordinator action reacts to a REAL event (a join, a real team_send).
+  Nothing here invents an agent message, an acknowledgement, or a result.
+- Bounded mailboxes, a bounded transcript and throttled expiry checks keep the
+  hub fast under heartbeat load.
 """
 import collections
 import datetime
@@ -23,11 +29,69 @@ import secrets
 import threading
 import time
 
+# The role vocabulary and the deterministic order ANY joined set is sorted by.
 ROLES = ("planner", "coder", "checker")
+ROLE_ORDER = {name: index for index, name in enumerate(ROLES)}
+# A team needs at least two joined agents ("start all joined agents"). A single
+# tab is a solo run, not a team - it has nobody to talk to.
+MIN_TEAM_SIZE = 2
+# checker -> coder -> checker loops are bounded so a team cannot ping-pong
+# forever. Every round is recorded in the event log.
+MAX_FIX_ROUNDS = 3
+
 ROLE_TASKS = {
-    "planner": "Clarify the goal, inspect relevant context, propose a small implementation plan and hand it to the coder via team_send. NEVER call execute_luau/multi_edit or any Studio mutation — the extension and bridge reject them for planner. You plan; only the coder mutates Studio.",
-    "coder": "Implement the agreed plan in small verified steps. You are the ONLY role allowed to mutate Studio (execute_luau/multi_edit). Coordinate shared files with the planner and send the actual changes and checks to the checker via team_send.",
-    "checker": "Independently inspect the changes with read-only tools, run relevant checks, report reproducible defects to the coder via team_send, and return evidence. NEVER edit Studio yourself — only the coder mutates. Do not claim tests ran if they did not.",
+    "planner": "Clarify the goal, inspect relevant context, then SUPPLY THE CODER WITH IDEAS AND REFERENCE CODE: "
+               "the ordered steps, the exact files/instances to touch, and a reference snippet the coder can adapt. "
+               "Send it to the coder via team_send (to: \"coder\"). NEVER call execute_luau/multi_edit or any Studio "
+               "mutation — the extension and bridge reject them for planner. You plan; only the coder mutates Studio.",
+    "coder": "Implement the plan the planner sent you in small verified steps. You are the ONLY role allowed to mutate "
+             "Studio (execute_luau/multi_edit). Send the checker the ACTUAL changed paths and checks via team_send "
+             "(to: \"checker\"), and fix exactly what the checker reports. Coordinate before editing shared files.",
+    "checker": "Independently inspect the changes with read-only tools, run relevant checks, then REPORT reproducible "
+               "defects to the coder via team_send (to: \"coder\") together with the exact fix for each one. NEVER edit "
+               "Studio yourself — only the coder mutates. Do not claim tests ran if they did not.",
+}
+
+# Directed coordinator steps. Each one is queued to ONE role as a control
+# message, so the recipient is told what to do next instead of guessing.
+COLLAB_CONTROL = {
+    "plan": {
+        "to": "planner",
+        "text": "Introductions are done. You are the PLANNER: send the coder your implementation plan NOW via "
+                "team_send (to: \"coder\") — the goal, the files/instances to touch, the ordered steps, and a "
+                "reference code snippet the coder can adapt. Do not edit Studio yourself and do not wait for a "
+                "second invitation.",
+    },
+    "plan_only": {
+        "to": "planner",
+        "text": "Introductions are done. There is no coder in this team, so send your plan to everyone via team_send "
+                "(to: \"all\") — the goal, the steps, and a reference snippet — so the other agent can review it.",
+    },
+    "build": {
+        "to": "coder",
+        "text": "Introductions are done. There is no planner in this team, so you own the implementation: send one "
+                "team_send (to: \"all\") stating what you will build and how the other agent should verify it, then "
+                "wait for the task.",
+    },
+    "implement": {
+        "to": "coder",
+        "text": "The planner sent you a plan (with reference code). Implement it now with execute_luau / multi_edit, "
+                "then send the checker what you ACTUALLY changed via team_send (to: \"checker\"). If you disagree "
+                "with the plan, reply to the planner first — do not silently ignore it.",
+    },
+    "review": {
+        "to": "checker",
+        "text": "The coder sent evidence of what changed. Verify it NOW with read-only tools (get_studio_state / "
+                "script_read / inspect_instance), then send the coder a defect list via team_send (to: \"coder\") with "
+                "the exact fix for every defect. If nothing is broken, send that verdict to the coder explicitly. "
+                "NEVER edit Studio yourself.",
+    },
+    "fix": {
+        "to": "coder",
+        "text": "The checker reported defects. Fix exactly those defects now with execute_luau / multi_edit, then send "
+                "the checker the fix summary via team_send (to: \"checker\"). If you believe a defect report is wrong, "
+                "reply to the checker with your evidence instead of silently skipping it.",
+    },
 }
 
 # ── Role permissions (single source of truth, mirrored in config.js) ───────
@@ -47,6 +111,11 @@ READ_TOOLS = frozenset({
 # may use it only to Play-test (it is a check, not an edit).
 PLAY_TOOLS = frozenset({"start_stop_play"})
 TEAM_TOOLS = frozenset({"team_status", "team_read", "team_send", "verify_fact"})
+
+# Handoff kinds the hub understands. "chat" is the default for anything the
+# coordinator does not recognise; "request" is the user's own task relayed by
+# the extension, which is NOT an agent introduction.
+SEND_KINDS = frozenset({"chat", "plan", "evidence", "defects", "intro", "request"})
 
 
 def is_mutating(tool_name):
@@ -90,8 +159,10 @@ def role_allows_tool(role, tool_name):
 
 
 # Introduction turn auto-advance: a tab that never sends its introduction must
-# not block the other two forever. 90s is generous for a visible tab.
+# not block the other agents forever. 90s is generous for a visible tab.
 INTRO_TIMEOUT = 90.0
+# The coordinator re-asks a silent tab before it gives up on it.
+INTRO_RETRY = 40.0
 # Handoff history per team (bounded).
 HANDOFF_MAX = 50
 
@@ -101,12 +172,13 @@ class TeamError(ValueError):
 
 
 class TeamHub:
-    def __init__(self, ttl=45, clock=time.monotonic, intro_timeout=INTRO_TIMEOUT):
+    def __init__(self, ttl=45, clock=time.monotonic, intro_timeout=INTRO_TIMEOUT, intro_retry=INTRO_RETRY):
         self.lock = threading.RLock()
         self.cond = threading.Condition(self.lock)
         self.clock = clock
         self.ttl = ttl
         self.intro_timeout = intro_timeout
+        self.intro_retry = intro_retry
         self.members = {}
         self.teams = {}
         self.events = collections.deque(maxlen=1000)
@@ -124,6 +196,13 @@ class TeamHub:
     def _live(self, team):
         return [m for m in self.members.values() if m["team"] == team and self.clock() - m["seen"] <= self.ttl]
 
+    @staticmethod
+    def _ordered_roles(members):
+        """Deterministic role order for ANY joined set: canonical first."""
+        present = {m["role"] for m in members}
+        ordered = [r for r in ROLES if r in present]
+        return ordered + sorted(present - set(ROLES))
+
     def _expire_runs(self):
         # Throttled: skip redundant full scans inside a sub-TTL burst while
         # staying exact for short test TTLs and synthetic clocks.
@@ -132,26 +211,52 @@ class TeamHub:
         if self._last_expire_check is not None and 0.0 <= now - self._last_expire_check < min_gap:
             return
         self._last_expire_check = now
-        # An active run cannot silently survive a missing required role. Stop it
-        # before a heartbeat can revive an expired member with old readiness.
-        for team,state in list(self.teams.items()):
-            if state.get("active") and {m["role"] for m in self._live(team)} != set(ROLES):
-                self.stop(team, "A required tab heartbeat expired. Rejoin missing tabs and explicitly restart.")
-                self._event("expired", team=team, text="A required tab heartbeat expired. Team stopped; rejoin missing tabs and explicitly restart.")
-            elif state.get("active") and state.get("turn"):
-                # Introduction deadlock guard: advance a stalled turn.
-                since = state.get("turn_since")
-                if since is not None and now - since > self.intro_timeout:
-                    stalled = state["turn"]
-                    index = ROLES.index(stalled) + 1
-                    state["turn"] = ROLES[index] if index < len(ROLES) else None
-                    state["turn_since"] = now
-                    self._event("turn_skipped", team=team, role=stalled,
-                                text=f"Introduction turn for {stalled} timed out after {int(self.intro_timeout)}s; advanced to {state['turn'] or 'free chat'}. The stalled tab may still send later.")
-                    if state["turn"]:
-                        nxt = next((p for p in self._live(team) if p["role"] == state["turn"] and p["ready"]), None)
-                        if nxt:
-                            self._invite(nxt, state)
+        for team, state in list(self.teams.items()):
+            if not state.get("active"):
+                continue
+            # An active run cannot silently survive a missing joined role. Stop
+            # it before a heartbeat can revive an expired member with old
+            # readiness. The joined role set is the contract - not a fixed trio.
+            joined = list(state.get("roles") or ())
+            live_roles = {m["role"] for m in self._live(team)}
+            missing = [r for r in joined if r not in live_roles]
+            if missing:
+                reason = "A required tab heartbeat expired (" + ", ".join(missing) + "). Rejoin the missing tabs and explicitly restart."
+                self.stop(team, reason)
+                self._event("expired", team=team, text=reason)
+                continue
+            if state.get("turn"):
+                self._advance_stalled_turn(team, state, now)
+
+    def _advance_stalled_turn(self, team, state, now):
+        """Re-ask a silent tab, then move the introduction on."""
+        started = state.get("turn_started")
+        since = state.get("turn_since")
+        if since is None:
+            return
+        stalled = state["turn"]
+        member = next((p for p in self._live(team) if p["role"] == stalled), None)
+        attempts = state.get("turn_attempts", 0)
+        if started is not None and (now - started) > self.intro_timeout:
+            state.setdefault("skipped", []).append(stalled)
+            self._event("turn_skipped", team=team, role=stalled,
+                        text=f"Introduction turn for {stalled} timed out after {int(self.intro_timeout)}s. The team "
+                             f"moves on; that tab may still send later as an ordinary message.")
+            self._advance_turn(team, state, now)
+            return
+        if member is not None and attempts < 2 and (now - since) > self.intro_retry:
+            state["turn_attempts"] = attempts + 1
+            state["turn_since"] = now
+            self._event("intro_nudge", team=team, name=member["name"], role=stalled,
+                        text=f"The {stalled} was invited to introduce {int(self.intro_retry)}s ago and has not sent "
+                             f"anything yet. The coordinator is asking that tab again.")
+            self._queue(member, {
+                "from": "Bridge coordinator", "role": "control", "control": "introduce",
+                "text": f"Still your introduction turn ({stalled}) and nobody has heard from you. Reply NOW with one "
+                        f"team_send command to \"all\" containing your real name, your role, a one-line greeting and "
+                        f"the handoff you propose. Do not write plain prose and do not wait for another invitation.",
+                "run": state["run"],
+            })
 
     def _member(self, member_id):
         self._expire_runs()
@@ -235,7 +340,19 @@ class TeamHub:
                 if len(self.members) >= 64:
                     raise TeamError("Agent registration limit reached")
             self.members[member_id] = {"id": member_id, "name": name.strip(), "role": role, "team": team, "ready": False, "seen": self.clock(), "links": set(), "inbox": collections.deque()}
-            self._event("joined", team=team, name=name.strip(), role=role, text="Tab registered; AI readiness not yet confirmed.")
+            self._event("joined", team=team, name=name.strip(), role=role,
+                        text=f"{name.strip()} ({role}) joined team {team}. AI readiness is not confirmed yet.")
+            # A tab that joins a RUNNING team extends the team: the new role
+            # joins the introduction order and is invited to speak.
+            state = self.teams.get(team)
+            if state and state.get("active") and role not in (state.get("roles") or ()):
+                state["roles"] = self._ordered_roles(self._live(team))
+                member = self.members[member_id]
+                self._event("joined", team=team, name=name.strip(), role=role,
+                            text=f"{name.strip()} ({role}) joined the running team; introduction order is now "
+                                 f"{' → '.join(state['roles'])}.")
+                if not state.get("turn"):
+                    self._invite(member, state)
             return self.status(member_id)
 
     def status(self, member_id):
@@ -244,24 +361,37 @@ class TeamHub:
             m["seen"] = self.clock()
             peers = [self._public(p) for p in self._live(m["team"]) if p["id"] != member_id]
             state = self.teams.get(m["team"], {})
+            roles = list(state.get("roles") or ()) or self._ordered_roles(self._live(m["team"]))
             # Registration is NOT evidence of model-to-model communication.
             connected = state.get("active", False) and m["ready"] and any(p["ready"] for p in peers)
             names = ", ".join(p["name"] for p in peers if p["ready"] and p["id"] in m["links"])
             phrase = (f"I am communicating with {names} and ready to help in your code"
                       if connected and bool(names)
-                      else "I am not directly communicating with the others try joining three open AI tabs as planner, coder, checker; start the team; keep each tab visible when delivering; check the bridge console for acknowledged messages")
+                      else "I am not directly communicating with the others try joining the other open AI tabs as planner, coder, checker (at least two tabs); start all joined agents; keep each tab visible when delivering; check the bridge console for acknowledged messages")
             handoffs = list(state.get("handoffs", []))[-5:]
-            phase = "idle"
-            if state.get("active"):
-                phase = "introducing" if state.get("turn") else (
-                    "building" if any(h["kind"] == "plan" for h in state.get("handoffs", [])) else "chatting")
-            return {"ok": True, "self": self._public(m), "peers": peers, "active": state.get("active", False), "run": state.get("run"), "stop_reason": state.get("stop_reason"), "introduction_turn": state.get("turn"), "phase": phase, "handoffs": handoffs, "communication_confirmed": connected and bool(names), "phrase": phrase, "role_instructions": ROLE_TASKS[m["role"]], "can_mutate": m["role"] == "coder"}
+            phase = state.get("phase") or "idle"
+            if state.get("active") and state.get("turn"):
+                phase = "introducing"
+            spoken = state.get("spoken") or ()
+            return {"ok": True, "self": self._public(m), "peers": peers, "active": state.get("active", False),
+                    "run": state.get("run"), "stop_reason": state.get("stop_reason"),
+                    "introduction_turn": state.get("turn"), "phase": phase, "handoffs": handoffs,
+                    "team_roles": roles, "introduction_order": roles,
+                    "introduced": m["id"] in spoken,
+                    "communication_confirmed": connected and bool(names), "phrase": phrase,
+                    "role_instructions": ROLE_TASKS[m["role"]], "can_mutate": m["role"] == "coder",
+                    "min_team_size": MIN_TEAM_SIZE}
 
     def start(self, team):
         with self.lock:
             members = self._live(team)
-            if sorted(m["role"] for m in members) != sorted(ROLES):
-                raise TeamError("Join exactly one planner, one coder and one checker before starting")
+            roles = self._ordered_roles(members)
+            if len(members) < MIN_TEAM_SIZE:
+                joined = ", ".join(f"{r} ({m['name']})" for r, m in
+                                   sorted(((m["role"], m) for m in members), key=lambda pair: ROLE_ORDER.get(pair[0], 99)))
+                raise TeamError(
+                    f"A team needs at least {MIN_TEAM_SIZE} joined agents - start all joined agents. "
+                    f"Joined so far: {joined or 'none'}.")
             if self.teams.get(team, {}).get("active"):
                 raise TeamError("Team is already active; stop it before starting a new run")
             # Keep old inactive room names bounded as well as members/events.
@@ -272,14 +402,25 @@ class TeamHub:
                         if len(self.teams)<128: break
                 if len(self.teams)>=128: raise TeamError("Team history limit reached")
             run = secrets.token_hex(8)
-            self.teams[team] = {"active": True, "run": run, "turn": "planner", "turn_since": self.clock(), "exchanged": False, "handoffs": []}
+            now = self.clock()
+            self.teams[team] = {"active": True, "run": run, "roles": roles,
+                                "turn": roles[0] if roles else None,
+                                "turn_since": now, "turn_started": now, "turn_attempts": 0,
+                                "exchanged": False, "handoffs": [], "spoken": set(),
+                                "phase": "introducing", "rounds": 0}
             for m in members:
                 m["ready"] = False
                 m["inbox"].clear()
                 m["links"].clear()
-            self._event("started", team=team, text="Starting tabs concurrently. Introduction order: planner → coder → checker. Waiting for real AI messages.")
-            self._invite(next(m for m in members if m["role"]=="planner"), self.teams[team])
-            return {"ok": True, "run": run, "members": [self._public(m) for m in members]}
+            order = " → ".join(roles)
+            self._event("started", team=team,
+                        text=f"Starting {len(members)} joined tabs concurrently ({order}). Introduction order: {order}. "
+                             f"Waiting for real AI messages.")
+            first = next((m for m in members if m["role"] == roles[0]), None)
+            if first:
+                self._invite(first, self.teams[team])
+            return {"ok": True, "run": run, "members": [self._public(m) for m in members],
+                    "roles": roles, "introduction_order": roles, "min_team_size": MIN_TEAM_SIZE}
 
     def ready(self, member_id):
         with self.lock:
@@ -290,19 +431,99 @@ class TeamHub:
             m["ready"] = True
             m["seen"] = self.clock()
             self._event("ready", team=m["team"], name=m["name"], role=m["role"], text="Extension submitted the role prompt; waiting for AI tool messages.")
-            if m["role"] == state["turn"]:
+            if m["role"] == state.get("turn"):
                 self._invite(m, state)
             return self.status(member_id)
 
     def _invite(self, m, state):
         if not any(e.get("control") == "introduce" for e in m["inbox"]):
-            self._queue(m, {"from": "Bridge coordinator", "role": "control", "control": "introduce", "text": f"It is the {m['role']}'s introduction turn. Use team_send to all with your real name, role, a brief greeting, and your question or handoff. Do not invent other agents' answers.", "run": state["run"]})
+            order = " → ".join(state.get("roles") or ())
+            self._queue(m, {"from": "Bridge coordinator", "role": "control", "control": "introduce",
+                            "text": f"It is the {m['role']}'s introduction turn (order: {order}). Use team_send to "
+                                    f"\"all\" with your real name, your role, a brief greeting, and the handoff you "
+                                    f"propose. Do not invent other agents' answers.",
+                            "run": state["run"]})
 
     def _queue(self, member, message):
         if len(member["inbox"]) >= 100:
             raise TeamError("Recipient inbox full; no message sent")
         ev = self._event("queued", team=member["team"], name=message["from"], role=message["role"], recipient=member["name"], text=message["text"])
         member["inbox"].append({"id": ev["seq"], "timestamp": ev["timestamp"], **message})
+
+    def _control(self, team, state, name):
+        """Queue a directed coordinator step to exactly one role."""
+        spec = COLLAB_CONTROL.get(name)
+        if not spec:
+            return None
+        target = next((p for p in self._live(team) if p["role"] == spec["to"]), None)
+        if target is None:
+            return None
+        self._queue(target, {"from": "Bridge coordinator", "role": "control", "control": name,
+                             "text": spec["text"], "run": state["run"]})
+        self._event("collab", team=team, name=target["name"], role=spec["to"],
+                    text=f"Coordinator moved the team to the '{name}' step for the {spec['to']}.")
+        return target
+
+    def _begin_collaboration(self, team, state):
+        """Introductions are over: start the ordered collaboration."""
+        if state.get("phase") != "introducing":
+            return
+        roles = state.get("roles") or []
+        if "planner" in roles and "coder" in roles:
+            state["phase"] = "plan"
+            self._control(team, state, "plan")
+        elif "planner" in roles:
+            state["phase"] = "plan_only"
+            self._control(team, state, "plan_only")
+        elif "coder" in roles:
+            state["phase"] = "build"
+            self._control(team, state, "build")
+        else:
+            state["phase"] = "chat"
+
+    def _advance_turn(self, team, state, now=None):
+        """Move the introduction to the next joined role (or into collaboration)."""
+        now = self.clock() if now is None else now
+        roles = list(state.get("roles") or ())
+        current = state.get("turn")
+        if current in roles:
+            index = roles.index(current) + 1
+            state["turn"] = roles[index] if index < len(roles) else None
+        else:
+            state["turn"] = None
+        state["turn_since"] = now
+        state["turn_started"] = now
+        state["turn_attempts"] = 0
+        if state["turn"]:
+            nxt = next((p for p in self._live(team) if p["role"] == state["turn"] and p["ready"]), None)
+            if nxt:
+                self._invite(nxt, state)
+        else:
+            self._begin_collaboration(team, state)
+
+    def _on_handoff(self, team, state, kind):
+        """Real handoff -> next directed coordinator step."""
+        if state.get("phase") == "introducing":
+            # Introductions run first; the collaboration steps start afterwards.
+            return
+        roles = state.get("roles") or []
+        if kind == "plan" and "coder" in roles:
+            state["phase"] = "implement"
+            self._control(team, state, "implement")
+        elif kind == "evidence" and "checker" in roles:
+            state["phase"] = "review"
+            self._control(team, state, "review")
+        elif kind == "defects" and "coder" in roles:
+            rounds = state.get("rounds", 0) + 1
+            state["rounds"] = rounds
+            if rounds <= MAX_FIX_ROUNDS:
+                state["phase"] = "fix"
+                self._control(team, state, "fix")
+            else:
+                state["phase"] = "done"
+                self._event("collab", team=team,
+                            text=f"Fix rounds exhausted ({MAX_FIX_ROUNDS}). The coordinator stops escalating; the "
+                                 f"agents may still talk freely.")
 
     @staticmethod
     def _handoff_kind(sender_role, recipient):
@@ -315,7 +536,7 @@ class TeamHub:
             return "defects"
         return "chat"
 
-    def send(self, member_id, recipient, text, message_id):
+    def send(self, member_id, recipient, text, message_id, kind=None):
         if not isinstance(text, str) or not text.strip() or len(text) > 12000:
             raise TeamError("Message must contain 1–12000 characters")
         if not isinstance(message_id, str) or not message_id or len(message_id) > 160:
@@ -332,7 +553,11 @@ class TeamHub:
                 return result
             if not state.get("active") or not m["ready"]:
                 raise TeamError("Start the team and submit this tab's role prompt first")
-            if state["turn"] and m["role"] != state["turn"]:
+            explicit = kind if isinstance(kind, str) and kind in SEND_KINDS else None
+            skipped = state.get("skipped") or ()
+            introducing = state.get("phase") == "introducing" and state.get("turn") == m["role"]
+            if (state.get("turn") and m["role"] != state["turn"]
+                    and explicit != "request" and m["role"] not in skipped):
                 raise TeamError(f"Wait: {state['turn']} introduces first. Do not send your introduction yet.")
             peers = [p for p in self._live(m["team"]) if p["id"] != member_id]
             targets = peers if recipient == "all" else [p for p in peers if recipient in (p["id"], p["role"], p["name"])]
@@ -340,21 +565,24 @@ class TeamHub:
                 raise TeamError("No live recipient matched. Use team_status for actual peers.")
             if any(len(p["inbox"]) >= 99 for p in targets):
                 raise TeamError("Recipient inbox full; no message sent")
-            kind = self._handoff_kind(m["role"], recipient)
-            self._event("message", team=m["team"], name=m["name"], role=m["role"], recipient=recipient, handoff=kind, text=text)
-            state.setdefault("handoffs", []).append({"kind": kind, "from": m["role"], "to": recipient, "text": text[:200], "at": self.clock()})
+            if explicit:
+                handoff = explicit
+            elif introducing:
+                # The first message of an introduction turn IS the introduction.
+                handoff = "intro"
+            else:
+                handoff = self._handoff_kind(m["role"], recipient)
+            self._event("message", team=m["team"], name=m["name"], role=m["role"], recipient=recipient, handoff=handoff, text=text)
+            state.setdefault("handoffs", []).append({"kind": handoff, "from": m["role"], "to": recipient, "text": text[:200], "at": self.clock()})
             if len(state["handoffs"]) > HANDOFF_MAX:
                 state["handoffs"] = state["handoffs"][-HANDOFF_MAX:]
+            state.setdefault("spoken", set()).add(member_id)
             for target in targets:
-                self._queue(target, {"from": m["name"], "sender_id": member_id, "role": m["role"], "handoff": kind, "text": text, "run": state["run"]})
-            if state["turn"]:
-                index = ROLES.index(state["turn"]) + 1
-                state["turn"] = ROLES[index] if index < len(ROLES) else None
-                state["turn_since"] = self.clock()
-                nxt = next((p for p in peers if p["role"] == state["turn"] and p["ready"]), None)
-                if nxt:
-                    self._invite(nxt, state)
-            result = {"ok": True, "queued_for": [p["name"] for p in targets], "message_id": message_id, "handoff": kind, "note": "Queued, not yet acknowledged by recipient. Do not claim a reply was received."}
+                self._queue(target, {"from": m["name"], "sender_id": member_id, "role": m["role"], "handoff": handoff, "text": text, "run": state["run"]})
+            if state.get("turn") and introducing and handoff != "request":
+                self._advance_turn(m["team"], state)
+            self._on_handoff(m["team"], state, handoff)
+            result = {"ok": True, "queued_for": [p["name"] for p in targets], "message_id": message_id, "handoff": handoff, "note": "Queued, not yet acknowledged by recipient. Do not claim a reply was received."}
             self.sent[key] = (fingerprint, result)
             if len(self.sent) > 2000:
                 self.sent.popitem(last=False)
@@ -390,6 +618,8 @@ class TeamHub:
             if team in self.teams:
                 self.teams[team]["active"] = False
                 self.teams[team]["stop_reason"] = reason
+                self.teams[team]["turn"] = None
+                self.teams[team]["phase"] = "stopped"
             for m in self.members.values():
                 if m["team"] == team:
                     m["inbox"].clear()
@@ -402,12 +632,28 @@ class TeamHub:
             member=self.members.pop(member_id,None)
             if member:
                 self.stop(member["team"])
-                self._event("left",team=member["team"],name=member["name"],role=member["role"],text="Tab left or navigated away. Rejoin all required roles before restarting.")
+                self._event("left",team=member["team"],name=member["name"],role=member["role"],text="Tab left or navigated away. Rejoin the missing roles before restarting.")
             return {"ok":True}
 
     def event_log(self, since=0):
         with self.lock:
             return {"ok": True, "events": [e for e in self.events if e["seq"] > since], "cursor": self.seq, "reset": since > self.seq, "truncated": bool(self.events and since and since < self.events[0]["seq"] - 1)}
+
+    def chat(self, team=None, limit=50):
+        """The bare chat transcript: the real messages agents sent, nothing else."""
+        with self.lock:
+            self._expire_runs()
+            try:
+                limit = max(1, min(int(limit), 500))
+            except (TypeError, ValueError):
+                limit = 50
+            messages = [e for e in self.events if e.get("kind") == "message" and (not team or e.get("team") == team)]
+            members = {}
+            for member in self._live(team) if team else list(self.members.values()):
+                members.setdefault(member["team"], []).append(self._public(member))
+            for name in members:
+                members[name].sort(key=lambda m: ROLE_ORDER.get(m.get("role"), 99))
+            return {"ok": True, "messages": messages[-limit:], "members": members, "cursor": self.seq}
 
     def wait_events(self, since=0, timeout=5.0):
         """Block until a new event arrives after `since` or `timeout` elapses (0ms wake)."""
@@ -435,8 +681,10 @@ class TeamHub:
                     "active": bool(st.get("active", False)),
                     "run": st.get("run"),
                     "introduction_turn": st.get("turn"),
+                    "introduction_order": list(st.get("roles") or ()) or self._ordered_roles(live),
+                    "phase": st.get("phase") or "idle",
                     "exchanged": bool(st.get("exchanged", False)),
                     "handoffs": list(st.get("handoffs", []))[-5:],
                     "members": live,
                 }
-            return {"ok": True, "teams": teams_out, "cursor": self.seq}
+            return {"ok": True, "teams": teams_out, "cursor": self.seq, "min_team_size": MIN_TEAM_SIZE}

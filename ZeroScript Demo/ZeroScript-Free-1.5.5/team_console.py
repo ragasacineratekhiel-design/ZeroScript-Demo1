@@ -21,7 +21,8 @@ import urllib.request
 
 
 ROLE_COLORS={"planner":"\033[94m", "coder":"\033[91m", "checker":"\033[92m"}
-HANDOFF_TAGS={"plan":"[PLAN]","evidence":"[EVIDENCE]","defects":"[DEFECTS]","chat":"[CHAT]"}
+HANDOFF_TAGS={"plan":"[PLAN]","evidence":"[EVIDENCE]","defects":"[DEFECTS]","chat":"[CHAT]",
+              "intro":"[INTRO]","request":"[REQUEST]"}
 
 
 def enable_colors():
@@ -64,11 +65,13 @@ def format_summary(data):
     for tname, info in items:
         active = "active" if info.get("active") else "idle"
         run = info.get("run") if "run" in info else info.get("run_id")
+        order = " → ".join(info.get("introduction_order") or []) or "?"
+        phase = info.get("phase") or "?"
         mems = ", ".join(
             f"{m.get('role','?')}:{m.get('name','?')}({'ready' if m.get('ready') else 'joined'})"
             for m in info.get("members", [])
         ) or "none"
-        parts.append(f"team={tname} ({active}, run={run}) [{mems}]")
+        parts.append(f"team={tname} ({active}, run={run}, order={order}, phase={phase}) [{mems}]")
     return " | ".join(parts) if parts else "no active teams"
 
 
@@ -109,7 +112,7 @@ def main(argv=None):
     backoff = args.interval
     seen_kinds = {}
     print("ZeroScript Team Console — real bridge events, UTC timestamps", flush=True)
-    print("Join planner, coder, checker in the extension popup, then Start team.")
+    print("Join the other agents in the extension popup (at least two tabs), then press Start team.")
     print("No model APIs are called. A registered tab is not proof of communication.\n", flush=True)
     while True:
         try:

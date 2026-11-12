@@ -1,4 +1,4 @@
-# Integrated release 4.6.0 — existing MAX features + bridge teams
+# Integrated release 4.7.0 — teams that actually talk (2+ agents, ordered chat, visible chat)
 
 This branch integrates main's execution modes, slash commands, static Luau sandbox, memory wall, plan wall, peer routing and fault instrumentation with authenticated bridge-team mailboxes, concurrent team startup, timestamped console, Python launcher and shared tab controls.
 
@@ -12,15 +12,31 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ## Existing MAX features (retained from main)
 
-# ZeroScript MAX 4.6.0 × Roblox Studio Agent
+# ZeroScript MAX 4.7.0 × Roblox Studio Agent
 
 A browser extension (Chrome/Edge, MV3) that lets **any AI chat window** drive **Roblox Studio** through a
 local Python bridge. You talk to the AI; the extension reads its replies, finds the commands, runs them
 against Studio through the MCP server, and feeds the result back so the model can keep going.
 
 > **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select
-> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.6.0**.
+> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
 > If you still have an old `zeroscript-extension` card, remove it.
+
+---
+
+## What 4.7.0 fixes (teams that actually talk: 2+ agents, ordered chat, visible chat)
+
+| Problem | Root cause found | 4.7.0 fix |
+|---|---|---|
+| **Only three agents could form a team** | `TeamHub.start()` raised `Join exactly one planner, one coder and one checker before starting`, and `background.js` refused to continue unless `results.length === 3` — a planner+coder pair could never run, and by then the bridge had already started the run | `MIN_TEAM_SIZE = 2`. The joined role set **is** the team, the introduction order is derived from it (planner → coder → checker), and the extension starts **all joined agents** (`Start all joined team tabs (2 or more)`) |
+| **The agents never started talking** | The introduction invite was queued once and nothing asked again when the invited tab stayed silent; the collaboration steps did not exist at all | The coordinator invites one role at a time, **re-asks a silent tab** after 40 s (`intro_nudge`), skips a dead turn after 90 s (`turn_skipped`) and then drives the collaboration protocol with directed control messages |
+| **Planner and checker did not collaborate with the coder** | Nothing asked them for anything after the greeting; the role text only said "hand it to the coder" | The coordinator drives **plan → implement → review → fix**: the planner must send the coder a plan **with reference code**, the coder must send the checker **what actually changed**, the checker must send the coder **each defect with the exact fix** — and the checker still never mutates Studio (role gate unchanged in all four layers) |
+| **The task only existed in one tab** | The user's request was never sent to the other agents, so every other tab waited for a task nobody sent them | The extension relays the **user's own words** into the team (`kind: "request"`, labelled `[USER REQUEST from …]`). It is never an invented agent message, and the extension never relays its own injections back |
+| **The chat was invisible** | `start.py --status` printed event COUNTS only, and the launcher never showed a message | `start.py` now prints the joined agents and the **bare chat** (sender, recipient, timestamp, message text) and follows the event log live; `GET /api/team/chat` returns the transcript; the popup lists the joined agents and the team order |
+
+**Honest limits, unchanged:** the bridge still never calls a model API, a registered tab is still not proof of
+communication, and `communication_confirmed` still requires a real message that was really acknowledged. A
+team of two works exactly like a team of three minus the missing role's steps.
 
 ---
 
@@ -149,8 +165,8 @@ no module calls an export that does not exist · versions agree · all four test
 
 ## Troubleshooting
 
-- **Card says 4.6.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
-- **Bar missing?** Check the extension is 4.6.0, then look for `#zs-bar` in the inspector.
+- **Card says 4.7.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
+- **Bar missing?** Check the extension is 4.7.0, then look for `#zs-bar` in the inspector.
 - **"Extension context invalidated"** — the extension was reloaded/updated under an open tab; reload the page.
 - **Loop/Continuous not continuing?** Check the Exec selector and watch for the budget banner; press Start again to continue.
 - **Nothing executes** — popup health first: bridge offline → run `start.py`. Studio not connected → enable the MCP server in Studio.

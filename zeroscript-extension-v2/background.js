@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One service worker already serves every tab. Mutations are sent ONCE: never
 // hedge/replay them across transports after an ambiguous timeout.
-const VERSION = '4.6.0';
+const VERSION = '4.7.0';
 const WS_URL = 'ws://127.0.0.1:17613';
 const HTTP_BASE = 'http://127.0.0.1:17614';
 const RECONNECT_MIN = 250;
@@ -195,8 +195,21 @@ async function teamRequest(msg,sender){
       try{return {tab:Number(id),...await chrome.tabs.sendMessage(Number(id),{type:'zs-team-start'})};}
       catch(e){return {tab:Number(id),ok:false,error:String(e)};}
     }));
-    if(results.length!==3 || results.some(r=>!r.ok)){await http('/api/team/stop',{team});for(const [id] of members)chrome.tabs.sendMessage(Number(id),{type:'zs-team-stop'}).catch(()=>{});return {ok:false,error:'One or more tabs failed to start. Team stopped; inspect tab errors.',results};}
-    return {ok:true,results,note:'Role prompts submitted concurrently. Real introductions are ordered by the bridge.'};
+    // 4.7.0: START ALL JOINED AGENTS. The team is whatever joined (two or
+    // more); the old "exactly three" rule refused every smaller team and the
+    // bridge had already started it by then.
+    const need=r.members.length;
+    const started=results.filter(x=>x.ok).length;
+    if(started<2||started!==need||results.some(x=>!x.ok)){
+      await http('/api/team/stop',{team});
+      for(const [id] of members)chrome.tabs.sendMessage(Number(id),{type:'zs-team-stop'}).catch(()=>{});
+      return {ok:false,error:`Started ${started} of ${need} joined agents. A team needs at least 2 tabs, and every joined tab must accept its role prompt; the team was stopped so nobody talks to a half-started team.`,results};
+    }
+    const roles=Array.isArray(r.roles)?r.roles:[];
+    return {ok:true,results,started,
+      members:(r.members||[]).map(m=>`${m.role}=${m.name}`),
+      roles,
+      note:`Started ${started} joined agents (${roles.join(' → ')||'unknown order'}). Role prompts submitted concurrently; the bridge orders the introductions and drives the plan → implement → review → fix collaboration.`};
   }
   if(msg.type==='team_stop'){
     const team=msg.team||'studio', r=await http('/api/team/stop',{team});
@@ -208,7 +221,10 @@ async function teamRequest(msg,sender){
   if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();broadcastStatus().catch(()=>{});return http('/api/team/leave',{member_id:binding.member_id});}
   const action={team_status:'status',team_inbox:'inbox',team_ack:'ack',team_send:'send',team_ready:'ready'}[msg.type];
   if(!action)return {ok:false,error:'Unknown team action'};
-  const body={member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id}:{}),...(action==='ack'?{ids:msg.ids}:{})};
+  // 4.7.0: `kind` lets the extension relay the USER'S own request into the
+  // team ("request") without pretending an agent spoke. The AI-facing
+  // team_send tool never sets one, so an agent cannot skip the intro order.
+  const body={member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id,...(msg.kind?{kind:msg.kind}:{})}:{}),...(action==='ack'?{ids:msg.ids}:{})};
   if(connected){
     const wr=await sendWS({type:'team_'+action,...body},5000);
     if(wr && wr.kind!=='disconnected') return wr;

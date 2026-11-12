@@ -6,7 +6,25 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.6.0";
+  const ENHANCER_VERSION = "4.7.0";
+
+  // 4.7.0: the orchestration text is DERIVED from the roles that are actually
+  // in the plan. It used to hardcode "three roles" and "planner first", so a
+  // two-agent plan was described with the wrong handoff chain.
+  function orchestrationText(roleList){
+    const has=(r)=>roleList.includes(r);
+    if(has("planner")&&has("coder")&&has("checker"))
+      return "Planner designs blueprint + file tree (NEVER calls execute_luau/multi_edit — rejected for planner), Coder builds (Instance.new + multi_edit, ONLY mutator), Checker audits via script_read/inspect and reports defects to Coder (NEVER edits). Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review}).";
+    if(has("planner")&&has("coder"))
+      return "Planner → Coder: Planner outputs blueprint (phases + paths + economy, never mutates), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff.";
+    if(has("coder")&&has("checker"))
+      return "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes defect list to Coder via wall 10ms (never edits itself).";
+    if(has("planner"))
+      return "Planner works on the blueprint alone (never mutates Studio).";
+    if(has("checker"))
+      return "Checker audits alone via script_read + get_studio_state + inspect (never edits Studio).";
+    return "Single AI: you do everything.";
+  }
 
   function getPlanOrchestration(raw){
     try{
@@ -25,7 +43,7 @@
       }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.wall", _e); }
       const roleList=planDef.roles.join(" → ");
       const assigned=Object.entries(roles).map(([k,v])=>`${k}:${v}`).join(", ") || "auto";
-      return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${planDef.roles.length===3 ? "Planner designs blueprint + file tree (NEVER calls execute_luau/multi_edit — rejected for planner), Coder builds (Instance.new + multi_edit, ONLY mutator), Checker audits via script_read/inspect and reports defects to Coder (NEVER edits). Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review})." : planDef.roles[0]==="planner" ? "Planner → Coder: Planner outputs blueprint (phases + paths + economy, never mutates), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff." : "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes defect list to Coder via wall 10ms (never edits itself)."}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
+      return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${orchestrationText(planDef.roles)}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
     }catch{ return ""; }
   }
 

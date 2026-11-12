@@ -69,6 +69,117 @@ class TeamTests(unittest.TestCase):
         with self.assertRaises(TeamError):
             hub.start("studio")
 
+    # ── 4.7.0: two or more agents form a team and chat in a fixed order ─────
+    def test_one_agent_is_not_a_team(self):
+        hub = TeamHub()
+        hub.register("a", "Claude", "planner")
+        with self.assertRaises(TeamError) as caught:
+            hub.start("studio")
+        self.assertIn("at least 2", str(caught.exception))
+
+    def test_two_agents_form_a_team_with_a_derived_order(self):
+        hub = TeamHub()
+        hub.register("p", "Claude", "planner")
+        hub.register("c", "DeepSeek", "coder")
+        result = hub.start("studio")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["roles"], ["planner", "coder"])
+        self.assertEqual(result["introduction_order"], ["planner", "coder"])
+        self.assertEqual(hub.status("p")["team_roles"], ["planner", "coder"])
+
+    def test_two_agent_team_introduces_in_order_and_then_collaborates(self):
+        hub = TeamHub()
+        hub.register("p", "Claude", "planner")
+        hub.register("c", "DeepSeek", "coder")
+        hub.start("studio")
+        hub.ready("p")
+        hub.ready("c")
+        # the planner holds the first turn; the coder must wait for it
+        self.assertEqual(hub.status("p")["introduction_turn"], "planner")
+        with self.assertRaises(TeamError):
+            hub.send("c", "all", "Too early", "c-early")
+        hub.send("p", "all", "Hi, I am the planner", "p1")
+        self.assertEqual(hub.status("p")["introduction_turn"], "coder")
+        hub.send("c", "all", "Hi, I am the coder", "c1")
+        self.assertIsNone(hub.status("p")["introduction_turn"])
+        self.assertEqual([e["role"] for e in hub.events if e["kind"] == "message"], ["planner", "coder"])
+        # the coordinator now drives plan -> implement
+        self.assertEqual(hub.status("p")["phase"], "plan")
+        self.assertTrue(any(m.get("control") == "plan" for m in hub.inbox("p")["messages"]))
+        hub.send("p", "coder", "Plan: build StageService. Reference: local S = Instance.new('Folder')", "p2")
+        self.assertEqual(hub.status("p")["phase"], "implement")
+        self.assertTrue(any(m.get("control") == "implement" for m in hub.inbox("c")["messages"]))
+
+    def test_checker_reports_defects_to_the_coder_without_editing(self):
+        hub = TeamHub()
+        for name, role in (("Claude", "planner"), ("DeepSeek", "coder"), ("Gemini", "checker")):
+            hub.register(role, name, role)
+        hub.start("studio")
+        for role in ("planner", "coder", "checker"):
+            hub.ready(role)
+        hub.send("planner", "all", "Hi, I am the planner", "p1")
+        hub.send("coder", "all", "Hi, I am the coder", "c1")
+        hub.send("checker", "all", "Hi, I am the checker", "k1")
+        hub.send("planner", "coder", "Plan with reference code", "p2")
+        hub.send("coder", "checker", "Implemented StageService, verified with get_studio_state", "c2")
+        self.assertEqual(hub.status("planner")["phase"], "review")
+        self.assertTrue(any(m.get("control") == "review" for m in hub.inbox("checker")["messages"]))
+        hub.send("checker", "coder", "Defect: StageService has no WaitForChild. Fix: add it at line 12", "k2")
+        self.assertEqual(hub.status("planner")["phase"], "fix")
+        self.assertTrue(any(m.get("control") == "fix" for m in hub.inbox("coder")["messages"]))
+        # the checker never mutates Studio - only the coder does
+        self.assertFalse(hub.can_mutate_studio("checker"))
+        self.assertTrue(hub.can_mutate_studio("coder"))
+
+    def test_relayed_user_request_does_not_consume_the_introduction_turn(self):
+        hub = TeamHub()
+        hub.register("p", "Claude", "planner")
+        hub.register("c", "DeepSeek", "coder")
+        hub.start("studio")
+        hub.ready("p")
+        hub.ready("c")
+        # the extension relays the user's own request; it is not an introduction
+        hub.send("p", "all", "[USER REQUEST from Claude] build a tycoon game", "r1", kind="request")
+        self.assertEqual(hub.status("p")["introduction_turn"], "planner")
+        self.assertEqual(hub.status("p")["phase"], "introducing")
+        hub.send("p", "all", "Hi, I am the planner", "p1")
+        self.assertEqual(hub.status("p")["introduction_turn"], "coder")
+
+    def test_chat_transcript_contains_only_real_messages(self):
+        hub = TeamHub()
+        hub.register("p", "Claude", "planner")
+        hub.register("c", "DeepSeek", "coder")
+        hub.start("studio")
+        hub.ready("p")
+        hub.ready("c")
+        hub.send("p", "all", "Hello coder, real message", "1")
+        chat = hub.chat("studio")
+        self.assertEqual([m["text"] for m in chat["messages"]], ["Hello coder, real message"])
+        self.assertEqual(chat["messages"][0]["name"], "Claude")
+        self.assertEqual(chat["messages"][0]["recipient"], "all")
+        self.assertEqual(sorted(m["role"] for m in chat["members"]["studio"]), ["coder", "planner"])
+
+    def test_silent_introduction_is_re_asked_then_skipped(self):
+        now = [100.0]
+        # A long TTL: the tabs stay alive (they heartbeat) but the PLANNER never
+        # speaks, so the coordinator must escalate and then move on.
+        hub = TeamHub(ttl=600, clock=lambda: now[0], intro_timeout=90.0, intro_retry=10.0)
+        hub.register("p", "Claude", "planner")
+        hub.register("c", "DeepSeek", "coder")
+        hub.start("studio")
+        hub.ready("p")
+        hub.ready("c")
+        now[0] += 20
+        hub.status("p")
+        kinds = [e["kind"] for e in hub.events]
+        self.assertIn("intro_nudge", kinds)
+        self.assertTrue(any(m.get("control") == "introduce" and "Still your introduction turn" in m["text"]
+                            for m in hub.inbox("p")["messages"]))
+        now[0] += 120
+        hub.status("p")
+        self.assertIn("turn_skipped", [e["kind"] for e in hub.events])
+        self.assertEqual(hub.status("p")["introduction_turn"], "coder")
+
     def test_duplicate_role_rejected(self):
         with self.assertRaises(TeamError):
             self.hub.register("another", "ChatGPT", "planner")
@@ -308,6 +419,30 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("+00:00",console.stdout)
         self.assertNotIn("Nice to meet you",console.stdout) # viewer cannot invent an AI reply
         self.request("/api/team/stop",{"team":"http-team"})
+
+    def test_two_agent_team_over_http_and_the_bare_chat_endpoint(self):
+        for role, name in (("planner", "Claude"), ("coder", "DeepSeek")):
+            code, result, _ = self.request("/api/team/register", {"member_id": "two-" + role, "name": name, "role": role, "team": "two-team"})
+            self.assertEqual(code, 200)
+        started = self.request("/api/team/start", {"team": "two-team"})[1]
+        self.assertTrue(started["ok"])
+        self.assertEqual(started["roles"], ["planner", "coder"])
+        self.assertEqual(started["introduction_order"], ["planner", "coder"])
+        for role in ("planner", "coder"):
+            self.request("/api/team/ready", {"member_id": "two-" + role})
+        self.request("/api/team/send", {"member_id": "two-planner", "to": "all", "text": "Hello from the planner", "message_id": "two-1"})
+        code, chat, _ = self.request("/api/team/chat?team=two-team")
+        self.assertEqual(code, 200)
+        self.assertEqual([m["text"] for m in chat["messages"]], ["Hello from the planner"])
+        self.assertEqual(chat["messages"][0]["name"], "Claude")
+        self.assertEqual(len(chat["members"]["two-team"]), 2)
+        # the relayed user request is a real message and does NOT consume an
+        # introduction turn
+        before = self.request("/api/team/status", {"member_id": "two-planner"})[1]["introduction_turn"]
+        self.request("/api/team/send", {"member_id": "two-planner", "to": "all", "text": "[USER REQUEST] build it", "message_id": "two-2", "kind": "request"})
+        after = self.request("/api/team/status", {"member_id": "two-planner"})[1]
+        self.assertEqual(after["introduction_turn"], before)
+        self.request("/api/team/stop", {"team": "two-team"})
 
     def test_websocket_auth_and_batch_request_id(self):
         async def check():

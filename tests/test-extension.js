@@ -91,14 +91,41 @@ async function main(){
   check('failed HTTP mutation is not automatically replayed',()=>assert.equal(fetches.length,1));
   const bad=await c.api.handle({type:'call_tool',name:'mutation'},{id:'extension-id',tab:{id:2,url:'https://evil.example/chatgpt.com'}});
   check('provider trust uses hostname, not a substring',()=>assert.equal(bad.ok,false));
-  c.fetch=async(url,opts)=>({ok:true,status:200,json:async()=>({ok:true,self:{role:JSON.parse(opts.body||'{}').role},members:[1,2,3].map(id=>({id:`tab-${id}-session`}))})});
+  // The bridge mock keeps a REAL registry per team, so the extension's
+  // "start all joined agents" rule is exercised against the members that
+  // actually joined instead of a hardcoded trio.
+  const registered=new Map();
+  c.fetch=async(url,opts)=>{
+    const body=(opts&&opts.body)?JSON.parse(opts.body||'{}'):{};
+    const team=body.team||'studio';
+    if(url.includes('/api/team/register')){
+      const list=registered.get(team)||[];list.push(body.member_id);registered.set(team,list);
+      return {ok:true,status:200,json:async()=>({ok:true,self:{id:body.member_id,role:body.role,team},members:list.map(id=>({id}))})};
+    }
+    if(url.includes('/api/team/start')){
+      const list=registered.get(team)||[];
+      const roles=list.length===2?['planner','coder']:['planner','coder','checker'];
+      return {ok:true,status:200,json:async()=>({ok:true,run:'run-'+team,members:list.map(id=>({id})),roles,introduction_order:roles})};
+    }
+    return {ok:true,status:200,json:async()=>({ok:true,self:{role:body.role}})};
+  };
   for(const [id,role,host] of [[1,'planner','claude.ai'],[2,'coder','chat.deepseek.com'],[3,'checker','gemini.google.com']]){
     const joined=await c.api.handle({type:'team_register',session_id:'session',role,team:'studio'},{id:'extension-id',tab:{id,url:`https://${host}/`}});assert.equal(joined.ok,true);
   }
   let active=0,maxActive=0;
   c.chrome.tabs.sendMessage=async()=>{active++;maxActive=Math.max(maxActive,active);await new Promise(r=>setTimeout(r,20));active--;return {ok:true};};
   const started=await c.api.handle({type:'team_start',team:'studio'},{id:'extension-id'});
-  check('three team startup submissions run concurrently',()=>{assert.equal(started.ok,true);assert.equal(maxActive,3);});
+  check('three team startup submissions run concurrently',()=>{assert.equal(started.ok,true);assert.equal(maxActive,3);assert.equal(started.started,3);});
+  // 4.7.0: two joined agents are a team - "start all joined agents".
+  await c.api.handle({type:'team_register',session_id:'duo',role:'planner',team:'duo'},{id:'extension-id',tab:{id:31,url:'https://claude.ai/'}});
+  await c.api.handle({type:'team_register',session_id:'duo',role:'coder',team:'duo'},{id:'extension-id',tab:{id:32,url:'https://chat.deepseek.com/'}});
+  active=0;maxActive=0;
+  const duo=await c.api.handle({type:'team_start',team:'duo'},{id:'extension-id'});
+  check('two joined agents start as a team',()=>{assert.equal(duo.ok,true);assert.equal(duo.started,2);assert.deepEqual(duo.roles,['planner','coder']);assert.equal(maxActive,2);});
+  // A single tab is not a team: the extension refuses to leave it half started.
+  await c.api.handle({type:'team_register',session_id:'solo',role:'planner',team:'solo'},{id:'extension-id',tab:{id:41,url:'https://claude.ai/'}});
+  const solo=await c.api.handle({type:'team_start',team:'solo'},{id:'extension-id'});
+  check('a single joined agent is refused as a team',()=>{assert.equal(solo.ok,false);assert.match(solo.error,/at least 2 tabs/);});
   const sent=[];
   c.chrome.storage.local={get:async()=>({zsPlan:'agent',zsPlanRoles:{planner:'Claude',coder:'DeepSeek',checker:'Gemini'}}),set:async()=>{}};
   c.chrome.tabs.query=async()=>[{id:1,url:'https://claude.ai/new'},{id:2,url:'https://chat.deepseek.com/new'}];

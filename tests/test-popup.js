@@ -9,7 +9,7 @@ const root = path.join(__dirname, "..", "zeroscript-extension-v2");
       tabs: {
         query: async () => [{ id: 5, url: "https://claude.ai/new" }],
         sendMessage: async (_id, m) => ({
-          ok: true, name: "Claude", version: "4.6.0", composer: true, toolbar: true, toolbarVisible: true,
+          ok: true, name: "Claude", version: "4.7.0", composer: true, toolbar: true, toolbarVisible: true,
           running: false, starting: false, generating: false, background: false, draftPresent: false,
           team: { joined: true, active: true, role: "planner", can_mutate: false, communication_confirmed: true },
           note: m.type === "zs-stop-tab" ? "Stopped" : "",
@@ -22,7 +22,7 @@ const root = path.join(__dirname, "..", "zeroscript-extension-v2");
         },
       },
       runtime: {
-        getManifest: () => ({ version: "4.6.0" }),
+        getManifest: () => ({ version: "4.7.0" }),
         onMessage: { addListener() {} },
         sendMessage(m, cb) {
           sent.push(m);
@@ -35,7 +35,7 @@ const root = path.join(__dirname, "..", "zeroscript-extension-v2");
     w.eval(fs.readFileSync(path.join(root, "core/safe.js"), "utf8") + "\n" + fs.readFileSync(path.join(root, "popup.js"), "utf8"));
     w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
     await new Promise((r) => setTimeout(r, 30));
-    assert.equal(w.document.getElementById("ver").textContent, "v4.6.0");
+    assert.equal(w.document.getElementById("ver").textContent, "v4.7.0");
     assert.match(w.document.getElementById("team-roster").textContent, /planner=Claude[\s\S]*coder=DeepSeek/);
     assert.match(w.document.getElementById("tab-result").textContent, /Claude[\s\S]*planner/);
     w.document.getElementById("tab-recover").click();

@@ -16,7 +16,7 @@ const ZSParse = (() => {
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }
 
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
   const START_M = "###MCP_TOOL###";
   const END_M = "###END_MCP_TOOL###";
   const LUA_START_RE = /###\s*lua(?:\s*[:\-_ ]\s*(edit|client|server))?\s*(?:###|---)/i;

@@ -36,7 +36,7 @@
 // reporter that can throw is worse than no reporter at all.
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
 
   const MAX_FAULTS = 40;        // ring size; bounded on purpose
   const MAX_SITES = 512;        // distinct expected() sites we track (392 call sites today)

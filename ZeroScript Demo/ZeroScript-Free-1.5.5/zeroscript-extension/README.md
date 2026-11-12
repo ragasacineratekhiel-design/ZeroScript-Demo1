@@ -1,7 +1,7 @@
-# ZeroScript MAX 4.6.0 — extension (load THIS folder)
+# ZeroScript MAX 4.7.0 — extension (load THIS folder)
 
 `chrome://extensions` → Developer mode → **Load unpacked** → select this folder
-(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.6.0**.
+(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
 Remove any older `zeroscript-extension` card.
 
 ## What it is
@@ -11,7 +11,7 @@ A content script that drops a small control bar above the composer on 20 AI chat
 extracts the ZeroScript command, executes it through `background.js` → `bridge.py` → Roblox Studio MCP,
 and types the result back so the model can continue.
 
-## Verified behaviour in 4.6.0
+## Verified behaviour in 4.7.0
 
 | Area | Reality |
 |---|---|
@@ -23,7 +23,7 @@ and types the result back so the model can continue.
 | Memory wall | `core/memory_wall.js` persists project memory and is injected into the system prompt **and** every agent turn (query-trimmed to ~700 chars). |
 | **Cross-AI peer channel** | `core/peer_wall.js`. One AI's message is delivered into another AI's **context window** — not just into a log. Distinctness is enforced at delivery: a message addressed to the same provider is refused. |
 | Wall / orchestration | Event-driven (`BroadcastChannel` + background routing by provider). Tasks are re-published as runtime messages so the executor tab receives them. |
-| **Bridge teams & enforced roles** | Join 3 open tabs as `planner`, `coder`, `checker` in the popup. Real-time WS + Condition long-poll mailboxes; **only `coder` can mutate Studio** (planner/checker mutations are blocked at 3 layers). |
+| **Bridge teams & enforced roles** | Join **2 or more** open tabs (the full set is `planner`, `coder`, `checker`) in the popup and press **Start all joined team tabs**. Real-time WS + Condition long-poll mailboxes; the bridge orders the introductions and drives plan → implement → review → fix; **only `coder` can mutate Studio** (planner/checker mutations are blocked at 4 layers). |
 | **`/truth` ground-truth proof** | `/truth` (plus `/brutal-honest`, `/0%-lies`) gates answers on successful Studio reads (`verify_fact` SHA-256 + FNV-1a `[VERIFIED via …]` stamps) and falls back to `NOT VERIFIED` if Studio is offline. |
 | Slash modes | `/truth /code /prompt /force /smart` (plus `/follow-everything`, `/absolute-effort`) — applied before `expectedPrefix` and bypassed on team/internal turns. |
 | Providers | 7 bespoke drivers (DeepSeek, ChatGPT, Gemini, Claude, Kimi, GLM, Qwen, Arena, Meta) + one generic driver + 5 thin wrappers (Perplexity, Copilot, Grok, Poe, Mistral). |

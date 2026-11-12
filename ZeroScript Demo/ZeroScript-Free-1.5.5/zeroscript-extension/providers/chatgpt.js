@@ -1032,7 +1032,7 @@ try {
 
   return {
     id: "chatgpt",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "ChatGPT",
     timings,
     // Exported for test-chatgpt.js (the Node smoke test drives it against a stub
@@ -1067,7 +1067,7 @@ try {
       if (d) diag = d;
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsGptVer).
-      try { document.documentElement.setAttribute("data-zs-gpt-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.modeWarning", _e); }
+      try { document.documentElement.setAttribute("data-zs-gpt-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,

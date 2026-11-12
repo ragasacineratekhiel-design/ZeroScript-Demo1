@@ -887,7 +887,7 @@ const ZSProvider = (() => {
   // build onto <html data-zs-qwen-ver>; read it from the page to confirm which
   // qwen.js is actually running (the isolated-world closure can't be read直接).
   // BUMP this whenever qwen.js changes in a way worth verifying live.
-  const QWEN_VER = "4.6.0";
+  const QWEN_VER = "4.7.0";
   function setVersionBeacon() {
     try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.setVersionBeacon", _e); }
   }
@@ -1037,7 +1037,7 @@ try {
 
   return {
     id: "qwen",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "Qwen",
     // DYNAMIC per selected model (see the capability section above). A getter so
     // the core always reads the CURRENT model's capability - it can change

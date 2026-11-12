@@ -1,15 +1,15 @@
-# ZeroScript MAX 4.6.0 — bridge-mediated planner, coder, checker
+# ZeroScript MAX 4.7.0 — bridge-mediated teams of two or more
 
 A Chrome/Edge extension connects open AI chat tabs to a local Python bridge and Roblox Studio's MCP server. **Team messages travel through bridge mailboxes, not through Roblox scripts or a shared website.** The bridge does not contain AI models and does not call model APIs.
 
 ## Install and start
 
 1. In Chrome/Edge 120+, open `chrome://extensions` / `edge://extensions`, enable Developer mode, and **Load unpacked → `zeroscript-extension-v2/`**. For an existing install, Reload the extension and refresh all AI tabs.
-2. On Windows, run **`python "ZeroScript Demo/ZeroScript-Free-1.5.5/start.py"`** (or `py -3` instead of `python`). It launches the bridge and a separate **ZeroScript Team Console** window (`team_console.py`) showing timestamped real events. Close any old bridge first: startup no longer kills port owners.
+2. On Windows, run **`python "ZeroScript Demo/ZeroScript-Free-1.5.5/start.py"`** (or `py -3` instead of `python`). It launches the bridge and prints the **joined agents and the bare team chat** in this window as it happens (sender, recipient, timestamp, message text). `start.py --status` prints the same snapshot and exits. On Windows a separate **ZeroScript Team Console** window (`team_console.py`) still shows timestamped real events. Close any old bridge first: startup no longer kills port owners.
 3. On macOS, run `ZeroScript Demo/ZeroScript-Free-1.5.5/MacOS_START.command`. Open another Terminal in that directory and run `python3 team_console.py` for the viewer.
-4. Open three signed-in AI chats. In the extension popup on each tab, use the same Team name (default `studio`), choose a different role, and click **Join active AI tab**. Example: Claude → planner; DeepSeek → coder; Gemini → checker. These are examples, not hard-coded role assignments.
-5. Click **Start all three team tabs** in the popup. Leave the tabs open. Role prompts are submitted concurrently; the planner receives its introduction invitation in that first prompt, avoiding a redundant model turn. Real introductions are authorized in order: **planner → coder → checker**. Starting `start.py` opens the viewer, not logged-in AI tabs or an unattended task; starting a team requires your explicit click.
-6. Give the **planner** your coding request. Its role is to plan and hand work to the coder using `team_send`; the checker independently checks the result. These are model instructions, not a deterministic workflow engine. Watch actual messages and outcomes in the console.
+4. Open **two or more** signed-in AI chats (three is the full planner/coder/checker set). In the extension popup on each tab, use the same Team name (default `studio`), choose a different role, and click **Join active AI tab**. Example: Claude → planner; DeepSeek → coder; Gemini → checker. These are examples, not hard-coded role assignments.
+5. Click **Start all joined team tabs (2 or more)** in the popup. Leave the tabs open. Role prompts are submitted concurrently; the first agent in the order receives its introduction invitation in that first prompt, avoiding a redundant model turn. Real introductions are authorized in the order of the roles that actually joined: **planner → coder → checker**. Starting `start.py` opens the viewer, not logged-in AI tabs or an unattended task; starting a team requires your explicit click.
+6. Give the **planner** your coding request — the extension relays your own words into the team so every agent works on the same task. Its role is to plan and hand work to the coder using `team_send`; the checker independently checks the result and sends defect lists back. These are model instructions, not a deterministic workflow engine. Watch actual messages and outcomes in the launcher window or the console.
 7. For Roblox work, open a place in Studio and enable **Studio as MCP Server** in Assistant Settings / Manage MCP Servers. Team-only communication does **not** require Studio. Roblox editing does.
 
 **Background tabs:** opting into a team permits background message submission and tool execution, unlike the normal single-agent visibility gate. Websites and browsers may throttle or reject background interaction. Bring a stalled tab forward. This has not been live-tested on all provider websites. Do not rely on an unattended team for destructive edits.
@@ -24,7 +24,7 @@ Only actual, acknowledged peer names are included; the wording depends on the pe
 
 > I am not directly communicating with the others try [concrete solutions]
 
-Solutions include joining all three roles, starting the team, checking the console, bringing a throttled tab forward, or reconnecting the bridge. A prompt cannot guarantee a model will follow the wording. The bridge supplies evidence rather than generating flattering or invented AI replies.
+Solutions include joining the other roles, starting all joined agents, checking the launcher window (it prints the chat), bringing a throttled tab forward, or reconnecting the bridge. A prompt cannot guarantee a model will follow the wording. The bridge supplies evidence rather than generating flattering or invented AI replies.
 
 Console event meanings:
 
@@ -35,16 +35,31 @@ Console event meanings:
 | `message` | A tab's parsed `team_send` command sent text through the bridge. |
 | `queued` | A mailbox has a message awaiting tab submission. |
 | `delivered` | The recipient extension acknowledged submission into its chat; not proof of understanding or a reply. |
+| `intro_nudge` | The coordinator re-asked a tab that was invited to introduce and stayed silent. It is a request, never a message the agent sent. |
+| `turn_skipped` | An introduction turn timed out; the team moved on. The late tab may still send as an ordinary message. |
+| `collab` | The coordinator moved the team to the next collaboration step (`plan` → `implement` → `review` → `fix`). It reacts to a real handoff. |
 | `stopped` / `left` | Relay paused, or a tab left/navigated to a different conversation. Already-running Studio operations are not undone. |
 | `role_violation` | A `planner` or `checker` tab attempted a Studio mutation (`execute_luau`, `multi_edit`, etc.) and was blocked (`[ROLE-BLOCKED]`). Only `coder` may mutate Studio. |
 
-### Enforced role boundaries (4.6.0)
+### Ordered collaboration (4.7.0)
 
-Unlike prompt-only instructions, 4.6.0 enforces role permissions in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
+The bridge coordinates the order, the models do the work:
 
-- **Planner** (`read-only + team_*`): inspects Studio (`inspect_instance`, `script_read`, `search_game_tree`, `get_studio_state`, `verify_fact`), designs the architecture, and hands plans to `coder` via `team_send`. Any `execute_luau` / `multi_edit` call is rejected with `ROLE VIOLATION`.
-- **Coder** (`full Studio read/write + team_*`): the **only** role allowed to create, edit, or execute Luau/instances in Roblox Studio; reports completed changes and evidence via `team_send`.
-- **Checker** (`read-only + Play/Stop verification + team_*`): reads scripts/instances, verifies behavior (`verify_fact`, `script_read`, `inspect_instance`, `start_stop_play`), and sends defect lists back to `coder` via `team_send` without editing code itself.
+1. **Introductions** — one role at a time, in the order of the roles that joined. A tab that stays silent is re-asked (40 s) and then skipped (90 s) so one dead tab cannot freeze the team.
+2. **plan** — the planner is asked for the plan **and reference code** and sends it to the coder.
+3. **implement** — the coder is asked to implement and to send the checker what it actually changed.
+4. **review** — the checker is asked to verify with read-only tools and to send the coder each defect with the exact fix.
+5. **fix** — the coder is asked to fix exactly those defects. The loop is bounded (3 rounds).
+
+The steps that need a missing role are skipped, so a two-agent planner+coder team runs *plan → implement* and a coder+checker team runs *build → review → fix*. Only real `team_send` messages move the team along; the coordinator never writes an agent's message for it.
+
+### Enforced role boundaries (4.6.0, unchanged in 4.7.0)
+
+Unlike prompt-only instructions, the role permissions are enforced in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
+
+- **Planner** (`read-only + team_*`): inspects Studio (`inspect_instance`, `script_read`, `search_game_tree`, `get_studio_state`, `verify_fact`), designs the architecture, and hands the coder a plan **with reference code** via `team_send`. Any `execute_luau` / `multi_edit` call is rejected with `ROLE VIOLATION`.
+- **Coder** (`full Studio read/write + team_*`): the **only** role allowed to create, edit, or execute Luau/instances in Roblox Studio; reports completed changes and evidence to the `checker` via `team_send`, and fixes what the checker reports.
+- **Checker** (`read-only + Play/Stop verification + team_*`): reads scripts/instances, verifies behavior (`verify_fact`, `script_read`, `inspect_instance`, `start_stop_play`), and sends defect lists **with the exact fix** back to `coder` via `team_send` without editing code itself.
 
 Introductions are **not** pre-written by the bridge. The console will show no fabricated `[Claude]: Hi...` / `[Gemini]: Nice to meet you...` conversation. It displays what the tabs actually send. Names identify website adapters; they do not certify the exact model/tier selected within that website.
 
@@ -106,7 +121,7 @@ python scripts/sync_copies.py --check
 After editing canonical files: `python scripts/sync_copies.py --write`. Tests use temporary bridge data and mocked MCP responses; they do not launch/kill Studio or execute project mutations. See [the repair notes](docs/REPAIR_NOTES.md) for what changed and what still needs live validation. Historical changelogs describe older versions, not current guarantees.
 
 ### Python launcher prerequisites
-`start.py --check` validates Python and websockets without launching anything. Install missing dependencies explicitly with `python -m pip install "websockets>=13,<16"` (use a virtual environment if your system requires it). Unlike the old batch launcher, it does not install Python, run pip during startup, or restart after crashes. A `.py` file cannot bootstrap a missing Python installation. On Windows it requests a separate communication window; on other systems the viewer shares the terminal unless you open it separately.
+`start.py --check` validates Python and websockets without launching anything. Install missing dependencies explicitly with `python -m pip install "websockets>=13,<16"` (use a virtual environment if your system requires it). Unlike the old batch launcher, it does not install Python, run pip during startup, or restart after crashes. A `.py` file cannot bootstrap a missing Python installation. On Windows it requests a separate communication window; on other systems the launcher prints the team chat itself, and `python3 team_console.py` gives the full viewer in its own terminal.
 
 ### Claude: what is actually tested
 Claude has a dedicated adapter and manifest entry. Local fixture tests are not proof of compatibility with your live account, rollout or browser. Reload the extension **and refresh existing Claude tabs** after updating. The toolbar needs an available chat composer; login, billing and error pages are not chat support. If it is missing, inspect extension errors and the tab console instead of assuming the bridge is connected.
@@ -124,7 +139,7 @@ Team events use `(Planner):[Claude]:`-style labels, with the actual sender name 
 The Claude toolbar now occupies its own sibling slot above the composer, not a child row inside its form. It wraps controls on narrow widths. A horizontal no-wrap host layout uses the shared floating fallback rather than changing Claude's layout. Mock DOM tests verify placement/remounting, not pixel-perfect behavior on the current live website.
 
 ## Relay and console reliability controls
-- If a required planner/coder/checker misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
+- If a joined agent (any role of the running team) misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
 - Large inboxes are submitted in bounded, whole-message chunks. Only messages included in the submitted chunk are acknowledged. A message too large for a provider's safe send budget pauses delivery instead of silently truncating it.
 - Filter the console with `python team_console.py --team studio --role coder --kind message --tail 20`. `--tail` limits the first matching history batch and then follows new events via 0 ms Condition long-poll (`?wait=1`); `--once` exits after a fetch; `--status` prints a one-shot team roster summary; `--json` outputs NDJSON. Use `--no-color` for plain text. Filtering affects only the viewer, never delivery.
 - The popup reports foreground/background state and whether a draft is present (not its content). Tab-control requests have a bounded wait and are never automatically retried after a timeout.

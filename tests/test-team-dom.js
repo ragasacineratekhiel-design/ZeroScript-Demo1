@@ -8,7 +8,7 @@ const { JSDOM, VirtualConsole } = require("jsdom");
 const root = path.join(__dirname, "..", "zeroscript-extension-v2");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 
-async function scenario({ sendWorks = true, hidden = false, deliverInbox = false, largeInbox = false, roleViolation = false, role = "planner" } = {}) {
+async function scenario({ sendWorks = true, hidden = false, deliverInbox = false, largeInbox = false, roleViolation = false, role = "planner", userRequest = "" } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (e) => errors.push(e));
@@ -31,7 +31,7 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
   };
   const items = () => [...w.document.querySelectorAll("[data-role]")];
   w.fakeProvider = {
-    id: "claude", displayName: "Claude", version: "4.6.0",
+    id: "claude", displayName: "Claude", version: "4.7.0",
     timings: { RESPONSE_TIMEOUT_MS: 10000, STABLE_MS: 200, WARMUP_MS: 200, REASON_NOREPLY_MS: 500 },
     init() {}, snapshot: () => ({}), getEditor: () => editor, editorText: () => editor.value,
     chatIsEmpty: () => items().length === 0, isFreshChat: () => items().length === 0,
@@ -160,6 +160,25 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
     }
     assert.ok(!requests.some((m) => m.type === "team_leave"), "/new -> /chat/test landing redirect must NOT leave the team");
     assert.ok(!requests.some((m) => m.type === "list_tools"), "team startup does not wait for Studio catalogue");
+    if (userRequest) {
+      // The user types a request in THIS tab. It must be relayed into the
+      // team so the other agents work on the SAME task - and the extension's
+      // own injections must never be relayed back.
+      const typed = w.document.createElement("div");
+      typed.dataset.role = "user";
+      typed.textContent = userRequest;
+      w.document.getElementById("messages").appendChild(typed);
+      const relayDeadline = Date.now() + 6000;
+      while (!requests.some((m) => m.type === "team_send" && m.kind === "request") && Date.now() < relayDeadline) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      const relay = requests.find((m) => m.type === "team_send" && m.kind === "request");
+      assert.ok(relay, "the user's own request must be relayed into the team");
+      assert.equal(relay.to, "all");
+      assert.match(relay.text, /build a tycoon game/);
+      assert.ok(!requests.some((m) => m.type === "team_send" && /System note: Bridge team inbox/.test(m.text || "")),
+        "the extension must never relay its own inbox injection back into the team");
+    }
     await message({ type: "zs-team-stop" });
     await new Promise((r) => setTimeout(r, 120));
     assert.equal(errors.length, 0, errors.map(String).join("\n"));
@@ -175,5 +194,6 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
   await scenario({ role: "planner", roleViolation: true });
   await scenario({ role: "checker", roleViolation: true });
   await scenario({ sendWorks: false });
+  await scenario({ deliverInbox: true, userRequest: "build a tycoon game" });
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

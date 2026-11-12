@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-const VERSION = "4.6.0";
+const VERSION = "4.7.0";
 const KOFI_URL = "https://ko-fi.com/sebattfg";
 const SUPPORTED_HOSTS = [
   "chat.deepseek.com", "deepseek.com", "chatgpt.com", "chat.openai.com",
@@ -141,7 +141,8 @@ async function teamAction(type) {
       r=await chrome.tabs.sendMessage(tab.id,{type:'zs-team-'+type,role:document.getElementById('team-role').value,team});
     } else r=await new Promise(resolve=>chrome.runtime.sendMessage({type:'team_'+type,team},resolve));
     const joinedRole=r?.self?.role||document.getElementById('team-role').value;
-    result.textContent=r?.ok?(type==='join'?`Joined as ${joinedRole}. Join the other two roles, then Start.`:type==='leave'?'Left this tab. Rejoin with a new role when ready.':r.note||r.phrase||'Team stopped.'):(r?.error||'No response');
+    result.textContent=r?.ok?(type==='join'?`Joined as ${joinedRole}. Join the other agent tab(s), then press Start team (a team needs at least two).`:type==='leave'?'Left this tab. Rejoin with a new role when ready.':r.note||r.phrase||'Team stopped.'):(r?.error||'No response');
+    if(r?.members?.length)result.textContent+='\nJoined agents: '+r.members.join(', ');
     if(r?.results?.some(x=>!x.ok))result.textContent+='\n'+r.results.filter(x=>!x.ok).map(x=>`Tab ${x.tab}: ${x.error}`).join('\n');
   }catch(e){result.textContent=String(e.message||e);}
   finally{buttons.forEach(b=>b.disabled=false);}

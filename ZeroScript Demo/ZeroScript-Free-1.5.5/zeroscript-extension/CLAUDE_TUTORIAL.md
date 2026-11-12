@@ -1,4 +1,4 @@
-# ZeroScript MAX 4.6.0 — Claude & Multi-AI Setup Guide
+# ZeroScript MAX 4.7.0 — Claude & Multi-AI Setup Guide
 
 This guide covers connecting **Claude (`claude.ai`)** — either solo or as part of a 3-AI **Planner / Coder / Checker** bridge team — to Roblox Studio.
 
@@ -9,7 +9,7 @@ This guide covers connecting **Claude (`claude.ai`)** — either solo or as part
    - **Windows:** `py -3 start.py` (opens the bridge + `ZeroScript Team Console`)
    - **macOS / Linux:** `./MacOS_START.command` (and optional `python3 team_console.py` in a second terminal)
 3. In **Roblox Studio**: open a place → **Assistant → Manage MCP Servers → Enable Studio as MCP Server**.
-4. In **Chrome / Edge**: open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2/` (card must read **4.6.0**).
+4. In **Chrome / Edge**: open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2/` (card must read **4.7.0**).
 
 ## 2. Solo Agent Mode on Claude
 
@@ -20,15 +20,16 @@ This guide covers connecting **Claude (`claude.ai`)** — either solo or as part
 2. Click **`▶ Start Roblox agent`** on a fresh chat. `ZSClaudeConnector` verifies both the bridge and Studio in parallel (`Promise.all` with short TTL cache) and boots the session.
 3. Even when Claude redirects from `/new` to `/chat/<uuid>` on the first turn, 4.6.0's hostname-aware `isLandingKey()` keeps the running loop and session pinned cleanly without dropping the first command.
 
-## 3. Bridge Team Mode (Planner → Coder → Checker)
+## 3. Bridge Team Mode (two or more agents)
 
-1. Open three different AI tabs (for example: **Claude** = `planner`, **DeepSeek** = `coder`, **Gemini** = `checker`).
+1. Open **two or more** different AI tabs (the full set: **Claude** = `planner`, **DeepSeek** = `coder`, **Gemini** = `checker`).
 2. In the ZeroScript popup on each tab, keep the same **Team** name (`studio`), select that tab's role, and click **Join active AI tab**. Check the live `#team-roster` line in the popup.
-3. Click **Start all three team tabs**. Role prompts submit concurrently and team messages route over WebSocket + 0 ms Condition long-poll (`team_console.py`).
-4. **Enforced role boundaries in 4.6.0:**
-   - **Planner** (`read-only`): inspects Studio and sends specs via `team_send`. Any `execute_luau` / `multi_edit` attempt is blocked (`ROLE VIOLATION`).
+3. Click **Start all joined team tabs (2 or more)**. Role prompts submit concurrently and team messages route over WebSocket + 0 ms Condition long-poll. `start.py` prints the joined agents and the bare chat live; `team_console.py` adds UTC timestamps.
+4. **Ordered chat (4.7.0):** the bridge introduces one role at a time in the order of the roles that joined, re-asks a silent tab, and then drives **plan → implement → review → fix** (planner sends the plan **with reference code**, coder sends the evidence, checker sends the defects **with the exact fix**).
+5. **Enforced role boundaries (unchanged):**
+   - **Planner** (`read-only`): inspects Studio and sends the plan + reference code via `team_send`. Any `execute_luau` / `multi_edit` attempt is blocked (`ROLE VIOLATION`).
    - **Coder** (`mutates Studio`): the **only** role permitted to run `execute_luau`, `multi_edit`, and Studio write tools.
-   - **Checker** (`read-only`): audits scripts/instances (`script_read`, `inspect_instance`, `verify_fact`, `start_stop_play`) and sends defect reports back to `coder` via `team_send`.
+   - **Checker** (`read-only`): audits scripts/instances (`script_read`, `inspect_instance`, `verify_fact`, `start_stop_play`) and sends defect reports with the exact fix back to `coder` via `team_send` — it never edits.
 
 ## 4. Truthful Transport & `/truth` Verification (No Fake Claims)
 

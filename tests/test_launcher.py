@@ -88,5 +88,79 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(launcher.entrypoint(),0)
             call.assert_called_once()
 
-    def test_launcher_version_is_4_6_0(self):
-        self.assertEqual(launcher.VERSION, '4.6.0')
+    def test_launcher_version_is_4_7_0(self):
+        self.assertEqual(launcher.VERSION, '4.7.0')
+
+    def test_format_chat_shows_the_bare_message(self):
+        line = launcher.format_chat({
+            'timestamp': '2026-11-12T10:11:12.345+00:00', 'kind': 'message',
+            'name': 'Claude', 'role': 'planner', 'recipient': 'coder', 'handoff': 'plan',
+            'text': 'Build StageService like this',
+        })
+        self.assertIn('Claude (planner) -> coder', line)
+        self.assertIn('[PLAN]', line)
+        self.assertIn('Build StageService like this', line)
+
+    def test_status_shows_joined_members_and_the_bare_chat(self):
+        chat = {
+            'ok': True,
+            'members': {'studio': [
+                {'id': 'a', 'name': 'Claude', 'role': 'planner', 'ready': True},
+                {'id': 'b', 'name': 'DeepSeek', 'role': 'coder', 'ready': False},
+            ]},
+            'messages': [{'seq': 3, 'timestamp': '2026-11-12T10:11:12.345+00:00', 'kind': 'message',
+                          'name': 'Claude', 'role': 'planner', 'recipient': 'coder', 'handoff': 'plan',
+                          'text': 'Build the StageService like this'}],
+        }
+        summary = {'ok': True, 'teams': {'studio': {'active': True, 'introduction_order': ['planner', 'coder'],
+                                                    'phase': 'plan', 'members': []}}}
+        events = {'ok': True, 'events': [{'kind': 'message'}], 'cursor': 3}
+
+        def fake_get(path):
+            if path.startswith('/api/team/chat'):
+                return chat
+            if path.startswith('/api/team/summary'):
+                return summary
+            if path.startswith('/api/team/events'):
+                return events
+            return None
+
+        with patch.object(launcher, 'bridge_health', return_value={'ok': True}), \
+                patch.object(launcher, 'http_get', side_effect=fake_get), \
+                patch('builtins.print') as printed:
+            self.assertEqual(launcher.status_summary(), 0)
+        text = '\n'.join(str(call) for call in printed.call_args_list)
+        self.assertIn('Claude (planner, ready)', text)
+        self.assertIn('DeepSeek (coder, joined)', text)
+        self.assertIn('planner -> coder', text)
+        self.assertIn('Build the StageService like this', text)
+
+    def test_team_watch_prints_messages_and_joins(self):
+        events = [
+            {'seq': 1, 'kind': 'joined', 'name': 'Claude', 'role': 'planner', 'team': 'studio',
+             'timestamp': '2026-11-12T10:00:00.000+00:00', 'text': 'Claude joined'},
+            {'seq': 2, 'kind': 'message', 'name': 'Claude', 'role': 'planner', 'recipient': 'coder',
+             'handoff': 'intro', 'timestamp': '2026-11-12T10:00:01.000+00:00', 'text': 'Hi, I am the planner'},
+        ]
+
+        def fake_get(path, **_kwargs):
+            if path.startswith('/api/team/chat'):
+                return {'ok': True, 'members': {}, 'messages': []}
+            if path.startswith('/api/team/summary'):
+                return {'ok': True, 'teams': {}}
+            if 'wait=1' in path:
+                return {'ok': True, 'events': events, 'cursor': 2}
+            return {'ok': True, 'events': [], 'cursor': 0}
+
+        stop = __import__('threading').Event()
+        with patch.object(launcher, 'bridge_health', return_value={'ok': True}), \
+                patch.object(launcher, 'http_get', side_effect=fake_get), \
+                patch('builtins.print') as printed:
+            watcher = __import__('threading').Thread(target=launcher.watch_team, args=(stop,), daemon=True)
+            watcher.start()
+            __import__('time').sleep(0.4)
+            stop.set()
+            watcher.join(timeout=2)
+        text = '\n'.join(str(call) for call in printed.call_args_list)
+        self.assertIn('Claude (planner) joined team studio', text)
+        self.assertIn('Hi, I am the planner', text)

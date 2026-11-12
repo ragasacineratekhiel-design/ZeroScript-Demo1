@@ -765,7 +765,7 @@ try {
 
   return {
     id: "meta",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "Meta AI",
     // Meta's composer accepts image uploads (hidden multi-file input → inline
     // Lexical preview → uploaded on send; see attachImages). Vision-capable, so
@@ -782,7 +782,7 @@ try {
     // Turn elements are not virtualized away, so assistantCount() reliably
     // increases for every reply - the core's watcher uses this.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-meta-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-meta-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,

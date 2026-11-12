@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ZeroScript Bridge 4.6.0: authenticated loopback WebSocket/HTTP MCP proxy.
+# ZeroScript Bridge 4.7.0: authenticated loopback WebSocket/HTTP MCP proxy.
 # 4.6.0: team_* over WS (not just HTTP), coder-only mutation enforcement,
 # /api/verify ground-truth reads for /truth, team-event push to WS clients,
 # long-poll team events, cached Studio probes.
+# 4.7.0: /api/team/chat exposes the BARE transcript (the real messages the
+# agents sent + who joined) so start.py can show the chat instead of counters;
+# team sends accept an explicit kind so the extension can relay the user's own
+# task into the team without pretending an agent spoke.
 # Studio mutations are never automatically hedged or replayed. Batches are
 # sequential, non-transactional and limited to 24 calls. The team hub stores
 # bounded in-memory mailboxes and delivery evidence; it does not call AI APIs.
@@ -83,7 +87,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="4.6.0"
+BRIDGE_VERSION="4.7.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -975,6 +979,14 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             if qs.get("wait")==["1"]:
                 self._send_json(team_hub.wait_events(since, timeout=5.0),origin=origin); return
             self._send_json(team_hub.event_log(since),origin=origin); return
+        if path=="/api/team/chat":
+            # 4.7.0: the BARE transcript - the real messages agents sent, plus
+            # who joined. start.py renders this so the user can SEE the chat
+            # instead of guessing whether the agents ever talked.
+            qs=parse_qs(parsed.query)
+            tname=(qs.get("team") or [None])[0]
+            limit=int((qs.get("limit") or ["50"])[0] or 50)
+            self._send_json(team_hub.chat(tname,limit),origin=origin); return
         if path in ("/","/health","/api/health"):
             self._send_json({"ok":True,"version":BRIDGE_VERSION,"port":PORT,"http_port":PORT_HTTP,"mcp_alive":mgr.any_alive(),"status":"ok"},origin=origin)
             return
@@ -1105,7 +1117,11 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             elif action=="inbox": res=team_hub.inbox(member)
             elif action=="ack": res=team_hub.ack(member,data.get("ids"))
             elif action=="send":
-                res=team_hub.send(member,data.get("to","all"),data.get("text"),data.get("message_id"))
+                # 4.7.0: an explicit kind is only accepted from the extension
+                # (the user's own task relayed into the team). The AI-facing
+                # virtual team_send tool never sets one, so an agent cannot use
+                # it to skip the introduction order.
+                res=team_hub.send(member,data.get("to","all"),data.get("text"),data.get("message_id"),data.get("kind"))
                 metrics.team_messages+=1
             elif action=="start": res=team_hub.start(data.get("team","studio"))
             elif action=="stop": res=team_hub.stop(data.get("team","studio"))
@@ -1366,7 +1382,7 @@ async def handler(ws):
                         elif action=="inbox": res=team_hub.inbox(member)
                         elif action=="ack": res=team_hub.ack(member,msg.get("ids"))
                         elif action=="send":
-                            res=team_hub.send(member,msg.get("to","all"),msg.get("text"),msg.get("message_id"))
+                            res=team_hub.send(member,msg.get("to","all"),msg.get("text"),msg.get("message_id"),msg.get("kind"))
                             metrics.team_messages+=1
                         elif action=="start": res=team_hub.start(msg.get("team","studio"))
                         elif action=="stop": res=team_hub.stop(msg.get("team","studio"))

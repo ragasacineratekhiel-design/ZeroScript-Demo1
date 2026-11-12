@@ -214,6 +214,12 @@
   const A = {
     running: false,
     stop: false,
+    // 4.7.0: every text THIS extension submitted to the chat, normalised. The
+    // team relay uses it to tell the USER's own message apart from the
+    // extension's injections - only the user's request is relayed to the
+    // other agents, never our own prompts (that would loop).
+    sentTexts: [],
+    sentPrefixes: [],
     // stopping: the user clicked Stop and we are winding the loop down. Set the
     // instant the button is clicked so the bar can show immediate "Stopping…"
     // feedback and keep the button steady (no flicker) until the loop's finally
@@ -433,6 +439,20 @@
 
   async function submitAndGetBase(text, images) {
     captureSendToken();
+    // 4.7.0: remember what WE submitted so the team relay can recognise the
+    // user's own message and never relay our own injections back into it.
+    try {
+      const norm = String(text || "").replace(/\s+/g, " ").trim();
+      if (norm) {
+        A.sentTexts.push(norm);
+        while (A.sentTexts.length > 40) A.sentTexts.shift();
+        // The rendered turn can carry a chip label ("Starting Up") in front of
+        // our text, so the exact string is not enough to recognise our own
+        // turn - the leading 80 characters are.
+        A.sentPrefixes.push(norm.slice(0, 80));
+        while (A.sentPrefixes.length > 40) A.sentPrefixes.shift();
+      }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.submitAndGetBase.sentTexts", _e); }
     // Peer messages that arrived since the last turn are prepended here, so the
     // OTHER AI's words are in this AI's context for exactly one turn. Empty
     // string when no peer spoke, so a solo run is byte-identical to before.
@@ -1193,7 +1213,7 @@
     return A.toolList;
   }
 
-  const team = {joined:false, active:false, role:null, name:P.displayName, team:"studio", session:crypto.randomUUID(), chatKey:null, busy:false, status:null, polling:false, pendingWake:false};
+  const team = {joined:false, active:false, role:null, name:P.displayName, team:"studio", session:crypto.randomUUID(), chatKey:null, busy:false, status:null, polling:false, pendingWake:false, relayedTexts:new Set(), relayFailures:new Map()};
   function isLandingKey(k) {
     if (!k) return true;
     const s = String(k).trim().replace(/^[a-z0-9.-]+(?::\d+)?(?=\/)/i, "");
@@ -1210,11 +1230,58 @@
     if(r.ok && r.self)team.status=r;
     return (r.ok?`Output of '${call.tool}':\n`:"ERROR: ")+JSON.stringify(r);
   }
+  // 4.7.0: relay the USER's own request to the rest of the team. The task
+  // only exists in the tab the user typed it in; without this the other agents
+  // sit idle waiting for a task nobody sent them. The relay carries the
+  // user's own words, labelled as a request - it is never an invented agent
+  // message, and our own injections are never relayed back (that would loop).
+  async function relayUserRequest() {
+    if(!team.active||!team.joined)return;
+    let users=[];
+    try{ users=P.allItems().filter(P.isUserItem); }catch(_e){ return; }
+    const pending=[];
+    for(const item of users.slice(-5)){
+      let text="";
+      try{ text=String(P.itemText(item)||"").replace(/\s+/g," ").trim(); }catch(_e){ continue; }
+      if(!text||text.length<4)continue;
+      // our own injections (role prompt, inbox delivery, tool feedback) are
+      // never relayed back into the team
+      if(A.sentTexts.includes(text))continue;
+      if(A.sentPrefixes.some((p)=>p.length>=16&&text.includes(p)))continue;
+      if(team.relayedTexts.has(text))continue;  // already shared
+      pending.push(text);
+    }
+    if(!pending.length)return;
+    let shared=0;
+    for(const text of pending){
+      team.relayedTexts.add(text);
+      while(team.relayedTexts.size>20){
+        const oldest=team.relayedTexts.values().next().value;
+        team.relayedTexts.delete(oldest);
+        team.relayFailures.delete(oldest);
+      }
+      const r=await bg({type:"team_send",to:"all",text:`[USER REQUEST from ${team.name}] ${text}`,kind:"request"});
+      if(!r||!r.ok){
+        // Retry a couple of times, then stop: a permanent refusal (no live
+        // peer, team stopped) must not turn into a send loop every 1.5s.
+        const tries=(team.relayFailures.get(text)||0)+1;
+        team.relayFailures.set(text,tries);
+        if(tries<3)team.relayedTexts.delete(text);
+        diag("team.relay.failed",{error:String((r&&r.error)||"unknown"),tries});
+        break;
+      }
+      team.relayFailures.delete(text);
+      shared++;
+      diag("team.relay.sent",{chars:text.length});
+    }
+    if(shared)ui.toast(`Task shared with the other agents — ${shared} message(s) relayed into the team.`);
+  }
+
   async function joinTeam(role, room) {
     const r=await bg({type:"team_register",role,team:room||"studio",session_id:team.session});
     if(!r.ok)throw new Error(r.error);
     team.joined=true;team.role=role;team.team=room||"studio";team.status=r;
-    ui.toast(`Joined ${team.team} as ${role}. Start the team from the popup after all three tabs join.`);
+    ui.toast(`Joined ${team.team} as ${role}. Press Start team once the other tabs have joined (a team needs at least two).`);
     return r;
   }
   async function startTeam() {
@@ -1255,6 +1322,9 @@
     try {
       const r=await bg({type:"team_status"});if(!r.ok)return;
       team.status=r;
+      // 4.7.0: share the user's own request with the other agents BEFORE the
+      // mailbox is drained, so a task typed in one tab reaches the whole team.
+      if(team.active)await relayUserRequest();
       if(!r.active){if(team.active){if(A.running)stopLoop();if(r.stop_reason)ui.toast(r.stop_reason);}team.active=false;window.__zsTeamActive=false;return;}
       if(!team.active || !r.self.ready || A.running || A.starting || A.injecting || A.userStopped || P.isGenerating() || (P.editorText()||"").trim())return;
       const inbox=await bg({type:"team_inbox"});if(!inbox.ok||!inbox.messages.length)return;

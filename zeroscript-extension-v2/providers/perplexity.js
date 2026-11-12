@@ -16,7 +16,7 @@ const ZSProvider = (() => {
   Object.defineProperty(P, "id", { get: () => META.id });
   Object.defineProperty(P, "displayName", { get: () => META.displayName });
   P.promptExtra = "- PERPLEXITY: You may see search citations — ignore them for ZeroScript tasks. For game settings (Workspace/Lighting etc) use execute_luau directly, don't search. In Bridge Team mode, strictly obey your assigned planner/coder/checker role and hand off via team_send.";
-  P.version = "4.6.0";
+  P.version = "4.7.0";
   // Re-apply the stability patch as the composer mounts (the alias files are
   // loaded before the site has finished painting its first frame).
   try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch (_e) { globalThis.ZSSafe?.seen?.("perplexity._a", _e); } }; _a(); if (typeof requestAnimationFrame === "function") requestAnimationFrame(_a); setTimeout(_a, 50); setTimeout(_a, 250); }catch (_e) { globalThis.ZSSafe?.seen?.("perplexity._a", _e); }
