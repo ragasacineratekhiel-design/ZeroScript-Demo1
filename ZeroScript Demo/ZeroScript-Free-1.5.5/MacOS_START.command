@@ -36,10 +36,11 @@ pause_and_exit() {
 }
 
 echo
-echo "  === ZeroScript Bridge v2.2.0 ULTRA+ ==="
-echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary | Studio Full Access | All 8 Agents Super-Stable"
+echo "  === ZeroScript Bridge v3.1.0 TEAM HUB ==="
+echo "  WS 17613 + HTTP 17614 + SSE/Batch/Binary | Team Hub + Console | /truth ground truth"
+echo "  Console ready: type 'help' here. Team console: run 'python3 team.py' in another window."
 echo
-log "===== MacOS_Start.command v2.2.0 launched ====="
+log "===== MacOS_Start.command v3.1.0 launched ====="
 
 # --- 0. bridge.py must be next to us ---------------------------------------
 # If the user ran this out of a half-extracted download, bridge.py is missing
@@ -127,6 +128,9 @@ echo "  ##   minimize this window and leave it running.           ##"
 echo "  ############################################################"
 echo
 log "Launching bridge.py with $PY"
+
+# v3.1: enable the interactive bridge console (help/status/tools/truth/hub/say)
+export ZS_CONSOLE=1
 
 # Run bridge with auto-restart on non-zero exit (like start.bat)
 while true; do

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX transport abstraction v3.0.0
+// core/transport.js — ZeroScript MAX transport abstraction v3.1.0
 // Content-script thin client to background.js (service worker) with MAX features:
-// coalescing, cache, retry, metrics, batch, webtransport hedge.
-// All GUIs/colors untouched — pure logic MAX.
-// All GUIs/colors untouched — this is pure logic.
+// coalescing, cache, retry, metrics, batch, team hub, ground truth.
+// v3.1: hubSend/hubRead/setRole/truth routes + tighter caches (450ms) for
+// snappier Studio-attach reads. All GUIs/colors untouched — pure logic.
 (() => {
   "use strict";
   const ZS_Transport = (() => {
-    const CACHE_MS = 600; // MAX 600ms — tighter for instant Studio attach
+    const CACHE_MS = 450; // MAX 450ms — tighter for instant Studio attach
     const _cache = new Map();
     const _inflight = new Map();
 
@@ -45,8 +45,8 @@
       return p;
     }
 
-    async function status(){ return _bg({type:"status"}, {cacheTtl:120}); } // MAX 120ms
-    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:400}); } // MAX 400ms
+    async function status(){ return _bg({type:"status"}, {cacheTtl:90}); } // MAX 90ms
+    async function listTools(force=false){ return _bg({type:"list_tools", force}, {cacheTtl: force?0:350}); } // MAX 350ms
     async function callTool(name, args, timeout=120000){
       return _bg({type:"call_tool", name, arguments:args, timeout}, {retry:2});
     }
@@ -58,8 +58,13 @@
     }
     async function metrics(){ return _bg({type:"metrics"}, {cacheTtl:600}); }
     async function ping(){ return _bg({type:"ping"}, {cacheTtl:0}); }
+    // v3.1 team hub + ground truth
+    async function hubSend(from, kind, text, role, to){ return _bg({type:"hub_send", from, kind, text, role, to}, {retry:1}); }
+    async function hubRead(since){ return _bg({type:"hub_read", since}, {retry:1}); }
+    async function setRole(agent, role){ return _bg({type:"set_role", agent, role}, {retry:1}); }
+    async function truth(){ return _bg({type:"truth"}, {retry:1}); }
 
-    return { status, listTools, callTool, callBatch, metrics, ping };
+    return { status, listTools, callTool, callBatch, hubSend, hubRead, setRole, truth, metrics, ping };
   })();
   try{ window.ZS_Transport=ZS_Transport; }catch{}
   if(typeof self!=='undefined') try{ self.ZS_Transport=ZS_Transport; }catch{}

@@ -359,6 +359,17 @@ function handleBridgeMessage(msg){
   if(msg.type==="server_changed"){ resolvePending(msg.id,{ok:!!msg.ok, error:msg.error, restarting:!!msg.restarting}); return; }
   if(msg.type==="status_update"){ if(typeof msg.studio==='boolean') studioConnected=msg.studio; broadcastStatus(); return; }
   if(msg.type==="metrics"){ resolvePending(msg.id,msg); return; }
+  // v3.1: resolve the hub/truth/role round-trips (without these, a WS hub_send
+  // waited for the 8s timeout before the HTTP fallback fired).
+  if(msg.type==="hub_ack"){ resolvePending(msg.id,{ok:true,message:msg.message}); return; }
+  if(msg.type==="hub_error"){ resolvePending(msg.id,{ok:false,error:msg.error}); return; }
+  if(msg.type==="hub_msgs"){ resolvePending(msg.id,{ok:true,messages:msg.messages||[],state:msg.state}); return; }
+  if(msg.type==="role_changed"){ resolvePending(msg.id,{ok:msg.ok!==false,error:msg.error,roles:msg.roles}); return; }
+  if(msg.type==="truth"){ resolvePending(msg.id,{ok:true,...msg}); return; }
+  if(msg.type==="hub_msg"){ // v3.1 team hub — fan out to popup/extension pages
+    try{ chrome.runtime.sendMessage({type:'zs-hub-msg', message:msg}).catch(()=>{}); }catch{}
+    return;
+  }
   if(msg.type==="error"){ resolvePending(msg.id,{ok:false, error:msg.error}); return; }
 }
 function resolvePending(id,value){ const p=pending.get(id); if(!p) return; clearTimeout(p.timer); pending.delete(id); p.resolve(value); // also clear coalesce entry if any
@@ -405,15 +416,39 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       case "call_tool":{
         const name=msg.name, args=msg.arguments||{}, timeout=msg.timeout||120000;
         const key=coalesceKey(name,args);
-        if(inflightCoalesce.has(key)){ const prev=await inflightCoalesce.get(key); sendResponse(prev); break; }
+        if(inflightCoalesce.has(key)){ const prev=await inflightCoalesce.get(key); sendResponse(prev||{ok:false,error:'coalesce miss'}); break; }
         const p=transportCall(name,args,timeout);
-        inflightCoalesce.set(key,{id: -1});
-        // store promise for coalesce (simplified: no second pending race)
+        // v3.1 fix: store the REAL promise (was a {id:-1} stub, so a duplicate
+        // caller got garbage instead of the in-flight result).
+        inflightCoalesce.set(key,p);
         try{
           const r=await p;
           sendResponse(r);
         }finally{ inflightCoalesce.delete(key); }
         break;
+      }
+      case "hub_send":{ // v3.1 team hub — role-checked message post
+        const body={from:msg.from||'extension', kind:msg.kind||'msg', text:msg.text||'', role:msg.role, to:msg.to||'*'};
+        let r=await sendWS({type:'hub_send', ...body}, 8000).catch(()=>({ok:false}));
+        if(!r || r.ok===false) r=await httpPost('/api/hub', body, 8000);
+        sendResponse(r&&r.message!==undefined?r:(r||{ok:false})); break;
+      }
+      case "hub_read":{ // v3.1 team hub — pull messages after an id
+        const since=Number(msg.since||0)||0;
+        let r=await sendWS({type:'hub_read', since, limit:msg.limit||50}, 8000).catch(()=>({ok:false}));
+        if(!r || r.ok===false) r=await httpGet(`/api/hub?since=${since}&limit=${msg.limit||50}`, 8000);
+        sendResponse(r||{ok:false}); break;
+      }
+      case "set_role":{ // v3.1 team roles — mirror role state to the hub
+        const body={agent:msg.agent||'extension', role:msg.role||'coder'};
+        let r=await sendWS({type:'set_role', ...body}, 8000).catch(()=>({ok:false}));
+        if(!r || r.ok===false) r=await httpPost('/api/role', body, 8000);
+        sendResponse(r||{ok:false}); break;
+      }
+      case "truth":{ // v3.1 ground truth — live-verified facts only
+        let r=await sendWS({type:'truth'}, 10000).catch(()=>({ok:false}));
+        if(!r || r.ok===false || r.type!=='truth') r=await httpGet('/api/truth', 10000);
+        sendResponse(r&&r.type==='truth'?{ok:true,...r}:(r||{ok:false})); break;
       }
       case "call_batch":{
         // new: batch multiple tools in one round-trip

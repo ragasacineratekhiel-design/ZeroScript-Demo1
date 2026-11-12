@@ -108,3 +108,34 @@ ok("no dsml false positive on prose",
    !ZSParse.DSML_RE.test("I considered the DSML invoke and parameter tags, but used JSON instead."));
 ok("no dsml false positive on a real command",
    !ZSParse.DSML_RE.test('{"command": "script_read", "params": {"target_file": "x"}}'));
+
+// ── v3.1: team roles + /truth slash commands ──────────────────────────────
+// Role tags travel with the call (the executor enforces planner/coder/checker
+// discipline on them), and /truth-style slash commands map to REAL commands so
+// "the AI using /truth" can no longer be an unverified claim.
+
+const roleCall = ZSParse.parseToolCalls('{"command":"execute_luau","role":"planner","params":{"code":"###LUA###\nreturn 1\n###END_LUA###"}}');
+ok("role tag extracted from envelope", roleCall.length === 1 && roleCall[0].role === "planner");
+ok("role normalises to lowercase", ZSParse.normalizeCall({command:"x", role:"CODER"}).role === "coder");
+ok("no role tag stays undefined", paramless[0].role === undefined);
+
+const slashTruth = ZSParse.parseToolCalls("Sure — checking now:\n/truth");
+ok("/truth maps to truth command", slashTruth.length === 1 && slashTruth[0].tool === "truth");
+
+const slashTeam = ZSParse.parseToolCalls("/team the plan is ready for the coder");
+ok("/team maps to team_msg", slashTeam.length === 1 && slashTeam[0].tool === "team_msg" && slashTeam[0].arguments.kind === "msg");
+
+const slashPlan = ZSParse.parseToolCalls("/plan build the pet system first");
+ok("/plan maps to team_msg plan (role planner)", slashPlan.length === 1 && slashPlan[0].arguments.kind === "plan" && slashPlan[0].arguments.role === "planner");
+
+const slashCheck = ZSParse.parseToolCalls("/check SaveService missing pcall on GetAsync");
+ok("/check maps to team_msg check (role checker)", slashCheck.length === 1 && slashCheck[0].arguments.kind === "check" && slashPlan[0].arguments.role === "planner");
+
+ok("/truth mid-prose is NOT a command", ZSParse.hasToolSignature("Use /truth to verify things about your project.") === false);
+ok("slash command counts as tool signature", ZSParse.hasToolSignature("Running the check now:\n/truth") === true);
+ok("slash command has command shape", ZSParse.hasCommandShape("/team go ahead") === true);
+ok("slash chip name", ZSParse.toolNameFromText("/truth") === "truth");
+
+// JSON envelope still wins over a stray slash mention
+const jsonWins = ZSParse.parseToolCalls('{"command":"list_commands"}\n/truth');
+ok("json command preferred over slash", jsonWins.length === 1 && jsonWins[0].tool === "list_commands");

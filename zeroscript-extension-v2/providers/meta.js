@@ -92,7 +92,7 @@ const ZSProvider = (() => {
   // Meta streams with a hard stop-button signal for the WHOLE generation (incl.
   // the "Réflexion" reasoning phase), so idle windows can be tight (like Gemini).
   const timings = {
-    GEN_IDLE_MS: 1500,
+    GEN_IDLE_MS: 1200, // v3.1: snappier completion detection
     REASON_IDLE_MS: 12000,
     WARMUP_MS: 45000,
     REASON_NOREPLY_MS: 90000,
@@ -747,6 +747,11 @@ const ZSProvider = (() => {
   return {
     id: "meta",
     displayName: "Meta AI",
+    // v3.1: team-role + /truth ground-truth discipline rides on the system prompt.
+    promptExtra:
+      "- TEAM ROLES (ENFORCED): planner plans ONLY and never runs write commands; coder is the ONLY role that writes/changes code; " +
+      "checker verifies and REPORTS but never edits — the coder makes the changes. Switch with {\"command\":\"set_role\",\"params\":{\"role\":\"planner|coder|checker\"}} and hand off via team_msg (kind plan/code/check/handoff).\n" +
+      "- TRUTH: writing /truth or running {\"command\":\"truth\"} executes the GROUND-TRUTH command (live Studio probe + real executed-tool ledger). Never present unverified claims as facts — label them \"not verified\".",
     // Meta's composer accepts image uploads (hidden multi-file input → inline
     // Lexical preview → uploaded on send; see attachImages). Vision-capable, so
     // screen_capture is exposed (main.js BLOCKED_TOOLS gate). The send-with-image

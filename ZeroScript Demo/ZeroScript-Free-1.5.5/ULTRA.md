@@ -1,6 +1,16 @@
-# ZeroScript ULTRA v2.0.0 — Ultra-Fast Middle Layer
+# ZeroScript ULTRA v2.0.0 → v3.1.0 TEAM HUB — Ultra-Fast Middle Layer
 
 > **All logic upgraded. Designs, GUIs, colors untouched.**
+
+## v3.1.0 TEAM HUB additions (2026-11-12)
+
+| Feature | Where | What |
+|---|---|---|
+| **Parallel tool calls** | `bridge.py` MCPClient | JSON-RPC ids multiplex; only lifecycle transitions lock — one slow call no longer blocks the rest |
+| **Team Hub** | `bridge.py` TeamHub + `team.py` | Role-aware message bus: `hub_send`/`hub_read` WS, `/api/hub`, SSE `hub_msg`; role→kind permissions ENFORCED |
+| **Console** | `bridge.py` stdin REPL + `team.py` | `help/status/tools/truth/hub/say/as/role/call/metrics/restart` — the team console surface |
+| **Ground truth** | `/api/truth`, WS `truth`, `truth` command | Fresh Studio probe + real server health + executed-tool ledger — never model claims |
+| **Team roles** | extension core + prompts | planner plans (never writes), coder is the ONLY writer, checker verifies + reports (never edits) — violations rejected mechanically |
 
 ## What changed
 

@@ -15,6 +15,13 @@ Eight AI providers are supported: **DeepSeek** (chat.deepseek.com, recommended),
 
 > *Also known as: ZeroScript Roblox, ZeroScript free download, Roblox ChatGPT agent, Roblox DeepSeek agent, Roblox Gemini agent, Roblox Kimi agent, Roblox GLM agent, Roblox Qwen agent, Roblox Arena agent, Roblox Meta AI agent, Roblox Studio AI automation, Luau AI, MCP Roblox, lemonade alternative free, lemonade.gg alternative, free Roblox AI agent, free lemonade roblox alternative*
 
+## 🆕 v3.1.0 — Team Roles, Ground Truth & Bridge Team Hub
+
+- **Team roles are ENFORCED:** `planner` plans only (never writes code), `coder` is the ONLY role that writes/changes code, `checker` verifies and reports but never edits — the coder makes the changes. Switch with `{"command":"set_role","params":{"role":"planner|coder|checker"}}`. A write command from the wrong role is rejected mechanically (ROLE VIOLATION) before it can run.
+- **`/truth` is a real command:** it runs a ground-truth check (fresh Studio probe, real bridge health, ledger of tool calls that actually executed) instead of being a claim the AI writes. Anything unverified must be labelled "not verified".
+- **Bridge team console & hub:** the bridge window now has an interactive console (`help/status/tools/truth/hub/say/call`) and a role-aware message hub the AI team talks through (`team_msg`/`team_read`, `python team.py` for the standalone Team Console).
+- **Faster:** parallel tool calls on the bridge (no more one-call-blocks-all), cached Studio probes, tighter generation detection on every provider.
+
 ## ⚠️ ZeroScript is Free Beware of Paid Copycats
 
 ZeroScript is 100% free and open-source. It always has been, and it always will be. There is no official paid version, no subscription, and no sign-in required to use the extension.

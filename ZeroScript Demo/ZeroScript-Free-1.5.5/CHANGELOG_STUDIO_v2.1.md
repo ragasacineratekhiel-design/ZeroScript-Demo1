@@ -1,4 +1,17 @@
-# ZeroScript v2.1.0 — Studio Full-Access + Agent Super-Stability
+# ZeroScript v2.1.0 → v3.1.0 — Studio Full-Access + Team Roles + Ground Truth
+
+## Release: v3.1.0 (on top of v2.1 Studio Unleashed / ULTRA v2.0)
+
+- `studio_full_tree()` no longer fires a wasted `inspect_instance` probe per
+  service (was one extra MCP round-trip each) — direct calls only.
+- `probe_studio()` TTL-cached (0.7s): heartbeats/broadcasts stop hammering
+  Studio; `studio_watch` transitions stay exact.
+- Team roles (planner/coder/checker) with ENFORCED write-permissions, the
+  `truth` ground-truth command (live probe + executed-tool ledger), the team
+  hub (`team_msg`/`team_read`) and the bridge console / `team.py` console.
+- Mirror note: `bridge.py`, `launch_studio_mcp.py` and the extension tree are
+  synced to BOTH locations again (`ZeroScript Demo/` and the nested
+  `ZeroScript-Free-1.5.5/` bundle) plus the root `zeroscript-extension-v2/`.
 
 ## Release: v2.1.0 "Studio Unleashed" (on top of ULTRA v2.0.0)
 

@@ -4,5 +4,15 @@
       "command": "launch_studio_mcp.py",
       "args": []
     }
+  },
+  "hub": {
+    "enabled": true,
+    "history": 500,
+    "roles": ["planner", "coder", "checker", "lead", "user", "observer"],
+    "enforce": true
+  },
+  "team": {
+    "console": true,
+    "truth_ledger": 200
   }
 }

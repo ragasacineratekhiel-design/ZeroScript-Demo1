@@ -1019,3 +1019,63 @@ html.zs-light .zs-tip-sub,
 html.zs-light .zs-rbx-cur,
 html.zs-light .zs-tip-sep { color: #6b7280; }
 html.zs-light .zs-tip-rbx { color: #374151; }
+
+/* ── v3.1 team roles + truth + hub ─────────────────────────────────────── */
+/* Role badge shown in the bar while a team role is active (planner/coder/
+   checker/observer). Pill keeps the existing palette; `contain` keeps the
+   badge out of the page's layout recalculation (speed). */
+.zs-role-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+  background: rgba(99, 102, 241, 0.22);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  contain: content;
+}
+.zs-role-chip[title*="planner"] { background: rgba(52, 211, 153, 0.18); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.4); }
+html.zs-light .zs-role-chip { background: rgba(79, 70, 229, 0.12); color: #4338ca; border-color: rgba(79, 70, 229, 0.3); }
+
+/* Ground-truth readout (popup + in-page panels): monospace, scrollable,
+   never taller than the bar so it can't cover the chat. */
+.zs-truth-panel {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  contain: content;
+}
+html.zs-light .zs-truth-panel {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Team-hub toast: brief confirmation when a role-checked hub message posts. */
+.zs-hub-toast {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 8px);
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: rgba(17, 24, 39, 0.92);
+  color: #e5e7eb;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.zs-hub-toast.zs-hub-show { opacity: 1; transform: translateY(0); }

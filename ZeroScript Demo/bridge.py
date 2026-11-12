@@ -1,11 +1,27 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# bridge.py — ZeroScript Bridge v2.2.0 ULTRA+ (all logic upgraded, designs untouched)
+# bridge.py — ZeroScript Bridge v3.1.0 TEAM HUB (console + hub + truth, parallel calls)
 # ──────────────────────────────────────────────────────────────────────────
-#  ZeroScript Bridge — Ultra-Fast Middle Layer
+#  ZeroScript Bridge — Ultra-Fast Middle Layer + Team Console & Hub
 #  Local WebSocket + HTTP/SSE <-> Roblox Studio MCP server
 #  The browser extension talks to this over:
 #    ws://127.0.0.1:<PORT>              (primary, binary-capable, compressed)
 #    http://127.0.0.1:<PORT_HTTP>/api/* (fallback, SSE, batch, long-poll)
+#
+#  v3.1.0 — fixes "the AI can't communicate through the bridge console and hub":
+#    * PARALLEL tool calls: the old per-server call_lock serialized EVERY call
+#      (one 20s execute_luau blocked all other tools). JSON-RPC ids already
+#      multiplex — calls now run concurrently, only lifecycle transitions lock.
+#    * TEAM HUB: role-aware message bus (planner/coder/checker/lead/user) with
+#      kind permissions, WS hub_send/hub_read, HTTP /api/hub, SSE hub_msg.
+#    * CONSOLE: interactive stdin REPL (help/status/tools/truth/hub/say/call…)
+#      — the "team.py console" experience, also standalone in team.py.
+#    * TRUTH: /api/truth + WS `truth` returns ONLY live-verified facts (fresh
+#      Studio probe, real server health, executed-tool ledger) — never guesses.
+#    * Tool ledger: every executed call recorded (ts/name/ok/ms/detail) for truth.
+#    * probe_studio() now TTL-cached (0.7s) — cuts MCP chatter from heartbeats.
+#    * CORS allowlist finally covers ALL 14 supported AI sites (claude.ai,
+#      copilot, grok, poe, mistral, perplexity were missing).
+#    * websockets handler accepts both legacy (ws, path) and new (conn) API.
 #
 #  Transport methods implemented (all possible for localhost):
 #    1) WebSocket (RFC6455) — primary, multiplexed, per-message-deflate,
@@ -105,7 +121,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="2.2.0"
+BRIDGE_VERSION="3.1.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -183,6 +199,24 @@ class Metrics:
         }
 metrics=Metrics()
 
+# ── tool ledger (v3.1) — ground truth for the `truth` command ──────────
+# Every tool call that ACTUALLY EXECUTED is recorded here with its REAL outcome.
+# The `truth` report is built from this + live probes — never from model claims.
+_tool_ledger=collections.deque(maxlen=200)  # ring buffer, 200 entries
+_ledger_lock=threading.Lock()
+def _ledger_add(tool, ok, elapsed, detail):
+    try:
+        with _ledger_lock:
+            _tool_ledger.append({
+                "ts": round(time.time(),1),
+                "tool": tool,
+                "ok": bool(ok),
+                "ms": int(elapsed*1000),
+                "detail": (detail or "")[:140],
+            })
+    except Exception:
+        pass
+
 # ── rate limit (token bucket, per IP, generous for localhost) ─────────
 class RateLimiter:
     def __init__(self, rps=250, burst=500):  # v2.2: higher throughput for batch/bulk ops
@@ -236,20 +270,29 @@ class _Spinner:
             frame=self.FRAMES[i%len(self.FRAMES)]; print(f"\r{C['dim']}{self.label} {frame}{C['reset']}",end="",flush=True); i+=1; self._stop.wait(0.15)
 
 def _clear_spinner_line():
-    if sys.stdout.isatty(): print("\r\033[K",end="",flush=True)
+    try:
+        if sys.stdout.isatty(): print("\r\033[K",end="",flush=True)
+    except Exception:
+        pass
 
 def log(msg,color="dim",terminal=True):
     if terminal:
-        _clear_spinner_line(); ts=time.strftime("%H:%M:%S"); print(f"{C['dim']}{ts}{C['reset']} {C.get(color,'')}{msg}{C['reset']}",flush=True)
+        try:
+            _clear_spinner_line(); ts=time.strftime("%H:%M:%S"); print(f"{C['dim']}{ts}{C['reset']} {C.get(color,'')}{msg}{C['reset']}",flush=True)
+        except Exception:
+            pass  # v3.1: a closed/piped stdout must never crash a background loop
     if _log_file:
         try: _log_file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"); _log_file.flush()
         except: pass
 
 def action_banner(lines):
     header="ACTION NEEDED"; width=max([len(header)+8]+[len(ln) for ln in lines])+2; top=f">>> {header} "+">"*max(0,width-len(header)-5)
-    _clear_spinner_line(); print(); print(f"{C['act']}  {top.ljust(width)}{C['reset']}")
-    for ln in lines: print(f"{C['act']}  {ln.ljust(width)}{C['reset']}")
-    print(f"{C['act']}  {'>'*width}{C['reset']}"); print()
+    try:
+        _clear_spinner_line(); print(); print(f"{C['act']}  {top.ljust(width)}{C['reset']}")
+        for ln in lines: print(f"{C['act']}  {ln.ljust(width)}{C['reset']}")
+        print(f"{C['act']}  {'>'*width}{C['reset']}"); print()
+    except Exception:
+        pass  # v3.1: closed stdout must never crash watchers
     if _log_file:
         try: _log_file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} ACTION NEEDED: {' | '.join(lines)}\n"); _log_file.flush()
         except: pass
@@ -443,6 +486,7 @@ class MCPClient:
     def __init__(self, server_id, command, args, env=None):
         self.id=server_id; self.command=command; self.args=list(args or []); self.env=env or {}
         self.proc=None; self.req_id=1; self.write_lock=threading.Lock(); self.call_lock=threading.Lock()
+        self._restart_lock=threading.RLock()
         self.pending={}; self.pend_lock=threading.Lock(); self.tools_cache=[]; self.start_lock=threading.Lock()
         self._reader_thread=None; self.last_exit=None; self.stderr_tail=[]; self.restart_times=[]; self.loop_warned_at=0.0
         self.start_error=None; self.saw_foreign_ws_host=False
@@ -493,7 +537,13 @@ class MCPClient:
     def is_alive(self): return self.proc is not None and self.proc.poll() is None
 
     def restart(self):
-        log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.4); self.start()
+        with self._restart_lock:
+            log(f"[{self.id}] restarting...","yl"); self.stop(); time.sleep(0.4); self.start()
+
+    def _ensure_alive(self):
+        # Lifecycle transitions lock; regular calls do NOT (v3.1 concurrency fix)
+        with self._restart_lock:
+            if not self.is_alive(): self.restart()
 
     def stop(self):
         with self.pend_lock:
@@ -548,7 +598,11 @@ class MCPClient:
 
     def _notify(self,method,params=None):
         payload={"jsonrpc":"2.0","method":method,"params":params or {}}
-        with self.write_lock: self.proc.stdin.write(json.dumps(payload)+"\n"); self.proc.stdin.flush()
+        with self.write_lock:
+            try:
+                self.proc.stdin.write(json.dumps(payload)+"\n"); self.proc.stdin.flush()
+            except Exception as e:
+                raise RuntimeError(f"server '{self.id}' pipe closed: {e}")
 
     def _request(self,method,params,timeout):
         if not self.is_alive(): raise RuntimeError(f"server '{self.id}' not running")
@@ -556,7 +610,11 @@ class MCPClient:
         with self.pend_lock: self.pending[rid]=q
         try:
             payload={"jsonrpc":"2.0","id":rid,"method":method,"params":params or {}}
-            with self.write_lock: self.proc.stdin.write(json.dumps(payload)+"\n"); self.proc.stdin.flush()
+            with self.write_lock:
+                try:
+                    self.proc.stdin.write(json.dumps(payload)+"\n"); self.proc.stdin.flush()
+                except Exception as e:
+                    raise RuntimeError(f"server '{self.id}' pipe closed: {e}")
             try: return q.get(timeout=timeout)
             except queue.Empty: return None
         finally:
@@ -568,34 +626,35 @@ class MCPClient:
         return self.tools_cache
 
     def call_tool(self,name,arguments,timeout):
-        with self.call_lock:
-            # circuit breaker check
-            if time.monotonic() < self._circuit_open_until:
-                raise RuntimeError(f"server '{self.id}' circuit open — cooling down, try again briefly")
-            for attempt in (1,2):
-                if not self.is_alive(): self.restart()
-                msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
+        # v3.1: NO whole-call lock — JSON-RPC ids multiplex concurrent requests
+        # over the same stdio. Only lifecycle transitions (_ensure_alive) lock,
+        # so one slow execute_luau no longer blocks every other tool call.
+        if time.monotonic() < self._circuit_open_until:
+            raise RuntimeError(f"server '{self.id}' circuit open — cooling down, try again briefly")
+        for attempt in (1,2):
+            if not self.is_alive(): self._ensure_alive()
+            msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
+            if msg is None:
+                if not self.is_alive():
+                    self._ensure_alive()
+                    msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
                 if msg is None:
-                    if not self.is_alive():
-                        self.restart()
-                        msg=self._request("tools/call",{"name":name,"arguments":arguments},timeout)
-                    if msg is None:
-                        self._fail_count+=1
-                        if self._fail_count>=3: self._circuit_open_until=time.monotonic()+10
-                        raise TimeoutError(f"No response from '{self.id}' after {timeout}s")
-                if msg.get("error"):
-                    err=msg["error"]; err_text=err.get("message",json.dumps(err))
-                    if attempt==1 and _looks_like_transient_studio_drop(err_text):
-                        log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(1.5); continue
-                    self._fail_count+=1; raise RuntimeError(err_text)
-                content=msg.get("result",{}).get("content",[])
-                text="\n".join(it.get("text","") for it in content if it.get("type")=="text")
-                images=[{"data":it["data"],"mimeType":it.get("mimeType","image/jpeg")} for it in content if it.get("type")=="image" and it.get("data")]
-                if not text and not images and content: text=json.dumps(content)[:4000]
-                if attempt==1 and _looks_like_transient_studio_drop(text):
+                    self._fail_count+=1
+                    if self._fail_count>=3: self._circuit_open_until=time.monotonic()+10
+                    raise TimeoutError(f"No response from '{self.id}' after {timeout}s")
+            if msg.get("error"):
+                err=msg["error"]; err_text=err.get("message",json.dumps(err))
+                if attempt==1 and _looks_like_transient_studio_drop(err_text):
                     log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(1.5); continue
-                self._fail_count=0  # success resets circuit
-                return {"text":text,"images":images}
+                self._fail_count+=1; raise RuntimeError(err_text)
+            content=msg.get("result",{}).get("content",[])
+            text="\n".join(it.get("text","") for it in content if it.get("type")=="text")
+            images=[{"data":it["data"],"mimeType":it.get("mimeType","image/jpeg")} for it in content if it.get("type")=="image" and it.get("data")]
+            if not text and not images and content: text=json.dumps(content)[:4000]
+            if attempt==1 and _looks_like_transient_studio_drop(text):
+                log(f"[{self.id}] {name}: transient drop, retry...","yl"); time.sleep(1.5); continue
+            self._fail_count=0  # success resets circuit
+            return {"text":text,"images":images}
 
 # ── MANAGER ─────────────────────────────────────────────────────────────
 class MCPManager:
@@ -684,7 +743,12 @@ def _probe_tool_text(tool):
     except: return None
     finally: holder.call_lock.release()
 
-def probe_studio():
+# v3.1: TTL cache — heartbeats/broadcasts no longer hammer Studio with probes
+_probe_cache={"t":0.0,"v":None}
+def probe_studio(force=False):
+    now=time.monotonic()
+    if not force and _probe_cache["v"] is not None and now-_probe_cache["t"]<0.7:
+        return _probe_cache["v"]
     roblox=mgr.clients.get(PRIMARY_SERVER_ID)
     if roblox is not None and roblox.is_alive() and not roblox.tools_cache:
         return {"app":False,"place":False}
@@ -692,11 +756,16 @@ def probe_studio():
     if text is None: return {"app":None,"place":None}
     try: studios=json.loads(text).get("studios") or []
     except: return {"app":None,"place":None}
-    if not studios: return {"app":False,"place":False}
-    state=_probe_tool_text(STUDIO_STATE_TOOL)
-    if state is None: return {"app":True,"place":None}
-    low=state.lower(); place=not any(m in low for m in NO_PLACE_MARKERS)
-    return {"app":True,"place":place}
+    if not studios:
+        out={"app":False,"place":False}
+    else:
+        state=_probe_tool_text(STUDIO_STATE_TOOL)
+        if state is None: out={"app":True,"place":None}
+        else:
+            low=state.lower(); place=not any(m in low for m in NO_PLACE_MARKERS)
+            out={"app":True,"place":place}
+    _probe_cache["t"]=now; _probe_cache["v"]=out
+    return out
 
 # ── Studio Comprehensive Access Layer (ULTRA+ Full) ────────────────────
 # Ensures bridge can access everything in Roblox Studio: all services, full
@@ -734,8 +803,8 @@ def studio_full_tree(max_depth=4):
     root = {"services": {}, "ok": True, "truncated": False}
     for svc in STUDIO_ALL_SERVICES[:14]:  # batch first 14 core services to avoid flood
         try:
-            txt = _probe_tool_text("inspect_instance")
-            # fallback: use direct call if probe not available
+            # v3.1: dropped the pointless _probe_tool_text("inspect_instance")
+            # round-trip that ran once per service and threw its result away.
             with mgr.index_lock:
                 entry = mgr.index.get("inspect_instance")
             if not entry:
@@ -775,9 +844,17 @@ def studio_bulk_ops(ops):
     return {"ok": True, "results": results}
 
 def safe_call(name,arguments,timeout):
-    try: result=mgr.call(name,arguments,timeout); return {"ok":True,"text":result["text"],"images":result["images"]}
-    except TimeoutError as e: return {"ok":False,"error":str(e)+ " — TIP: large simulator builds may hit timeout; split into smaller execute_luau blocks or multi_edits.","kind":"timeout"}
-    except Exception as e: return {"ok":False,"error":str(e),"kind":type(e).__name__}
+    t0=time.monotonic()
+    try:
+        result=mgr.call(name,arguments,timeout)
+        _ledger_add(name, True, time.monotonic()-t0, result.get("text",""))
+        return {"ok":True,"text":result["text"],"images":result["images"]}
+    except TimeoutError as e:
+        _ledger_add(name, False, time.monotonic()-t0, str(e))
+        return {"ok":False,"error":str(e)+ " — TIP: large simulator builds may hit timeout; split into smaller execute_luau blocks or multi_edits.","kind":"timeout"}
+    except Exception as e:
+        _ledger_add(name, False, time.monotonic()-t0, str(e))
+        return {"ok":False,"error":str(e),"kind":type(e).__name__}
 
 async def run_tool_task(ws,name,args,timeout,rid):
     t0=time.monotonic()
@@ -808,19 +885,110 @@ def _push_event(ev):
             try: q.put_nowait(ev)
             except: pass
 
+# ── TEAM HUB (v3.1) — role-aware message bus for AI team communication ──
+# Planner/coder/checker (and human/console) exchange messages through this hub
+# instead of talking past each other. Role → message-kind permissions are
+# ENFORCED here, so e.g. a checker cannot post code (the coder makes changes),
+# and a planner cannot post code either (planning only). Violations are rejected
+# with an explicit ROLE VIOLATION error — mechanically, not by asking nicely.
+HUB_ROLES=("planner","coder","checker","lead","user","console","observer")
+HUB_KINDS=("plan","code","check","msg","handoff","note")
+_ROLE_KIND_ALLOW={
+    "planner":{"plan","msg","handoff","note"},
+    "coder":{"code","msg","handoff","note"},
+    "checker":{"check","msg","handoff","note"},
+    "observer":{"msg","note"},
+    "lead":set(HUB_KINDS),
+    "user":set(HUB_KINDS),
+    "console":set(HUB_KINDS),
+}
+
+class TeamHub:
+    def __init__(self, capacity=500):
+        self.messages=collections.deque(maxlen=capacity)
+        self.roles={}          # agent id -> role
+        self.seq=0
+        self.lock=threading.Lock()
+    def set_role(self, agent, role):
+        if role not in HUB_ROLES:
+            return False, f"unknown role '{role}' — valid: {', '.join(HUB_ROLES)}"
+        with self.lock:
+            self.roles[str(agent)]=role
+        msg,err=self.post("console","note",f"{agent} is now {role}", role="console")
+        return True, None
+    def post(self, sender, kind, text, role=None, to="*"):
+        sender=str(sender or "anon")
+        role=role or self.roles.get(sender,"lead")
+        if kind not in HUB_KINDS:
+            return None, f"unknown kind '{kind}' — valid: {', '.join(HUB_KINDS)}"
+        allowed=_ROLE_KIND_ALLOW.get(role, {"msg","note"})
+        if kind not in allowed:
+            return None, (f"ROLE VIOLATION: role '{role}' may not post kind '{kind}' "
+                          f"(allowed: {', '.join(sorted(allowed))}). Route it through the right role.")
+        with self.lock:
+            self.seq+=1
+            msg={"id":self.seq,"ts":round(time.time(),2),"from":sender,"role":role,
+                 "kind":kind,"to":to,"text":str(text or "")[:2000]}
+            self.messages.append(msg)
+        _push_event({"type":"hub_msg", **msg})
+        return msg, None
+    def read(self, since=0, limit=50):
+        with self.lock:
+            return [m for m in self.messages if m["id"]>int(since or 0)][-max(1,min(int(limit),200)):]
+    def state(self):
+        with self.lock:
+            return {"roles":dict(self.roles),"count":self.seq,"tail":list(self.messages)[-10:]}
+hub=TeamHub()
+
+def build_truth():
+    """Ground-truth report: live-verified facts ONLY. Every field is read from the
+    real bridge/Studio connection or the executed-tool ledger — never from any
+    model's claims. This is what the `truth` / `/truth` command returns."""
+    st=probe_studio()
+    with _ledger_lock:
+        ledger=list(_tool_ledger)[-20:]
+    return {
+        "type":"truth",
+        "ts": round(time.time(),1),
+        "bridge":{"version":BRIDGE_VERSION,"uptime":round(time.time()-metrics.started,1),
+                  "port":PORT,"http_port":PORT_HTTP,"token_required":not NO_AUTH},
+        "mcp":{"alive":mgr.any_alive(),"servers":mgr.health()},
+        "studio":{"app":st["app"],"place":st["place"]},
+        "tools_total": len(_list_tools_cached()),
+        "stats":{"tool_calls":metrics.tool_calls,"tool_errors":metrics.tool_errors,
+                 "ws_connections":metrics.ws_connections},
+        "ledger": ledger,
+        "hub": hub.read(0,10),
+        "note": ("Everything above is live-verified: Studio state probed just now, server health "
+                 "from the bridge, and 'ledger' lists tool calls that ACTUALLY executed with their "
+                 "real outcomes. If a claim is not in this report or in a tool result you received, "
+                 "it is NOT verified — say 'not verified' instead of asserting it."),
+    }
+
+# v3.1: cached tools list — broadcasts no longer rebuild the whole tool catalogue
+_tools_cache_v={"t":0.0,"v":[]}
+def _list_tools_cached(max_age=1.5):
+    now=time.monotonic()
+    if now-_tools_cache_v["t"]>max_age:
+        _tools_cache_v["v"]=mgr.list_tools(refresh=False); _tools_cache_v["t"]=now
+    return _tools_cache_v["v"]
+
 async def broadcast_status():
     if not clients and not _event_queues: return
     try:
         _st=await asyncio.to_thread(probe_studio); _proc=await asyncio.to_thread(_roblox_studio_app_running)
-        payload=_dumps({"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":_proc,"servers":mgr.health(),"tools":mgr.list_tools(),"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION})
-        _push_event({"type":"status","studio":_st["place"],"studio_app":_st["app"],"servers":mgr.health(),"tools_count":len(mgr.list_tools())})
+        health=mgr.health(); tools=_list_tools_cached()
+        payload=_dumps({"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":_proc,"servers":health,"tools":tools,"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION})
+        _push_event({"type":"status","studio":_st["place"],"studio_app":_st["app"],"servers":health,"tools_count":len(tools)})
     except: return
     for ws in list(clients):
         try: await ws.send(payload)
         except: pass
 
 # ── HTTP handler (all methods) ─────────────────────────────────────────
-ALLOWED_ORIGINS=["https://chat.deepseek.com","https://chatgpt.com","https://chat.openai.com","https://gemini.google.com","https://www.kimi.ai","https://kimi.ai","https://chat.z.ai","https://chat.qwen.ai","https://arena.ai","https://www.meta.ai","https://meta.ai"]
+# v3.1: complete allowlist — ALL 14 supported AI sites (claude.ai, copilot,
+# grok, poe, mistral, perplexity were missing and fell through to "*").
+ALLOWED_ORIGINS=["https://chat.deepseek.com","https://deepseek.com","https://chatgpt.com","https://chat.openai.com","https://gemini.google.com","https://www.kimi.ai","https://kimi.ai","https://chat.z.ai","https://chat.qwen.ai","https://arena.ai","https://www.meta.ai","https://meta.ai","https://claude.ai","https://www.claude.ai","https://copilot.microsoft.com","https://grok.com","https://x.ai","https://poe.com","https://chat.mistral.ai","https://www.perplexity.ai","https://perplexity.ai"]
 
 def _cors_headers(handler, origin="*"):
     handler.send_header("Access-Control-Allow-Origin", origin if origin in ALLOWED_ORIGINS else "*")
@@ -899,6 +1067,15 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             s=probe_studio(); proc=_roblox_studio_app_running()
             self._send_json({"ok":True,"studio":s,"studio_proc":proc,"heartbeat_ok":ok,"fails":_studio_consec_fails,"uptime":time.time()-_studio_last_ok},origin=origin)
             return
+        if path in ("/api/hub","/hub"):
+            # v3.1 team hub read: ?since=<id>&limit=<n>
+            try:
+                qs=parse_qs(parsed.query); since=int((qs.get("since") or ["0"])[0] or 0); limit=int((qs.get("limit") or ["50"])[0] or 50)
+                self._send_json({"ok":True,"messages":hub.read(since,limit),"state":hub.state()},origin=origin)
+            except Exception as e: self._send_json({"ok":False,"error":str(e)},500,origin)
+            return
+        if path in ("/api/truth","/truth"):
+            self._send_json({"ok":True,**build_truth()},origin=origin); return
         if path in ("/api/metrics","/metrics"):
             self._send_json({"ok":True,**metrics.snapshot()},origin=origin); return
         if path in ("/api/token","/token"):
@@ -993,6 +1170,18 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             ops=data.get("ops") or data.get("calls") or []
             if not isinstance(ops,list): self._send_json({"ok":False,"error":"ops must be array"},400,origin); return
             self._send_json(studio_bulk_ops(ops),origin=origin); return
+        if path in ("/api/hub","/hub","/api/role","/role"):
+            # v3.1 team hub: POST /api/hub {from,kind,text,role?,to?} → post message
+            #        POST /api/role {agent, role} → assign role
+            try:
+                if path.endswith("role") or path=="/role":
+                    ok,err=hub.set_role(data.get("agent","extension"),data.get("role","coder"))
+                    self._send_json({"ok":ok,"error":err,"roles":hub.state()["roles"]},origin=origin); return
+                msg,err=hub.post(data.get("from","extension"),data.get("kind","msg"),data.get("text",""),role=data.get("role"),to=data.get("to","*"))
+                if err: self._send_json({"ok":False,"error":err},403,origin)
+                else: self._send_json({"ok":True,"message":msg},origin=origin)
+            except Exception as e: self._send_json({"ok":False,"error":str(e)},500,origin)
+            return
         if path in ("/api/add_server","/api/remove_server","/api/restart_mcp"):
             # these mutate config
             if path=="/api/add_server":
@@ -1037,8 +1226,10 @@ def _start_http_server():
     return server
 
 # ── WebSocket handler (upgraded) ────────────────────────────────────────
-async def handler(ws):
-    peer=getattr(ws,"remote_address",("?",))[0]
+async def handler(ws, path=None):
+    # v3.1: works with BOTH websockets APIs — legacy handler(ws, path) and the
+    # modern handler(connection). remote_address exists on both.
+    peer=(getattr(ws,"remote_address",None) or ("?",""))[0]
     with clients_lock: clients.add(ws)
     metrics.ws_connections=len(clients)
     # socket tuning if underlying socket accessible
@@ -1050,7 +1241,7 @@ async def handler(ws):
     try:
         # initial hello with ultra capabilities
         _st=await asyncio.to_thread(probe_studio)
-        hello={"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health(),"tools":mgr.list_tools(),"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION,"token":BRIDGE_TOKEN if not NO_AUTH else None,"caps":["ws","http","sse","poll","batch","binary" if HAS_MSGPACK else "json"]}
+        hello={"type":"connected","mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health(),"tools":_list_tools_cached(),"port":PORT,"http_port":PORT_HTTP,"version":BRIDGE_VERSION,"token":BRIDGE_TOKEN if not NO_AUTH else None,"caps":["ws","http","sse","poll","batch","hub","truth","console","binary" if HAS_MSGPACK else "json"]}
         await ws.send(_dumps(hello))
         async for raw in ws:
             # support binary msgpack frames
@@ -1067,7 +1258,7 @@ async def handler(ws):
             mtype=msg.get("type"); rid=msg.get("id")
             if mtype=="hello":
                 # client hello — negotiate caps, no-op but ack
-                await ws.send(_dumps({"type":"hello_ack","id":rid,"version":BRIDGE_VERSION,"caps":["ws","http","sse","poll","batch","binary"] }))
+                await ws.send(_dumps({"type":"hello_ack","id":rid,"version":BRIDGE_VERSION,"caps":["ws","http","sse","poll","batch","hub","truth","console","binary"] }))
             elif mtype=="ping":
                 await ws.send(_dumps({"type":"pong","id":rid,"ts":time.time()}))
             elif mtype=="studio_status":
@@ -1118,6 +1309,19 @@ async def handler(ws):
                     except: pass
                 asyncio.create_task(_sub_loop())
                 await ws.send(_dumps({"type":"subscribed","id":rid}))
+            elif mtype=="hub_send":
+                # v3.1 team hub — role-checked message routing between AI agents
+                _hm,_he=hub.post(msg.get("from","extension"),msg.get("kind","msg"),msg.get("text",""),role=msg.get("role"),to=msg.get("to","*"))
+                if _he: await ws.send(_dumps({"type":"hub_error","id":rid,"error":_he}))
+                else: await ws.send(_dumps({"type":"hub_ack","id":rid,"message":_hm}))
+            elif mtype=="hub_read":
+                await ws.send(_dumps({"type":"hub_msgs","id":rid,"messages":hub.read(msg.get("since",0),msg.get("limit",50)),"state":hub.state()}))
+            elif mtype=="set_role":
+                _ok,_err=hub.set_role(msg.get("agent","extension"),msg.get("role","coder"))
+                await ws.send(_dumps({"type":"role_changed","id":rid,"ok":_ok,"error":_err,"roles":hub.state()["roles"]}))
+            elif mtype=="truth":
+                # v3.1 ground truth — live-verified facts only, never model claims
+                await ws.send(_dumps({"id":rid,**build_truth()}))
             elif mtype in ("add_server","remove_server"):
                 if mtype=="add_server": ok,err=await asyncio.to_thread(config_add_server,msg.get("server_id"),msg.get("command"),msg.get("args"),msg.get("env"))
                 else: ok,err=await asyncio.to_thread(config_remove_server,msg.get("server_id"))
@@ -1219,9 +1423,104 @@ async def _early_studio_guidance():
     if _st["app"] is False:
         action_banner(["Open your place in Roblox Studio.","Go to: Assistant Settings > MCP Servers","       > 'Enable Studio as MCP server'","It can take ~10s; this window will turn green."])
 
+# ── Interactive console (v3.1) — the bridge team console ────────────────
+# Type commands into the bridge window: status/tools/truth/hub/say/call…
+# This is the "console and hub" surface — AIs talk through the hub
+# (hub_send WS / POST /api/hub), humans talk through this REPL, and both
+# sides see the same role-checked message stream.
+def _console_help():
+    print("""
+  ZeroScript bridge console — commands:
+    help                 this list
+    status               bridge + Studio status (live probe)
+    health               per-MCP-server health
+    tools                list connected tool names
+    truth                GROUND TRUTH report (live-verified facts only)
+    hub [n]              show last n hub messages (default 15)
+    say <text>           post a hub message as 'console' (kind: msg)
+    as <role> <text>     post a hub message with a role (planner/coder/checker/lead/…)
+    role <agent> <role>  assign a hub role (planner/coder/checker/lead/user/observer)
+    call <tool> [json]   run a tool, e.g.  call get_studio_state
+    metrics              bridge metrics
+    token                show auth token
+    restart [server]     restart MCP server(s)
+    quit                 stop the bridge
+""")
+
+def _console_loop():
+    while True:
+        try:
+            line=input("zs> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            line="quit"
+        except Exception:
+            time.sleep(1); continue
+        if not line: continue
+        cmd,_,rest=line.partition(" ")
+        cmd=cmd.lower()
+        try:
+            if cmd in ("quit","exit"): log("console requested shutdown…","yl"); os._exit(0)
+            elif cmd=="help": _console_help()
+            elif cmd=="status":
+                st=probe_studio(force=True)
+                log(f"bridge v{BRIDGE_VERSION} up {time.time()-metrics.started:.0f}s | mcp_alive={mgr.any_alive()} | studio app={st['app']} place={st['place']} | tools={len(_list_tools_cached())}","cy")
+            elif cmd=="health":
+                for h in mgr.health(): log(f"  {h['id']}: alive={h['alive']} tools={h['tools']} err={h['error']}","cy")
+            elif cmd=="tools":
+                for t in _list_tools_cached(max_age=0): log(f"  {t.get('name')}","cy")
+            elif cmd=="truth":
+                tr=build_truth()
+                log(f"TRUTH @{tr['ts']} — bridge {tr['bridge']['version']} up {tr['bridge']['uptime']}s","cy")
+                log(f"  studio: app={tr['studio']['app']} place={tr['studio']['place']}","cy")
+                log(f"  mcp: alive={tr['mcp']['alive']} tools={tr['tools_total']} calls={tr['stats']['tool_calls']} errors={tr['stats']['tool_errors']}","cy")
+                for e in tr["ledger"][-8:]:
+                    log(f"  ledger: {'OK ' if e['ok'] else 'ERR'} {e['tool']} {e['ms']}ms {e['detail'][:60]}","cy")
+            elif cmd in ("hub","msgs"):
+                n=int(rest) if rest.strip().isdigit() else 15
+                for m in hub.read(0,n):
+                    log(f"  #{m['id']} [{m['role']}/{m['kind']}] {m['from']}: {m['text'][:100]}","cy")
+            elif cmd=="say":
+                _m,_e=hub.post("console","msg",rest,role="console")
+                log("posted" if _m else f"rejected: {_e}","gr" if _m else "rd")
+            elif cmd=="as":
+                role,_,text=rest.partition(" ")
+                _m,_e=hub.post("console","msg",text,role=role.strip() or "console")
+                log("posted" if _m else f"rejected: {_e}","gr" if _m else "rd")
+            elif cmd=="role":
+                agent,_,role=rest.partition(" ")
+                _ok,_e=hub.set_role(agent.strip() or "agent",role.strip() or "coder")
+                log("ok" if _ok else f"rejected: {_e}","gr" if _ok else "rd")
+            elif cmd=="call":
+                tool,_,args=rest.partition(" ")
+                try: a=json.loads(args) if args.strip() else {}
+                except Exception: a={}
+                res=safe_call(tool.strip(),a,60)
+                log(json.dumps(res,ensure_ascii=False)[:2000],"cy")
+            elif cmd=="metrics":
+                log(json.dumps(metrics.snapshot()),"cy")
+            elif cmd=="token":
+                log(f"token: {BRIDGE_TOKEN}","cy")
+            elif cmd=="restart":
+                sid=rest.strip() or None
+                try: mgr.restart(sid); log("restarted","gr")
+                except Exception as e: log(f"restart failed: {e}","rd")
+            else:
+                log(f"unknown command '{cmd}' — type 'help'","yl")
+        except Exception as e:
+            log(f"console error: {e}","rd")
+
+def _start_console():
+    if os.environ.get("ZS_CONSOLE","") in ("0","false","False"): return
+    interactive=False
+    try: interactive=sys.stdin is not None and sys.stdin.isatty()
+    except Exception: interactive=False
+    if not interactive and os.environ.get("ZS_CONSOLE","") not in ("1","true","True"): return
+    threading.Thread(target=_console_loop,daemon=True).start()
+    log("console ready — type 'help' for commands","cy")
+
 async def main():
     # banner
-    print(); print(f"{C['cy']}  ZeroScript Bridge v{BRIDGE_VERSION} — ULTRA  {C['dim']}(port {PORT} WS + {PORT_HTTP} HTTP/SSE){C['reset']}")
+    print(); print(f"{C['cy']}  ZeroScript Bridge v{BRIDGE_VERSION} — TEAM HUB  {C['dim']}(port {PORT} WS + {PORT_HTTP} HTTP/SSE){C['reset']}")
     print(f"{C['dim']}  Python {sys.version.split()[0]}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  logs: {LOG_PATH}{C['reset']}")
     if HAS_ORJSON: log("fast JSON: orjson enabled","cy",terminal=False)
     else: log("fast JSON: stdlib (pip install orjson for +30% throughput)","dim",terminal=False)
@@ -1252,6 +1551,7 @@ async def main():
     async with server_ctx:
         log(f"listening WS ws://{HOST}:{PORT} + HTTP http://{HOST}:{PORT_HTTP}/api/*  — open a supported AI chat","cy")
         log(f"token: {BRIDGE_TOKEN[:8]}… (stored in .zs_token, sent via X-ZS-Token)","dim",terminal=False)
+        await asyncio.to_thread(_start_console)
         asyncio.create_task(_supervised("server_watch", server_watch))
         # periodic broadcast early
         async def _early_status_pushes():

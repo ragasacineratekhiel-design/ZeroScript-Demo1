@@ -11,8 +11,10 @@ call :log "===== %DATE% %TIME%  start.bat launched ====="
 for /f "tokens=*" %%v in ('ver') do call :log "%%v"
 
 echo.
-echo   === ZeroScript Bridge v2.2.0 ULTRA+ — KEEP THIS WINDOW OPEN ===
+echo   === ZeroScript Bridge v3.1.0 TEAM HUB — KEEP THIS WINDOW OPEN ===
 echo   Do NOT close this window ^— ZeroScript stops if you do.
+echo   Console ready: type 'help' here for status/tools/truth/hub commands.
+echo   Tip: run 'python team.py' in a second window for the Team Console.
 echo.
 
 if not exist "%~dp0bridge.py" (
@@ -160,6 +162,10 @@ call :log "Launching bridge.py with %PY%"
 REM IMPORTANT: run bridge in this window, not a new tab/window
 REM Use cmd /c to keep parent window alive even if Python crashes
 :run_bridge
+REM v3.1: enable the interactive bridge console in this window (help/status/
+REM tools/truth/hub/say/call — the team console surface; team.py is the GUI-less
+REM twin of the same hub).
+set "ZS_CONSOLE=1"
 %PY% "%~dp0bridge.py"
 set "BRIDGE_EXIT=%errorlevel%"
 call :log "bridge.py exited with code %BRIDGE_EXIT%"

@@ -1,4 +1,23 @@
-# Changelog — ULTRA v2.0.0 (2026-10-26)
+# Changelog — ULTRA v2.0.0 (2026-10-26) → TEAM HUB v3.1.0 (2026-11-12)
+
+## 3.1.0 TEAM HUB — bridge console + hub + truth + parallel calls
+
+- **Parallel tool calls**: dropped the per-server whole-call lock (JSON-RPC ids
+  already multiplex) — one slow `execute_luau` no longer blocks every other
+  tool. This is what "the AI can't communicate through the bridge" actually was.
+- **Team Hub** (role-aware message bus): `hub_send`/`hub_read` over WS,
+  `POST /api/hub`, `GET /api/hub?since=`, SSE `hub_msg`. Role → kind
+  permissions enforced (planner never posts code, checker never posts code —
+  the coder makes changes).
+- **Console**: stdin REPL in the bridge window (`help/status/tools/truth/hub/
+  say/as/role/call/metrics/restart`) + `team.py` standalone Team Console & Hub.
+- **Ground truth**: `GET /api/truth` + WS `truth` — fresh Studio probe, real
+  server health, executed-tool ledger (200 entries). Nothing from model claims.
+- **Speed**: probe TTL cache 0.7s, cached tool catalogue for broadcasts,
+  `studio_full_tree` no longer wastes a probe per service, stdout-safe logging.
+- **Compat**: websockets handler accepts both legacy `(ws, path)` and modern
+  `(conn)` APIs; CORS allowlist covers all 14 AI sites (claude/copilot/grok/
+  poe/mistral/perplexity were missing).
 
 ## 2.0.0 ULTRA — All logic upgraded, designs untouched
 

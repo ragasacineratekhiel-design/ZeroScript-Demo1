@@ -6,9 +6,9 @@
 const ZS = (() => {
   "use strict";
 
-  // MAX identity — ZeroScript MAX 3.0
+  // MAX identity — ZeroScript MAX 3.1 (team roles + truth + hub)
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "3.0.0";
+  const APP_VERSION = "3.1.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
 
   // ── MAX Transport — 8 methods, ultra-low latency, zero drops ────────
@@ -29,8 +29,43 @@ const ZS = (() => {
     CACHE_TTL_MS: 600,       // MAX 600ms cache — instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "3.0.0 MAX",
+    VERSION: "3.1.0 MAX",
   };
+
+  // ── TEAM ROLES (v3.1) — role discipline is ENFORCED, not requested ──
+  // planner : plans ONLY (read tools allowed). NEVER writes/changes code.
+  // coder   : the ONLY role that writes/changes code (execute_luau, multi_edit…).
+  // checker : reviews/verifies ONLY (read tools). NEVER edits — it REPORTS
+  //           issues and the CODER makes the changes.
+  // lead    : full access (trusted overseer / single-agent default).
+  const ROLES = {
+    planner: { label: "Planner", mutate: false, plan: true, check: false,
+               allow: "read", deny: "edit",
+               desc: "plans only — never writes or changes code; hands the plan to the coder" },
+    coder:   { label: "Coder", mutate: true, plan: false, check: false,
+               allow: "all", deny: "",
+               desc: "the ONLY role that writes/changes code — implements plans, fixes checker issues" },
+    checker: { label: "Checker", mutate: false, plan: false, check: true,
+               allow: "read", deny: "edit",
+               desc: "reviews/verifies only — never edits or 'upgrades' code itself; reports issues to the coder" },
+    lead:    { label: "Lead", mutate: true, plan: true, check: true,
+               allow: "all", deny: "",
+               desc: "full access (single-agent default / overseer)" },
+    observer:{ label: "Observer", mutate: false, plan: false, check: false,
+               allow: "read", deny: "edit",
+               desc: "watches only — reads allowed, everything else denied" },
+  };
+  const DEFAULT_ROLE = "lead";
+
+  // Which tool categories each role may run. "edit" covers execute_luau,
+  // multi_edit, insert_from_creator_store, store_image, generate_*, and any
+  // unknown mutating tool. Read + screen tools are safe for every role.
+  function roleAllows(roleName, category) {
+    const r = ROLES[roleName] || ROLES[DEFAULT_ROLE];
+    if (r.allow === "all") return true;
+    if (category === "read" || category === "screen") return true;
+    return false; // edit/generate/roblox/tool mutations — read-only roles refused
+  }
 
 // ── STABILITY MAX 3.0 — never lose connection, super-stable ────────
 const STABILITY = {
@@ -132,6 +167,26 @@ const STABILITY = {
       "(System note: your previous reply was cut off by a length limit before you " +
       "finished. Continue from exactly where you stopped. Do NOT restart and do " +
       "NOT repeat what you already wrote.)",
+    roleViolation: (role, tool, category) => {
+      const r = ROLES[role] || ROLES.lead;
+      return (
+        `ROLE VIOLATION: you are acting as ${r.label} and may NOT run '${tool}' ` +
+        `(${category} command). ${r.label}: ${r.desc}. ` +
+        (role === "planner"
+          ? "Produce the PLAN only (steps, file paths, what to change) and hand off to the coder — the coder writes the code. If you believe code must change now, say so in a handoff note instead of running a write command."
+          : role === "checker"
+            ? "Report the issue you found (what is wrong, where, what the fix should be) — the CODER makes the change. Never edit/upgrade code yourself."
+            : "Switch to the right role first with {\"command\":\"set_role\",\"params\":{\"role\":\"coder\"}} (or hand the step to that role), then retry.")
+      );
+    },
+    roleUnknown: (name) =>
+      `ERROR: unknown role "${name}". Valid roles: ${Object.keys(ROLES).join(", ")}. ` +
+      'Use {"command":"set_role","params":{"role":"coder"}} etc.',
+    trustRule:
+      "(Truth rule: every claim about the project must come from a tool result you actually " +
+      "received, or run the `truth` command to fetch live-verified facts. Never present " +
+      "unverified statements as facts — if you did not verify it this session, say " +
+      "'not verified'.)",
   };
 
   const BT = "```";
@@ -213,6 +268,24 @@ You have COMPLETE, unrestricted control of ENTIRE Roblox Studio DataModel. You c
 • ADVANCED STUDIO OPS: Generate meshes via generate_mesh/generate_procedural_model, search Creator Store, read console via get_console_output, capture screen via screen_capture, drive client input via user_keyboard_input/user_mouse_input in Client datamodel (only while playing).
 
 • VERIFY AFTER MUTATION: After every game-settings change, return new value via \`return\` so user sees proof: \`return {gravity=workspace.Gravity, light=game.Lighting.ClockTime}\`
+
+━━━ TEAM ROLES — PLANNER / CODER / CHECKER — STRICT DISCIPLINE ━━━
+Work follows a TEAM protocol. Roles have HARD boundaries — the extension ENFORCES them (a command that violates your current role is rejected with ROLE VIOLATION before it can run):
+• PLANNER: produces the PLAN only — steps, target paths, what to create/change, acceptance checks. NEVER writes code, NEVER runs write commands (execute_luau/multi_edit/generate_*). Planning uses read tools (inspect_instance, script_read, search_game_tree, get_studio_state) and then hands the plan to the CODER (kind "plan" or "handoff"). A planner that writes code is a BUG — hand off instead.
+• CODER: the ONLY role that writes/changes code. Implements the plan via execute_luau/multi_edit/generate_*, and fixes everything the checker reports. If the checker flags an issue, the CODER makes the change — never the checker.
+• CHECKER: reviews/verifies ONLY. Run read tools to verify the coder's work (script_read, inspect_instance, get_studio_state, screen_capture). NEVER edit, "upgrade", or rewrite code yourself — report issues as kind "check" with exactly what is wrong and what the fix must be, and route it back to the coder. A checker that edits is a BUG.
+• LEAD (default): full access when working alone.
+Switch role first thing in a team flow: \`\`\`json {"command":"set_role","params":{"role":"planner"}}\`\`\` then plan; hand off; switch to "coder" to build; "checker" to verify. You can also tag a single command with its role: \`\`\`json {"command":"execute_luau","role":"coder","params":{...}}\`\`\` — a write command tagged "planner"/"checker" is rejected.
+TEAM HUB — communicate THROUGH the bridge, not in your head: team_msg posts a role-checked message (kind: plan | code | check | handoff | msg | note) to the shared hub (visible in the bridge console and team.py); team_read pulls new messages. Keep messages short and operational: what you did, what you need, what is wrong. The hub REJECTS role violations mechanically (planner cannot post code; checker cannot post code).
+Flow: planner → team_msg {"kind":"plan"} + handoff → coder builds + team_msg {"kind":"code"} what changed → checker verifies + team_msg {"kind":"check"} findings → coder fixes. No role may silently do another role's job.
+
+━━━ TRUTH — /truth IS GROUND TRUTH, NEVER CLAIMS ━━━
+The \`truth\` command (also written \`/truth\`) returns ONLY live-verified facts: fresh Studio probe, real bridge/server health, and the ledger of tool calls that ACTUALLY executed with their real outcomes. Rules:
+- When the user asks "is X true?" / "what is actually happening?" / writes \`/truth\` — RUN the truth command and report from its output. Do not answer from memory.
+- NEVER write /truth as a mere emphasis marker followed by an unverified claim. If you write /truth, the extension runs the ground-truth check — a claim contradicted by it is a lie.
+- Any factual claim about the project must be traceable to a tool result you received this session. Unverified → say "not verified" explicitly.
+- The truth report is not yours to edit — it is generated from the bridge ledger. Quote it, compare it, act on it; never restate it "improved".
+
 
 ━━━ MAXIMUM EFFORT & ANTI-HALLUCINATION — ZERO MISTAKES MAX ━━━
 You are MAX — TOP 0.1% senior Roblox Staff engineer. PUBLISH-READY is your minimum. You operate with 1000× depth, verify every step, never hallucinate.
@@ -409,6 +482,24 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "required'. Later steps may omit x/y and reuse last position (click then scroll same spot). " +
       "mouseButtonDown/Up/Click need \"mouse_button\":\"left\" or \"right\". \"wait\" step needs \"wait_time_ms\" (0-10000). " +
       "Example: {\"datamodel_type\":\"Client\",\"actions\":[{\"action\":\"mouseButtonClick\",\"mouse_button\":\"left\",\"instance_path\":\"LocalPlayer.PlayerGui.Menu.PlayBtn\"}]}. MAX: chain clicks with waits.",
+    set_role:
+      "TEAM: switch your current role before a team flow: {\"command\":\"set_role\",\"params\":{\"role\":\"planner\"}} " +
+      "(planner | coder | checker | lead | observer). Roles are ENFORCED: planner/observer/checker cannot run write " +
+      "commands (execute_luau/multi_edit/generate_*) — a violation is rejected with ROLE VIOLATION. coder is the ONLY " +
+      "role that writes/changes code; checker verifies and REPORTS, coder fixes. Default role is lead (full access).",
+    team_msg:
+      "TEAM HUB: post a role-checked message to the shared hub (bridge console + team.py see it). " +
+      "{\"command\":\"team_msg\",\"params\":{\"kind\":\"plan|code|check|handoff|msg|note\",\"text\":\"...\",\"to\":\"coder\"}}. " +
+      "The hub REJECTS role violations mechanically: planner may not post kind 'code', checker may not post kind 'code'. " +
+      "Use for hand-offs (kind plan/handoff) and findings (kind check). Keep it short and operational.",
+    team_read:
+      "TEAM HUB: read new hub messages: {\"command\":\"team_read\",\"params\":{\"since\":0}} — returns messages after the " +
+      "given id (0 = last few). Use before acting on a hand-off so you see what planner/checker actually said.",
+    truth:
+      "GROUND TRUTH: {\"command\":\"truth\"} (or write /truth) returns ONLY live-verified facts — fresh Studio probe, " +
+      "real bridge/server health, and the ledger of tool calls that ACTUALLY executed with their real outcomes. " +
+      "NEVER answer 'is X true' from memory: run truth and quote it. Claims not backed by a tool result must be " +
+      "labelled 'not verified'. This report is generated by the bridge — never restate it as your own claim.",
     get_studio_state:
       "MAX: Returns full Studio health in one call — place path, is Play mode, datamodel, all services list. Call before start_stop_play to verify state. Single source of truth, cache 600ms.",
     start_stop_play:
@@ -442,6 +533,9 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     RESEND_MARKER,
     TRANSPORT,
     FEEDBACK,
+    ROLES,
+    DEFAULT_ROLE,
+    roleAllows,
     toolCategory,
     buildSystemPrompt,
     compactTools,

@@ -217,6 +217,16 @@
     parked: false,
     // Timestamp of the last successful tool-catalogue refresh (see ensureTools).
     toolsAt: 0,
+    // ── v3.1 team roles ──────────────────────────────────────────────────
+    // Current role ("lead" = full access / single-agent default). Switched via
+    // the set_role command (or a per-command "role" tag on the envelope).
+    // planner/checker/observer are read-only — runTool REJECTS their write
+    // commands mechanically (see ZS.roleAllows / ZS.FEEDBACK.roleViolation).
+    role: ZS.DEFAULT_ROLE || "lead",
+    // Truth ledger: the last tool calls that ACTUALLY ran, with their real
+    // outcomes. The `truth` command reports from THIS + a live bridge probe —
+    // never from model claims (fixes "/truth isn't actually the truth").
+    truthLedger: [],
   };
 
   async function waitFor(pred, timeout) {
@@ -976,11 +986,83 @@
     // Blocked commands: refuse up-front with a clear, tailored error so the
     // model abandons it and continues instead of wasting/hanging a turn.
     const bareName = bareToolName(name);
+    // ── v3.1 team roles: resolve the acting role (envelope tag beats session) ──
+    const roleTag = String(call.role || "").toLowerCase().trim();
+    if (roleTag && !ZS.ROLES[roleTag]) return ZS.FEEDBACK.roleUnknown(roleTag);
+    const activeRole = roleTag || A.role;
     if (isBlockedTool(name)) {
       if (VISION_TOOLS.has(bareName)) {
         return `ERROR: '${bareName}' is unavailable here - this assistant cannot see images. Do NOT call it again. Inspect the place programmatically instead (e.g. inspect_instance, get_studio_state, search_game_tree, script_read).`;
       }
       return `ERROR: the '${bareName}' command timed out and is unavailable in this environment. Do NOT call it again - complete the task yourself using the other commands (execute_luau, multi_edit, etc.).`;
+    }
+    // ── v3.1 virtual commands: set_role / truth / team_msg / team_read ──
+    // Team discipline + ground truth. All four are META commands: allowed in
+    // every role (they never mutate the place), and they never reach the bridge
+    // as Roblox tools — except the hub/truth queries which are read-only too.
+    if (name === "set_role") {
+      const r = String(args.role || "").toLowerCase().trim();
+      if (!r || !ZS.ROLES[r]) return ZS.FEEDBACK.roleUnknown(r || "(missing)");
+      const prev = A.role;
+      A.role = r;
+      try { bg({ type: "set_role", agent: "extension", role: r }); } catch {}
+      diag("role.set", { from: prev, to: r });
+      return (
+        `Output of 'set_role':\nRole is now ${r} (${ZS.ROLES[r].label}) — ${ZS.ROLES[r].desc}.\n` +
+        (ZS.ROLES[r].mutate
+          ? "You may run write commands (execute_luau, multi_edit, generate_*)."
+          : "Write commands (execute_luau, multi_edit, generate_*) will be REJECTED with ROLE VIOLATION — hand those steps to the coder.")
+      );
+    }
+    if (name === "truth" || name === "/truth") {
+      // GROUND TRUTH: live-verified facts only — fresh bridge probe + the real
+      // executed-tool ledger (bridge-side AND local). NEVER model claims.
+      const local = A.truthLedger.slice(-15);
+      const remote = await bg({ type: "truth" });
+      const lines = [];
+      lines.push("GROUND TRUTH (live-verified — every line comes from the bridge or a tool result that actually ran):");
+      if (remote && remote.ok) {
+        const s = remote.studio || {};
+        const b = remote.bridge || {};
+        lines.push(`- bridge: v${b.version || "?"} up ${Math.round(b.uptime || 0)}s | mcp alive: ${!!(remote.mcp && remote.mcp.alive)} | tools: ${remote.tools_total ?? "?"}`);
+        lines.push(`- Studio: app=${s.app === null ? "unknown" : s.app} place open=${s.place === null ? "unknown" : s.place}`);
+        lines.push(`- stats: ${remote.stats ? remote.stats.tool_calls : "?"} tool calls executed, ${remote.stats ? remote.stats.tool_errors : "?"} errors`);
+        const led = (remote.ledger || []).slice(-12);
+        if (led.length) {
+          lines.push("- ledger (bridge — calls that ACTUALLY executed):");
+          for (const e of led) lines.push(`  ${e.ok ? "OK " : "ERR"} ${e.tool} ${e.ms}ms — ${(e.detail || "").slice(0, 70)}`);
+        }
+      } else {
+        lines.push(`- bridge: UNREACHABLE (${(remote && remote.error) || "no response"}) — only the local ledger below is verified.`);
+      }
+      if (local.length) {
+        lines.push("- ledger (this tab — calls that ACTUALLY executed):");
+        for (const e of local) lines.push(`  ${e.ok ? "OK " : "ERR"} ${e.tool} — ${(e.detail || "").slice(0, 70)}`);
+      } else {
+        lines.push("- local ledger: empty (no tool has run yet in this tab).");
+      }
+      lines.push("RULE: any claim not backed by this report or by a tool result you received is NOT verified — label it 'not verified' instead of asserting it.");
+      return `Output of 'truth':\n${lines.join("\n")}`;
+    }
+    if (name === "team_msg") {
+      const kind = String(args.kind || "msg").toLowerCase().trim();
+      const text = String(args.text || args.message || "").trim();
+      const roleTag2 = String(args.role || "").toLowerCase().trim();
+      if (!text) return "ERROR: team_msg needs \"text\" (params.text).";
+      const r = await bg({ type: "hub_send", from: "assistant", kind, text, role: roleTag2 || undefined, to: args.to || "*" });
+      if (r && r.ok) return `Output of 'team_msg':\nPosted #${r.message ? r.message.id : "?"} [${r.message ? r.message.role : activeRole}/${kind}] to the team hub.`;
+      return `ERROR: team_msg rejected by the hub: ${(r && r.error) || "no response"}\n${/ROLE VIOLATION/.test((r && r.error) || "") ? "Your role may not post this kind — hand the content to the right role (coder posts code, checker posts checks, planner posts plans)." : "Fix the message and retry."}`;
+    }
+    if (name === "team_read") {
+      const since = Number(args.since || 0) || 0;
+      const r = await bg({ type: "hub_read", since });
+      if (!r || !r.ok) return `ERROR: team hub unreachable (${(r && r.error) || "no response"}).`;
+      const msgs = r.messages || [];
+      if (!msgs.length) return `Output of 'team_read':\nNo new hub messages since #${since}.`;
+      return (
+        `Output of 'team_read':\nTeam hub messages (${msgs.length}):\n` +
+        msgs.map((m) => `#${m.id} [${m.role}/${m.kind}] ${m.from}${m.to && m.to !== "*" ? "→" + m.to : ""}: ${m.text}`).join("\n")
+      );
     }
     // Virtual command: list the MCP server(s) ZeroScript is currently connected
     // to, with each one's REAL per-server health (from the bridge, never the
@@ -1074,6 +1156,17 @@
     }
     if (A.toolNames.size && !A.toolNames.has(name)) {
       return ZS.FEEDBACK.unknownTool(name, [...A.toolNames]);
+    }
+    // ── v3.1 ENFORCED role gate — the mechanic that fixes "planner making
+    // code itself … checkers just upgraded it but coder is the one who makes
+    // changes". planner/checker/observer can NOT run write commands; the
+    // rejection is mechanical (this return), not a request in a prompt.
+    {
+      const cat = ZS.toolCategory(name);
+      if (!ZS.roleAllows(activeRole, cat)) {
+        diag("role.blocked", { role: activeRole, name, cat });
+        return ZS.FEEDBACK.roleViolation(activeRole, bareName, cat);
+      }
     }
     // The Roblox MCP REQUIRES datamodel_type on execute_luau (enum Edit/Client/
     // Server). The ###LUA### parser already fills it in, but the model may also
@@ -1458,6 +1551,18 @@
           diag("tool.start", { name: call.tool });
           const feedback = await runTool(call);
           A.toolRunning = false;
+          // v3.1 truth ledger — record what ACTUALLY ran with its REAL outcome.
+          // The `truth` command reports from this, so "/truth" can no longer be
+          // an unverified claim: it is grounded in these entries + a live probe.
+          try {
+            A.truthLedger.push({
+              ts: Date.now(),
+              tool: call.tool,
+              ok: !feedbackIsError(feedback),
+              detail: (stripOutputPrefix(feedback).split("\n").map((s) => s.trim()).find(Boolean) || "").slice(0, 120),
+            });
+            if (A.truthLedger.length > 50) A.truthLedger.splice(0, A.truthLedger.length - 50);
+          } catch {}
           diag("tool.done", { name: call.tool, ok: !feedback.startsWith("ERROR"), out: feedback.slice(0, 50) });
           if (A.stop) {
             // User halted mid-tool: settle the spinning chip so it doesn't look
@@ -3085,8 +3190,12 @@
           toneClass = "active";
           // No inline dot here: the leading status dot already shows green, two
           // dots side by side looked cluttered. The green "Agent active" text
-          // carries it.
-          msg = `<b>Agent active</b>${tools ? ` · ${tools} tools` : ""}`;
+          // carries it. v3.1: surface the ACTIVE TEAM ROLE (badge) whenever the
+          // session is not in full-access "lead" mode, so a planner/checker
+          // session is visible at a glance.
+          const roleBadge = A.role && A.role !== "lead"
+            ? ` · <span class="zs-role-chip" title="team role (enforced)">${A.role}</span>` : "";
+          msg = `<b>Agent active</b>${tools ? ` · ${tools} tools` : ""}${roleBadge}`;
         }
       } else if (P.isFreshChat() || P.chatIsEmpty()) {
         // Treat ANY empty chat (no turns yet) as the standby/start case - not just

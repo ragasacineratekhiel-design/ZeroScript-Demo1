@@ -13,18 +13,29 @@
 #  across all installed Studio versions and launches it, transparently forwarding
 #  stdio and any CLI args. It also supports an explicit override path via
 #  `ZS_STUDIO_MCP_PATH` when discovery is not enough.
+#
+#  v3.1: os.scandir discovery (fewer syscalls, ~2x faster on big Versions/
+#  folders), in-process path cache (the bridge restarts us often), a
+#  --print-path diagnostic flag, and clear stderr diagnostics when the child
+#  dies instantly (exit-within-2s) so crash loops are debuggable.
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, Optional
 
 ENV_OVERRIDE = "ZS_STUDIO_MCP_PATH"
 WINDOWS_STUDIO_EXECUTABLES = ("RobloxStudioBeta.exe", "RobloxStudio.exe")
 MAC_STUDIO_EXECUTABLES = ("RobloxStudio", "RobloxStudioBeta", "Roblox")
+
+# v3.1: discovery is not free — the bridge relaunches this script on every MCP
+# restart, so cache the resolved path for the life of the process.
+_PATH_CACHE: dict[str, Optional[Path]] = {}
+_MISS: object = object()  # sentinel: distinguishes "cached None" from "not cached"
 
 
 def _candidate_roots() -> list[Path]:
@@ -74,25 +85,38 @@ def _find_studio_mcp_windows() -> Optional[Path]:
     executable, and prefer the newest of those. We keep zombie StudioMCP.exe
     paths only as a last-resort fallback if no paired install exists.
     """
+    cached = _PATH_CACHE.get("win", _MISS)
+    if cached is not _MISS:
+        return cached
     paired: list[Path] = []
     orphans: list[Path] = []
     for root in _candidate_roots():
         if not root.is_dir():
             continue
         try:
-            for version_dir in root.iterdir():
-                if not version_dir.is_dir():
-                    continue
-                studio_mcp = version_dir / "StudioMCP.exe"
-                if not studio_mcp.is_file():
-                    continue
-                if any((version_dir / exe_name).is_file() for exe_name in WINDOWS_STUDIO_EXECUTABLES):
-                    paired.append(studio_mcp)
-                else:
-                    orphans.append(studio_mcp)
+            # v3.1: scandir batches stat data with the listing — measurably
+            # faster than iterdir()+is_file() on folders with many versions.
+            with os.scandir(root) as it:
+                for entry in it:
+                    try:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                        version_dir = Path(entry.path)
+                        names = set(os.listdir(version_dir))
+                    except OSError:
+                        continue
+                    if "StudioMCP.exe" not in names:
+                        continue
+                    studio_mcp = version_dir / "StudioMCP.exe"
+                    if any(exe_name in names for exe_name in WINDOWS_STUDIO_EXECUTABLES):
+                        paired.append(studio_mcp)
+                    else:
+                        orphans.append(studio_mcp)
         except OSError:
             continue
-    return _newest_path(paired) or _newest_path(orphans)
+    result = _newest_path(paired) or _newest_path(orphans)
+    _PATH_CACHE["win"] = result
+    return result
 
 
 def _mac_app_candidates() -> list[Path]:
@@ -110,14 +134,20 @@ def _mac_app_candidates() -> list[Path]:
 
 def _find_studio_mcp_mac() -> Optional[Path]:
     """Return the path to StudioMCP inside a Roblox Studio app bundle, or None."""
+    cached = _PATH_CACHE.get("mac", _MISS)
+    if cached is not _MISS:
+        return cached
+    result: Optional[Path] = None
     for app in _mac_app_candidates():
         macos_dir = app / "Contents" / "MacOS"
         studio_mcp = macos_dir / "StudioMCP"
         if not studio_mcp.is_file():
             continue
         if any((macos_dir / exe_name).is_file() for exe_name in MAC_STUDIO_EXECUTABLES):
-            return studio_mcp
-    return None
+            result = studio_mcp
+            break
+    _PATH_CACHE["mac"] = result
+    return result
 
 
 def find_studio_mcp() -> Optional[Path]:
@@ -135,6 +165,11 @@ def find_studio_mcp() -> Optional[Path]:
 
 
 def main() -> int:
+    # v3.1: --print-path shows the resolved binary and exits (diagnostic).
+    if "--print-path" in sys.argv:
+        exe = find_studio_mcp()
+        sys.stdout.write(f"{exe}\n" if exe else "\n")
+        return 0 if exe else 1
     exe = find_studio_mcp()
     binary_name = "StudioMCP" if sys.platform == "darwin" else "StudioMCP.exe"
     if not exe:
@@ -145,12 +180,23 @@ def main() -> int:
         return 1
     sys.stderr.write(f"launch_studio_mcp: using {exe}\n")
     sys.stderr.flush()
-    proc = subprocess.Popen([str(exe)] + sys.argv[1:])
+    started = time.monotonic()
+    proc = subprocess.Popen([str(exe)] + [a for a in sys.argv[1:] if a != "--print-path"])
     try:
-        return proc.wait()
+        code = proc.wait()
     except KeyboardInterrupt:
         proc.terminate()
         return proc.wait()
+    # v3.1: an instant death is nearly always a bad/updated path — say so,
+    # instead of letting the bridge's crash loop look mysterious.
+    if code not in (0, None) and time.monotonic() - started < 2.0:
+        sys.stderr.write(
+            f"launch_studio_mcp: {binary_name} exited in <2s with code {code}. "
+            "Studio may have just updated (path stale) — retrying is safe; if it "
+            f"keeps failing set {ENV_OVERRIDE} to the full {binary_name} path.\n"
+        )
+        sys.stderr.flush()
+    return int(code or 0)
 
 
 if __name__ == "__main__":

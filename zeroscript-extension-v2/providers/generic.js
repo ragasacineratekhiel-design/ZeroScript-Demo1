@@ -13,11 +13,11 @@ const ZSGenericProvider = (() => {
   function setMeta(id, displayName) { _id = id; _displayName = displayName; }
 
   const timings = {
-    GEN_IDLE_MS: 2000,
+    GEN_IDLE_MS: 1500, // v3.1: snappier completion detection
     REASON_IDLE_MS: 12000,
     WARMUP_MS: 40000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 7000,
+    STABLE_MS: 6500,
     RESPONSE_TIMEOUT_MS: 300000,
   };
 
@@ -183,6 +183,12 @@ const ZSGenericProvider = (() => {
   return {
     get id(){ return _id; }, get displayName(){ return _displayName; },
     timings, supportsVision: true, chipAtItemLevel: true,
+    // v3.1 base discipline for every generic site (wrappers extend this via
+    // P.promptExtra): team roles are ENFORCED and /truth is a real command.
+    promptExtra:
+      "- TEAM ROLES (ENFORCED): planner plans ONLY and never runs write commands; coder is the ONLY role that writes/changes code; " +
+      "checker verifies and REPORTS but never edits — the coder makes the changes. Switch with {\"command\":\"set_role\",\"params\":{\"role\":\"planner|coder|checker\"}} and hand off via team_msg (kind plan/code/check/handoff).\n" +
+      "- TRUTH: writing /truth or running {\"command\":\"truth\"} executes the GROUND-TRUTH command (live Studio probe + real executed-tool ledger). Never present unverified claims as facts — label them \"not verified\".",
     init({diag:d}={}){ if(d) diag=d; },
     allItems, isUserItem, isAssistantItem, itemText, classifyText, assistantCount, userCount, lastAssistant, readAssistant, streamLen, snapshot,
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,

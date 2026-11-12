@@ -3,3 +3,11 @@
 # Windows (autocrlf), so pin these explicitly.
 *.command text eol=lf
 *.sh       text eol=lf
+
+# v3.1: Python sources + JSON configs stay LF everywhere (the bridge and
+# team.py read/write these cross-platform), JS/HTML/CSS normalise to LF in git.
+*.py   text eol=lf
+*.json text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf

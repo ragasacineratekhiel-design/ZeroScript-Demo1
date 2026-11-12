@@ -1,0 +1,16 @@
+# ZeroScript v3.1 — repo-wide ignores (the nested bundle has its own copy)
+# Bridge secrets — the auth token is machine-local, never committed
+.zs_token
+**/.zs_token
+
+# Runtime artifacts
+logs/
+**/logs/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Local dev / diagnostic tools
+probe.py
+devtools/
+*.zip

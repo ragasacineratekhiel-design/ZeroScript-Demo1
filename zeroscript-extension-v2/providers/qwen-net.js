@@ -67,22 +67,35 @@
     const dec = new TextDecoder();
     let buf = "";
     const acc = { rid: null, text: "", done: false };
+    // v3.1: scan-index folding (no per-line buf.slice O(n²) churn on long
+    // streams) + publish throttled to ~10Hz (a fast stream used to stringify
+    // the whole accumulator on EVERY network chunk).
+    let scan = 0, lastPublish = 0;
+    const publishThrottled = (force) => {
+      const now = Date.now();
+      if (force || now - lastPublish >= 100) {
+        lastPublish = now;
+        publish({ rid: acc.rid, text: acc.text, done: acc.done, t: now });
+      }
+    };
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += dec.decode(value, { stream: true });
         let idx;
-        while ((idx = buf.indexOf("\n")) >= 0) {
-          foldLine(buf.slice(0, idx), acc);
-          buf = buf.slice(idx + 1);
+        while ((idx = buf.indexOf("\n", scan)) >= 0) {
+          foldLine(buf.slice(scan, idx), acc);
+          scan = idx + 1;
         }
-        publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
+        // Compact the consumed prefix occasionally instead of every line.
+        if (scan > 65536) { buf = buf.slice(scan); scan = 0; }
+        publishThrottled(false);
       }
-      if (buf) foldLine(buf, acc);
+      if (scan < buf.length) foldLine(buf.slice(scan), acc);
     } catch {}
     acc.done = true;
-    publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
+    publishThrottled(true);
   }
 
   const origFetch = window.fetch;

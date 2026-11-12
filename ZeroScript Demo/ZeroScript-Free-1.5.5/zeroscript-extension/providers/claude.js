@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude.js — Anthropic Claude (claude.ai) MAX provider v3.0
+// providers/claude.js — Anthropic Claude (claude.ai) MAX provider v3.1
+// v3.1: team-role + /truth ground-truth discipline in PROMPT_EXTRA, faster
+// generation-idle detection (1200ms). Proven DOM contract unchanged.
 // Exports ZSProvider interface — copied 1:1 from deepseek/chatgpt quality, adapted for Claude's ProseMirror SPA.
 // Claude DOM notes (claude.ai 2025-2026, validated):
 // - Conversations: /chat/<uuid>, /new, /projects/<id>/chat/<uuid>
@@ -624,7 +626,9 @@ You are Claude MAX — Anthropic's most capable model. You execute with 1000× p
 - MAX SPEED: One execute_luau = entire folder tree (20+ Instance.new via loop). Batch where possible. Use return to verify, not description.
 - STUDIO TOTAL CONTROL: You OWN Workspace, Lighting, ReplicatedStorage, ServerScriptService, StarterGui, Teams, SoundService, HttpService etc. For Play/Stop use start_stop_play {is_start:true/false}. For settings, execute_luau direct mutation + return verification.
 - VERIFY LOOP: After every mutation, return the new state. If error, read it, fix ONE param, retry once. Never invent API.
-- OP METHODS ONLY: No one-liners, no print(), no guessing. Use ###LUA### blocks, pcall, type guards, debounce.`;
+- OP METHODS ONLY: No one-liners, no print(), no guessing. Use ###LUA### blocks, pcall, type guards, debounce.
+- TEAM ROLES (ENFORCED): planner plans ONLY and never runs write commands; coder is the ONLY role that writes/changes code; checker verifies and REPORTS but never edits — the coder makes the changes. Switch with {"command":"set_role","params":{"role":"planner|coder|checker"}} and hand off via team_msg (kind plan/code/check/handoff).
+- TRUTH: writing /truth or running {"command":"truth"} executes the GROUND-TRUTH command (live Studio probe + real executed-tool ledger). Never present unverified claims as facts — label them "not verified".`;
 
   return {
     id: "claude",

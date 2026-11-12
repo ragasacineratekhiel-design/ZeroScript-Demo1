@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX × Roblox Studio Agent",
-  "version": "3.0.0",
-  "description": "ZeroScript MAX 3.0 — MAXIMUM power: Claude MAX + All AI (ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena, Meta, Perplexity, Copilot, Grok, Poe, Mistral). Super-fast MAX 120ms hedge, 24-batch, zero hallucination, total Studio control (Play, settings, all services).",
+  "version": "3.1.0",
+  "description": "ZeroScript MAX 3.1 — team roles (planner/coder/checker, ENFORCED), /truth ground-truth command, bridge team hub + console, parallel tool calls. Claude MAX + All AI (ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena, Meta, Perplexity, Copilot, Grok, Poe, Mistral). Super-fast MAX 120ms hedge, 24-batch, zero hallucination, total Studio control (Play, settings, all services).",
   "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://chat.deepseek.com/*",

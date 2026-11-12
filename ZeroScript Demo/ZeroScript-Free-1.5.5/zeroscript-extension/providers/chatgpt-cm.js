@@ -66,6 +66,10 @@
     if (!doc) return false;
     const len = doc.length;
     if (seen.get(content) === len && content.hasAttribute(ATTR)) return true;
+    // v3.1: cap runaway documents — a pathological block past 250k chars is
+    // never a ZeroScript command (commands are far smaller) and re-stringifying
+    // it every tick burned CPU for nothing.
+    if (len > 250000) return false;
     let text;
     try { text = doc.toString(); } catch { return false; }
     try {
@@ -76,19 +80,33 @@
     return true;
   }
 
-  function syncAll() {
+  // v3.1: cached node list — re-query at most every 4th tick (the editor list
+  // changes rarely; the per-node len guard above catches content changes).
+  let _nodes = null, _nodesAt = 0;
+  function syncAll(force) {
     let n = 0;
-    for (const c of document.querySelectorAll(".cm-content")) if (syncOne(c)) n++;
+    const now = Date.now();
+    if (force || !_nodes || now - _nodesAt > 3500) {
+      _nodes = document.querySelectorAll(".cm-content");
+      _nodesAt = now;
+    }
+    for (const c of _nodes) if (syncOne(c)) n++;
     return n;
   }
 
-  document.addEventListener("zs-cm-sync", () => { try { syncAll(); } catch {} }, true);
+  document.addEventListener("zs-cm-sync", () => { try { syncAll(true); } catch {} }, true);
 
   // A streaming block changes without anyone asking, and the isolated world only
   // syncs when it reads. That is enough for correctness, but a cheap idle sync
   // keeps the attribute warm so the very first read of a finished block is
-  // already current.
-  const tick = () => { try { syncAll(); } catch {} };
+  // already current. v3.1: the warm tick STOPS while the tab is hidden (the
+  // core never reads off-screen anyway; the on-demand event covers the return).
+  const tick = () => {
+    try {
+      if (document.hidden) return;
+      syncAll(false);
+    } catch {}
+  };
   setInterval(tick, 1000);
   tick();
 

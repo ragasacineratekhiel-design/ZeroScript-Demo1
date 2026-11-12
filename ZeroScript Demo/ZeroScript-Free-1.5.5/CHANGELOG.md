@@ -2,6 +2,52 @@
 
 All notable changes to ZeroScript Free are documented here.
 
+## [3.1.0] - 2026-11-12 — Team roles, ground truth, bridge team hub & console
+
+### Fixed
+- **The AI can now communicate through the bridge console and hub.** The bridge
+  (`bridge.py`) hosts a role-aware TEAM HUB (planner/coder/checker/lead/user/
+  observer) and an interactive console (`help/status/tools/truth/hub/say/call`),
+  and `team.py` is the standalone Team Console & Hub for the same bus. The
+  extension reaches it via `team_msg` / `team_read` (WS `hub_send`/`hub_read`,
+  `POST /api/hub`, `GET /api/hub`).
+- **Roles are ENFORCED, not requested.** planner can never run write commands
+  (execute_luau/multi_edit/generate_*) — it plans and hands off; checker can
+  never edit or "upgrade" code — it verifies and REPORTS and the CODER makes
+  the change; coder is the only role that writes/changes code. Violations are
+  rejected mechanically (ROLE VIOLATION before the tool runs; the hub rejects
+  role-violating message kinds too). Tag commands with `"role":"planner"` or
+  switch via `{"command":"set_role","params":{"role":"..."}}`.
+- **`/truth` is now actually the truth.** Writing `/truth` (or running
+  `{"command":"truth"}`) executes a real ground-truth command: fresh Studio
+  probe, real bridge/server health, and the ledger of tool calls that ACTUALLY
+  executed with their real outcomes — never model claims. Claims without a tool
+  result behind them must be labelled "not verified".
+- **Parallel tool calls on the bridge.** The old per-server call lock serialized
+  every call (one 20s execute_luau blocked all other tools); JSON-RPC ids
+  already multiplex, so calls now run concurrently — only lifecycle transitions
+  lock. This was the main "the AI can't communicate through the bridge" bug.
+- Bridge no longer crashes background loops on a closed stdout, writes to dead
+  MCP children fail cleanly, `studio_full_tree` no longer wastes a probe call
+  per service, and the CORS allowlist finally covers all 14 supported AI sites.
+
+### Added
+- `team.py` — Team Console & Hub (auto-starts the bridge, `say/as/msgs/watch/
+  role/roles/call/truth/status/tools`, stdlib-only).
+- Bridge console REPL + `POST /api/hub`, `GET /api/hub`, `GET /api/truth`,
+  `POST /api/role` + WS `hub_send`/`hub_read`/`set_role`/`truth` messages.
+- Popup role selector (Lead/Planner/Coder/Checker/Observer) + "Ground truth"
+  readout; role badge on the in-page bar.
+
+### Faster
+- Tool calls run concurrently on the bridge (see above); `probe_studio()` is
+  TTL-cached (0.7s); broadcast status caches the tool catalogue; parser accepts
+  role-tagged envelopes and `/truth /team /plan /check` slash commands with the
+  same fast-path scanning; Qwen network tap folds SSE without O(n²) slicing and
+  throttles publishes to 10Hz; ChatGPT CodeMirror tap pauses warm-sync on
+  hidden tabs and caches its node list; provider generation-idle detection is
+  200-500ms tighter across the board.
+
 ## [1.5.5] - 2026-09-10
 
 ### Fixed

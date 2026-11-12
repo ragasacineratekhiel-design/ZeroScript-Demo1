@@ -4,6 +4,13 @@ Control Roblox Studio with AI, for free. ZeroScript turns a normal AI chat (Chat
 
 It's a Chrome/Edge browser extension plus a small local bridge that connects the chat to Roblox Studio through the official MCP server. **DeepSeek is the recommended provider.** ChatGPT, Gemini, Kimi, GLM, Qwen, Arena and Meta AI also work. On ChatGPT, screenshots and image input are disabled on purpose (its free tier caps files/images on a separate quota from messages, so vision would only work part of the day); ChatGPT also summarises its own context in long sessions, so ZeroScript re-states its operating instructions periodically (shown as a "Reminder" chip) to stop it forgetting it can run commands. Gemini and Kimi can be less stable: Gemini tends to stop using the Roblox tools in long sessions, and Kimi sometimes reaches for its own native tools instead of the Roblox commands. On Arena, keep the mode dropdown on **Direct** (ZeroScript only supports Direct mode).
 
+## What's new in v3.1.0 — Team Roles + Ground Truth + Team Hub
+
+- **Team roles (ENFORCED):** `planner` plans only (never runs write commands), `coder` is the ONLY role that writes/changes code, `checker` verifies and REPORTS but never edits (the coder makes the changes), `lead` = full access (default). Switch with `{"command":"set_role","params":{"role":"planner|coder|checker"}}` or tag a command with `"role":"…"`. Wrong-role write commands are rejected mechanically before they run.
+- **`/truth` is a real command:** writing `/truth` runs a ground-truth check — fresh Studio probe, real bridge health, and the ledger of tool calls that actually executed with their real outcomes. Unverified statements must say "not verified".
+- **Team hub:** `team_msg`/`team_read` route role-checked messages (plan/code/check/handoff) through the bridge hub; the bridge console and `python team.py` show the same stream.
+- **Faster:** parallel tool calls on the bridge, cached Studio probes, tighter generation-idle detection on all providers.
+
 ## Setup
 
 **Load the extension manually (Edge or Chrome):**

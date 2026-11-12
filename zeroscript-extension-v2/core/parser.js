@@ -90,6 +90,9 @@ const ZSParse = (() => {
     if(!r || r.length<8) return false;
     if(r.includes(START_M)) return true;
     if(r.includes("MCP_TOOL")) return true;
+    // v3.1: slash commands count as tool signatures (cheap pre-check first)
+    if(r.length>3 && r.includes("/truth")) { if(SLASH_CMD_RE.test(r)) return true; }
+    if(r.length>3 && (r.includes("/team")||r.includes("/plan")||r.includes("/check"))) { if(SLASH_CMD_RE.test(r)) return true; }
     // CMD_KEY_RE is heavier — only run on longer texts that look like JSON
     if(r.length>12 && r.includes('"command"') || r.includes('"tool"')) return true;
     if(LUA_START_RE.test(r)) return true;
@@ -124,16 +127,21 @@ const ZSParse = (() => {
     return false;
   }
 
-  // Normalise a parsed JSON object into { tool, arguments }, accepting both the
-  // new ZeroScript schema ("command"/"params") and the legacy/function-calling
-  // schema ("tool"/"arguments"/"name"/"args"). Returns null if not a valid call.
+  // Normalise a parsed JSON object into { tool, arguments, role? }, accepting
+  // both the new ZeroScript schema ("command"/"params") and the legacy/
+  // function-calling schema ("tool"/"arguments"/"name"/"args"). An optional
+  // top-level "role" (v3.1 team roles) travels with the call so the executor
+  // can enforce planner/coder/checker discipline per command. Returns null if
+  // not a valid call.
   function normalizeCall(o) {
     if (!o || typeof o !== "object") return null;
     const name = o.command != null ? o.command : (o.tool != null ? o.tool : o.name);
     let args = o.params != null ? o.params : (o.arguments != null ? o.arguments : o.args);
     if (typeof name !== "string" || !name) return null;
     if (!args || typeof args !== "object") args = {};
-    return { tool: name, arguments: args };
+    const call = { tool: name, arguments: args };
+    if (typeof o.role === "string" && o.role.trim()) call.role = o.role.trim().toLowerCase();
+    return call;
   }
 
   // String-aware matching-brace finder: index of the "}" that closes the "{" at
@@ -282,6 +290,11 @@ const ZSParse = (() => {
         out.push({ tool: "execute_luau", arguments: { code: stripCodeChrome(r.slice(ls + luaLen, le).trim()), datamodel_type: dm } });
       }
     }
+    // v3.1: slash commands (/truth /team /plan /check) as a final fallback.
+    if (out.length === 0) {
+      const sc = slashToCall(r);
+      if (sc) out.push(sc);
+    }
     return out.map(cleanLuaCall);
   }
 
@@ -356,6 +369,25 @@ const ZSParse = (() => {
     return null;
   }
 
+  // v3.1 slash commands: `/truth`, `/team <text>`, `/plan <text>`, `/check
+  // <text>` at the START of a line are real commands, not prose. This is what
+  // makes "the AI using /truth external commands" actually TRUE: /truth now
+  // maps to the ground-truth command (live bridge + executed-tool ledger)
+  // instead of being a bare claim the model writes next to it. Mid-line
+  // mentions ("use /truth to check") never match — the marker must start a line.
+  const SLASH_CMD_RE = /^[ \t]*\/(truth|team|plan|check)\b[ \t]*([^\n]*)/im;
+  function slashToCall(text) {
+    const m = SLASH_CMD_RE.exec(text);
+    if (!m) return null;
+    const cmd = m[1].toLowerCase();
+    const rest = (m[2] || "").trim();
+    if (cmd === "truth") return { tool: "truth", arguments: {} };
+    if (cmd === "team") return { tool: "team_msg", arguments: { kind: "msg", text: rest } };
+    if (cmd === "plan") return { tool: "team_msg", arguments: { kind: "plan", text: rest, role: "planner" } };
+    if (cmd === "check") return { tool: "team_msg", arguments: { kind: "check", text: rest, role: "checker" } };
+    return null;
+  }
+
   function toolNameFromText(txt) {
     // Match the name even BEFORE its closing quote (`[^"]*`), so the chip shows
     // the real command name AS IT IS TYPED instead of a generic "command"
@@ -367,6 +399,8 @@ const ZSParse = (() => {
     const m = txt.match(/"(?:command|tool)"\s*:\s*"([^"]*)/);
     if (m && m[1].trim()) return m[1].trim();
     if (txt.includes("execute_luau") || LUA_START_RE.test(txt)) return "execute_luau";
+    const sm = SLASH_CMD_RE.exec(txt); // v3.1: /truth /team /plan /check chips
+    if (sm) return sm[1].toLowerCase() === "truth" ? "truth" : "team_msg";
     return "command";
   }
 
@@ -393,12 +427,13 @@ const ZSParse = (() => {
     return txt.includes(START_M) ||
            LUA_START_RE.test(txt) ||
            DSML_RE.test(txt) ||
-           CMD_KEY_RE.test(txt); // command/tool with OR without params (e.g. list_commands)
+           CMD_KEY_RE.test(txt) || // command/tool with OR without params (e.g. list_commands)
+           (SLASH_CMD_RE.test(txt) && txt.length < 4000); // v3.1 slash commands (/truth …)
   }
 
   return {
-    START_M, END_M, LUA_START_RE, LUA_END_RE, CMD_KEY_RE, DSML_RE,
-    findLuaStart, findLuaEnd, matchBrace, extractJson, normalizeCall,
+    START_M, END_M, LUA_START_RE, LUA_END_RE, CMD_KEY_RE, DSML_RE, SLASH_CMD_RE,
+    findLuaStart, findLuaEnd, matchBrace, extractJson, normalizeCall, slashToCall,
     hasToolSignature, hasOpenToolBlock, hasOpenToolBlockCached, parseToolCalls, parseToolCallsCached, salvageCutOff, toolNameFromText,
     isInjectedFeedback, hasCommandShape,
   };

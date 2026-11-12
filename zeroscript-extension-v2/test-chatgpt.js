@@ -123,3 +123,24 @@ const withChip = P.textWithout(
   ".zs-chip"
 );
 ok("excluded subtree is skipped", withChip.includes("real reply") && !withChip.includes("execute_luau"));
+
+// ── v3.1: team-role + /truth discipline must stay in EVERY provider prompt ──
+// The extension ENFORCES roles in the executor (core/main.js runTool), but the
+// prompt rules are what teach the model the workflow (planner plans, coder
+// codes, checker verifies + reports, /truth is a real command). These
+// assertions guard every provider against silent regressions of that text.
+{
+  const providerSrc = fs.readFileSync(__dirname + "/providers/chatgpt.js", "utf8");
+  ok("chatgpt PROMPT_EXTRA teaches team roles", providerSrc.includes("TEAM ROLES (ENFORCED)"));
+  ok("chatgpt PROMPT_EXTRA teaches /truth ground truth", providerSrc.includes("GROUND-TRUTH command"));
+  for (const name of ["deepseek", "gemini", "claude", "glm", "kimi", "meta", "qwen", "arena", "generic",
+                      "copilot", "grok", "poe", "mistral", "perplexity"]) {
+    const s = fs.readFileSync(`${__dirname}/providers/${name}.js`, "utf8");
+    ok(`${name}.js carries team-role + truth rules`, s.includes("TEAM ROLES") && /truth/i.test(s));
+  }
+  // The executor's role gate + truth ledger must exist in the core too.
+  const coreSrc = fs.readFileSync(__dirname + "/core/main.js", "utf8");
+  ok("main.js has the enforced role gate", coreSrc.includes("roleAllows") && coreSrc.includes("roleViolation"));
+  ok("main.js has the truth command", coreSrc.includes('name === "truth"'));
+  ok("main.js records the truth ledger", coreSrc.includes("truthLedger"));
+}

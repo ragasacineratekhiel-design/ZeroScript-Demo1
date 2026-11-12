@@ -954,6 +954,11 @@ const ZSProvider = (() => {
   return {
     id: "deepseek",
     displayName: "DeepSeek",
+    // v3.1: team-role + ground-truth discipline rides on the system prompt.
+    promptExtra:
+      "- TEAM ROLES (ENFORCED): planner plans ONLY and never runs write commands; coder is the ONLY role that writes/changes code; " +
+      "checker verifies and REPORTS but never edits — the coder makes the changes. Switch with {\"command\":\"set_role\",\"params\":{\"role\":\"planner|coder|checker\"}} and hand off via team_msg (kind plan/code/check/handoff).\n" +
+      "- TRUTH: writing /truth or running {\"command\":\"truth\"} executes the GROUND-TRUTH command (live Studio probe + real executed-tool ledger). Never present unverified claims as facts — label them \"not verified\".",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see
     // enforceComposer) and this getter flips true, so main.js stops blocking
@@ -972,7 +977,7 @@ const ZSProvider = (() => {
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsDsVer).
       // BUMP DS_VER on meaningful deepseek.js changes worth verifying live.
-      try { document.documentElement.setAttribute("data-zs-ds-ver", "2026-09_unified-model"); } catch {}
+      try { document.documentElement.setAttribute("data-zs-ds-ver", "2026-11_team-truth"); } catch {}
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,

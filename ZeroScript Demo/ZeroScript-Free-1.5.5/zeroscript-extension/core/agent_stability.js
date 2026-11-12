@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX Agent Stability Layer v3.0.0 MAX
+// core/agent_stability.js — ZeroScript MAX Agent Stability Layer v3.1.0 MAX
 // Makes ALL 14 agents (DeepSeek, ChatGPT, Gemini, Claude MAX, Kimi, GLM, Qwen, Arena, Meta, Perplexity, Copilot, Grok, Poe, Mistral)
 // super compatible, never lose connections, super stable during Roblox Studio at MAX speed.
-// Logic-only upgrade: no GUI/text changes. MAX hedging.
+// v3.1: fallback editors for the 5 generic-wrapper sites (perplexity/copilot/
+// grok/poe/mistral) which previously fell back to the deepseek list, faster
+// editor rediscovery (2.5s pin), leaner keepalive. Logic-only: no GUI changes.
 // eslint-disable-next-line no-unused-vars
 const ZSAgentStability = (() => {
   "use strict";
@@ -10,7 +12,7 @@ const ZSAgentStability = (() => {
     let lastGood = null, lastGoodAt = 0;
     return function hardenedGetEditor() {
       const now = Date.now();
-      if (lastGood && now - lastGoodAt < 3000 && document.contains(lastGood)) return lastGood; // MAX 3s tighter
+      if (lastGood && now - lastGoodAt < 2500 && document.contains(lastGood)) return lastGood; // v3.1: 2.5s pin
       let ed = null;
       try { ed = getEditorFn(); } catch {}
       if (ed && document.contains(ed)) { lastGood = ed; lastGoodAt = now; return ed; }
@@ -101,6 +103,13 @@ const ZSAgentStability = (() => {
     qwen: [".message-input-textarea", "textarea", "[contenteditable=true]", ".qwen-composer-editor"],
     meta: ["[data-testid=composer-input]", "textarea", "[contenteditable=true]", "div[contenteditable]"],
     arena: ["textarea", "form textarea", "[contenteditable=true]", "div[role=textbox]"],
+    // v3.1: the five generic-wrapper sites each get their own list so a DOM
+    // change on one can no longer drag all of them to the deepseek fallbacks.
+    perplexity: ["textarea", "textarea[placeholder]", "[contenteditable=true]", "div[role=textbox]", "div.ProseMirror"],
+    copilot: ["textarea", "#userInput", "[contenteditable=true]", "div[role=textbox]", "div.ProseMirror"],
+    grok: ["textarea", "[contenteditable=true]", "div[role=textbox]", "div.ProseMirror"],
+    poe: ["textarea", "[contenteditable=true]", "div[role=textbox]", "div.ProseMirror"],
+    mistral: ["textarea", "[contenteditable=true]", "div[role=textbox]", "div.ProseMirror"],
     generic: ["textarea", "[contenteditable=true]", "[role=textbox]", "div.ProseMirror", "div[contenteditable]"],
   };
 
@@ -142,11 +151,11 @@ const ZSAgentStability = (() => {
     } catch(e){ try{ console.log("[zs-max] patch failed", e);}catch{} return false; }
   }
   try { setTimeout(tryPatch, 50); } catch {}
-  try { setTimeout(tryPatch, 300); } catch {}
-  try { setTimeout(tryPatch, 800); } catch {}
+  try { setTimeout(tryPatch, 250); } catch {}
+  try { setTimeout(tryPatch, 700); } catch {}
   try {
     let tries=0;
-    const iv=setInterval(()=>{ if (tryPatch() || ++tries>40) clearInterval(iv); }, 180);
+    const iv=setInterval(()=>{ if (tryPatch() || ++tries>40) clearInterval(iv); }, 150); // v3.1: faster rediscovery
   } catch {}
   try {
     let _ZS = typeof ZSProvider !== "undefined" ? ZSProvider : null;

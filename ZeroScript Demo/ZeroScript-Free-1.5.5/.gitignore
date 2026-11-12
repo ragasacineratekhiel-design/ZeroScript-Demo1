@@ -1,4 +1,4 @@
-﻿# Local-only folders
+# Local-only folders
 Compressed/
 Deprecated/
 ExtensionPresentation/
@@ -12,6 +12,12 @@ docs/
 probe.py
 logs/
 devtools/
+*.pyc
+.pytest_cache/
+
+# Bridge secrets (auth token) — never commit
+.zs_token
+**/.zs_token
 
 # System files
 .DS_Store

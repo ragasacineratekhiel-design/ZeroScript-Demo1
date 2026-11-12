@@ -106,7 +106,7 @@ const ZSProvider = (() => {
   // ChatGPT streams continuously with a hard stop-button signal for the WHOLE
   // generation (including reasoning), so windows can be tight like Gemini.
   const timings = {
-    GEN_IDLE_MS: 1500,
+    GEN_IDLE_MS: 1200, // v3.1: snappier completion detection (stability layer still tolerates growth)
     REASON_IDLE_MS: 12000,
     WARMUP_MS: 45000,
     REASON_NOREPLY_MS: 90000,
@@ -775,7 +775,9 @@ const ZSProvider = (() => {
   // producing a new picture instead of doing the Roblox work the image was
   // meant to illustrate. Its native image tool also runs in the sandbox that
   // cannot touch the user's project, so a generated image is a dead end here.
-  const PROMPT_EXTRA = `- WHEN THE USER SENDS AN IMAGE: by default it is REFERENCE MATERIAL for the work they want done in their project - a screenshot of a bug, a mockup of the UI they want, a photo of the thing to build, a picture of what is wrong in Studio. Look at it, use it to understand what they want, and then do that work with the ZeroScript commands. Do NOT generate a new image from it, and do NOT treat it as an image-editing request. Only generate an image when the user EXPLICITLY asks you to create, generate, draw or edit one ("make me an image of...", "generate a texture", "edit this picture"). If what they want from the image is genuinely unclear, ask them in one short sentence rather than guessing - and never guess "they want a picture".`;
+  const PROMPT_EXTRA = `- WHEN THE USER SENDS AN IMAGE: by default it is REFERENCE MATERIAL for the work they want done in their project - a screenshot of a bug, a mockup of the UI they want, a photo of the thing to build, a picture of what is wrong in Studio. Look at it, use it to understand what they want, and then do that work with the ZeroScript commands. Do NOT generate a new image from it, and do NOT treat it as an image-editing request. Only generate an image when the user EXPLICITLY asks you to create, generate, draw or edit one ("make me an image of...", "generate a texture", "edit this picture"). If what they want from the image is genuinely unclear, ask them in one short sentence rather than guessing - and never guess "they want a picture".
+- TEAM ROLES (ENFORCED): planner plans ONLY and never runs write commands; coder is the ONLY role that writes/changes code; checker verifies and REPORTS but never edits — the coder makes the changes. Switch with {"command":"set_role","params":{"role":"planner|coder|checker"}} and hand off via team_msg (kind plan/code/check/handoff).
+- TRUTH: writing /truth or running {"command":"truth"} executes the GROUND-TRUTH command (live Studio probe + real executed-tool ledger). Never present unverified claims as facts — label them "not verified".`;
 
   // ── User-send interception ────────────────────────────────────────────────
   function installSendHooks(handlers) {

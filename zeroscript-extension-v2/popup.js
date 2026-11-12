@@ -12,7 +12,7 @@ const DEFAULT_AI_URL = "https://chat.deepseek.com/";
 
 function safeVer() {
   try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch {}
-  return "v2.3.0";
+  return "v3.1.0";
 }
 try { document.getElementById("ver").textContent = safeVer(); } catch {}
 
@@ -63,6 +63,31 @@ bind("restart", (e) => {
   try { chrome.runtime.sendMessage({ type: "restart_mcp" }, () => { t.textContent = "⟳ Restart Roblox server"; setTimeout(refresh, 600); }); } catch { t.textContent = "⟳ Restart Roblox server"; }
 });
 bind("kofi", () => { try { chrome.tabs.create({ url: KOFI_URL }); } catch { window.open(KOFI_URL, "_blank"); } });
+// v3.1: ground-truth readout — live-verified facts only (bridge probe + ledger)
+bind("truth", () => {
+  const out = document.getElementById("truth-out");
+  if (out) { out.style.display = "block"; out.textContent = "Checking ground truth…"; }
+  const done = (txt) => { if (out) out.textContent = txt; };
+  try {
+    chrome.runtime.sendMessage({ type: "truth" }, (r) => {
+      if (!r || r.type !== "truth") return done("Bridge unreachable — run start.bat / MacOS_START.command");
+      const s = r.studio || {};
+      const b = r.bridge || {};
+      const lines = [
+        `bridge v${b.version || "?"} · up ${Math.round(b.uptime || 0)}s · mcp ${r.mcp && r.mcp.alive ? "alive" : "down"}`,
+        `Studio: app=${s.app === null ? "?" : s.app} place=${s.place === null ? "?" : s.place}`,
+        `tools ${r.tools_total ?? "?"} · calls ${(r.stats || {}).tool_calls ?? "?"} · errors ${(r.stats || {}).tool_errors ?? "?"}`,
+      ];
+      for (const e of (r.ledger || []).slice(-6)) lines.push(`${e.ok ? "OK " : "ERR"} ${e.tool} ${e.ms}ms`);
+      done(lines.join("\n"));
+    });
+  } catch { done("unavailable"); }
+});
+// v3.1: role selector — mirrors the session role to the team hub (enforced)
+const roleSel = document.getElementById("role");
+if (roleSel) roleSel.addEventListener("change", () => {
+  try { chrome.runtime.sendMessage({ type: "set_role", agent: "extension", role: roleSel.value }, () => {}); } catch {}
+});
 bind("settings", () => {
   try {
     if (typeof chrome === "undefined" || !chrome.tabs) { window.open(DEFAULT_AI_URL, "_blank"); return; }
