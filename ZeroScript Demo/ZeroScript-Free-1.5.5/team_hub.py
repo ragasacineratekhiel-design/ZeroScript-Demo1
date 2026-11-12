@@ -22,6 +22,25 @@ class TeamError(ValueError):
     pass
 
 
+def _run_as_app():
+    """Double-click entry point: start the actual bridge instead of exiting silently."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    launcher = Path(__file__).with_name("start.py")
+    if not launcher.is_file():
+        print("Cannot find start.py beside team_hub.py. Run the ZeroScript launcher from the installed folder.")
+        if sys.stdin.isatty(): input("Press Enter to close...")
+        return 2
+    print("Team Hub is a library for bridge.py. Starting ZeroScript bridge; keep this window open.")
+    try:
+        return subprocess.call([sys.executable, str(launcher)])
+    except Exception as exc:
+        print(f"Could not start the bridge: {exc}")
+        if sys.stdin.isatty(): input("Press Enter to close...")
+        return 1
+
+
 class TeamHub:
     def __init__(self, ttl=45, clock=time.monotonic):
         self.lock = threading.RLock()
@@ -239,3 +258,7 @@ class TeamHub:
     def event_log(self, since=0):
         with self.lock:
             return {"ok": True, "events": [e for e in self.events if e["seq"] > since], "cursor": self.seq, "reset": since > self.seq, "truncated": bool(self.events and since and since < self.events[0]["seq"] - 1)}
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run_as_app())

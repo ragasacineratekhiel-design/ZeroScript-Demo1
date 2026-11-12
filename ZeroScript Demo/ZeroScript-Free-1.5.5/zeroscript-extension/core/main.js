@@ -1825,7 +1825,10 @@
                   continue;
                 }
                 diag("exec.peer.timeout", { role, to: assigned });
-                ui.banner("warn", `No reply from ${assigned}`, `Is its tab open? Falling back to this AI for the ${role} turn.`);
+                ui.banner("warn", `No reply from ${assigned}`, `The ${role} turn was not completed. This AI will not impersonate the assigned agent. Check that agent's tab and resume the loop.`);
+                A.stop = true;
+                A.userStopped = true;
+                break;
               }
             }
           } catch (_e) { globalThis.ZSSafe?.seen?.("main.roleNames", _e); }
