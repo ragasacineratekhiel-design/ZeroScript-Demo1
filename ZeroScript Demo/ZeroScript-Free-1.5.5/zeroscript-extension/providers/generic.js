@@ -79,11 +79,25 @@ const ZSGenericProvider = (() => {
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
   const lastAssistant = () => { const a = assistantItems(); return a.length ? a[a.length-1] : null; };
+  const _idMap = new WeakMap();
+  let _idSeq = 0;
+  function itemKey(it) {
+    if (!it) return null;
+    const attr = it.getAttribute && (it.getAttribute("data-message-id") || it.getAttribute("data-testid"));
+    if (attr) return attr;
+    let id = _idMap.get(it);
+    if (!id) { id = "gen-" + (++_idSeq); _idMap.set(it, id); }
+    return id;
+  }
+  const lastAssistantId = () => itemKey(lastAssistant());
 
   const itemText = (item) => textWithout(item);
   const classifyText = (item, excludeSel) => textWithout(item, excludeSel);
 
+  let _edCache = null, _edAt = 0;
   function getEditor() {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && _edCache.offsetParent !== null && now - _edAt < 80) return _edCache;
     const sels = [
       "fieldset [contenteditable='true']", // Claude 2026 fieldset
       "fieldset textarea",
@@ -93,10 +107,10 @@ const ZSGenericProvider = (() => {
     ];
     for (const sel of sels) {
       const els = [...document.querySelectorAll(sel)].filter(e => !e.closest("#zs-root") && e.offsetParent !== null);
-      if (els.length) return els[els.length-1];
+      if (els.length) { _edCache = els[els.length-1]; _edAt = now; return _edCache; }
     }
     const all = [...document.querySelectorAll("[contenteditable]")].filter(e=>!e.closest("#zs-root"));
-    return all.length ? all[all.length-1] : null;
+    _edCache = all.length ? all[all.length-1] : null; _edAt = now; return _edCache;
   }
   const editorText = () => { const e=getEditor(); return e ? (e.innerText||e.value||e.textContent||"") : ""; };
   const chatIsEmpty = () => allItems().length === 0;
@@ -135,8 +149,8 @@ const ZSGenericProvider = (() => {
   const isGenerating=genActive, isBusyNow=genActive, isHardGenerating=genActive;
   const turnHalted=()=>false;
   const findContinueBtn=()=>{ for(const b of document.querySelectorAll("button")) if(/continue/i.test(b.innerText||"") && b.offsetParent!==null) return b; return null; };
-  const clickContinueBtn=()=>{ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch{return false;}};
-  const snapshot=()=>{ try{ const it=lastAssistant(); return {rp:(it?.textContent||"").length}; }catch{return {};}};
+  const clickContinueBtn=()=>{ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch(_e){globalThis.ZSSafe?.seen?.("generic.continue",_e);return false;}};
+  const snapshot=()=>{ try{ const it=lastAssistant(); return {rp:(it?.textContent||"").length}; }catch(_e){globalThis.ZSSafe?.seen?.("generic.snapshot",_e);return {};}};
   const readAssistant=()=>{ const it=lastAssistant(); if(!it) return{present:false,reply:"",thinking:"",item:null}; return{present:true, reply:textWithout(it).trim(), thinking:"", item:it}; };
   const SEND_MAX_CHARS=100000;
   const truncateForSend=(t)=> t&&t.length>SEND_MAX_CHARS ? t.slice(0,SEND_MAX_CHARS-500)+"\n\n[…truncated…]\n\n"+t.slice(-500) : t;
@@ -152,7 +166,7 @@ const ZSGenericProvider = (() => {
         else { ed.textContent=text; ed.dispatchEvent(new InputEvent("input",{bubbles:true})); }
       }
       return true;
-    }catch{ try{ ed.textContent=text; ed.dispatchEvent(new Event("input",{bubbles:true})); return true;}catch{return false;}}
+    }catch(_e){ globalThis.ZSSafe?.seen?.("generic.setEditorText",_e); try{ ed.textContent=text; ed.dispatchEvent(new Event("input",{bubbles:true})); return true;}catch(_e2){globalThis.ZSSafe?.seen?.("generic.setEditorText2",_e2);return false;}}
   }
 
   async function typeAndSend(text, images){
@@ -185,7 +199,7 @@ const ZSGenericProvider = (() => {
       if (/verify you are human|unusual traffic/i.test((document.body.innerText || "").slice(0, 1500)))
         return "Captcha / verification in the way — solve it first";
       return null;
-    }catch{ return null; }
+    }catch(_e){ globalThis.ZSSafe?.seen?.("generic.modeWarning",_e); return null; }
   };
   const scanError=()=>{ const t=document.body.innerText; if(/rate limit|too many requests|quota exceeded/i.test(t.slice(-2000))) return "Rate limited"; if(!getEditor()) return "Input disappeared"; return null; };
   const isTooLongMsg=(t)=>/conversation too long/i.test(t);
@@ -231,10 +245,10 @@ const ZSGenericProvider = (() => {
     get id(){ return _id; }, get displayName(){ return _displayName; },
     timings, supportsVision: true, chipAtItemLevel: true,
     init({diag:d}={}){ if(d) diag=d; },
-    allItems, isUserItem, isAssistantItem, itemText, classifyText, assistantCount, userCount, lastAssistant, readAssistant, streamLen, snapshot,
+    allItems, isUserItem, isAssistantItem, itemText, classifyText, assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant, streamLen, snapshot,
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating, enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
     scanError, modeWarning, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
-    setMeta, _setMeta:setMeta, makeMeta, version:"4.5.0"
+    setMeta, _setMeta:setMeta, makeMeta, version:"4.6.0"
   };
 })();

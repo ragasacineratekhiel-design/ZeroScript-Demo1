@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.5.0";
+  const WALL_VERSION = "4.6.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
@@ -68,6 +68,7 @@ _One-line what this place is_
   let _ctxCache = "";
   let _ctxAt = 0;
   let _ctxDirty = true;
+  let _ctxQuery = "";
 
   function nowISO(){ try{ return new Date().toISOString(); }catch{ return ""; } }
 
@@ -244,6 +245,9 @@ _One-line what this place is_
     },
     buildTrimmedContext(query, budget=600){
       if(!query || !String(query).trim()) return this.buildContext();
+      // 4.6.0 speed: identical query+budget within 2s reuses the last result.
+      const _qk = String(query).slice(0, 200) + "|" + budget;
+      if (_ctxCache && _ctxQuery === _qk && Date.now() - _ctxAt < 2000) return _ctxCache;
       const trimmedWall = this.trimContextFor(query, budget);
       if(!_ctxDirty && _ctxCache && Date.now()-_ctxAt < 2000 && !query) return _ctxCache; // MAX 2s
       const w=ensureWall();
@@ -254,7 +258,9 @@ _One-line what this place is_
         if(arr.length) lines.push(`${kind}: ${arr.map(x=>x.fact).join(" | ").slice(0,140)}`);
       }
       lines.push(`Wall preview (trimmed for task): ${trimmedWall.replace(/\s+/g," ").slice(0,600)}`);
-      return lines.join("\n");
+      const _out = lines.join("\n");
+      _ctxCache = _out; _ctxAt = Date.now(); _ctxQuery = _qk; _ctxDirty = false;
+      return _out;
     },
     // explicit fast stats for fact-check
     stats: ()=> ({ version: WALL_VERSION, wallLen: (ensureWall().wall||"").length, facts: Object.keys(ensureWall().facts||{}).length, ctxCached: !_ctxDirty, debounceMs: 5 }),

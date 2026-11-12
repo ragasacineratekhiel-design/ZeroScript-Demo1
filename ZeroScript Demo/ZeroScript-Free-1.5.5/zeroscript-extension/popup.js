@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+const VERSION = "4.6.0";
 const KOFI_URL = "https://ko-fi.com/sebattfg";
 const SUPPORTED_HOSTS = [
   "chat.deepseek.com", "deepseek.com", "chatgpt.com", "chat.openai.com",
   "gemini.google.com", "claude.ai",
   "www.kimi.ai", "kimi.ai",
-  "chat.z.ai", "chat.qwen.ai", "arena.ai", "www.meta.ai", "meta.ai",
+  "chat.z.ai", "z.ai", "chat.qwen.ai", "qwen.ai", "arena.ai", "lmarena.ai", "www.meta.ai", "meta.ai",
   "perplexity.ai", "www.perplexity.ai", "copilot.microsoft.com",
-  "grok.com", "x.ai", "poe.com", "chat.mistral.ai",
+  "grok.com", "x.ai", "poe.com", "chat.mistral.ai", "mistral.ai",
 ];
 const DEFAULT_AI_URL = "https://chat.deepseek.com/";
+function isSupportedUrl(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    const bare = h.replace(/^www\./, "");
+    return SUPPORTED_HOSTS.some((sh) => h === sh || bare === sh || bare.endsWith("." + sh));
+  } catch (_e) { globalThis.ZSSafe?.seen?.("popup.isSupportedUrl", _e); return false; }
+}
 
 function safeVer() {
   try { if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) return "v" + chrome.runtime.getManifest().version; } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
-  return "v4.5.0";
+  return "v" + VERSION;
 }
 try { document.getElementById("ver").textContent = safeVer(); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.safeVer", _e); }
 
@@ -39,6 +47,13 @@ function render(s) {
   if (servers) servers.textContent = s.connected
     ? list.map((x) => `${x.alive ? "●" : "○"} ${x.id} (${x.alive ? x.tools + " tools" : "down"})`).join("\n")
     : "";
+  const roster = document.getElementById("team-roster");
+  if (roster) {
+    const tb = Array.isArray(s.teamBindings) ? s.teamBindings : [];
+    roster.textContent = tb.length
+      ? "Bound tabs: " + tb.map((b) => `${b.role}=${b.name}`).join(" · ")
+      : "";
+  }
 }
 
 function renderFaults(s) {
@@ -68,7 +83,7 @@ function refresh() {
       return;
     }
     chrome.runtime.sendMessage({ type: "status" }, (s) => s && render(s));
-  } catch { render({ connected: false, tools: 0, servers: [] }); }
+  } catch (_e) { globalThis.ZSSafe?.seen?.("popup.refresh", _e); render({ connected: false, tools: 0, servers: [] }); }
 }
 
 function bind(id, fn) {
@@ -81,15 +96,15 @@ bind("reconnect", () => {
 });
 bind("restart", (e) => {
   const t = e.target; t.textContent = "Restarting…";
-  try { chrome.runtime.sendMessage({ type: "restart_mcp" }, () => { t.textContent = "⟳ Restart Roblox server"; setTimeout(refresh, 600); }); } catch { t.textContent = "⟳ Restart Roblox server"; }
+  try { chrome.runtime.sendMessage({ type: "restart_mcp" }, () => { t.textContent = "⟳ Restart Roblox server"; setTimeout(refresh, 600); }); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.restart", _e); t.textContent = "⟳ Restart Roblox server"; }
 });
-bind("kofi", () => { try { chrome.tabs.create({ url: KOFI_URL }); } catch { window.open(KOFI_URL, "_blank"); } });
+bind("kofi", () => { try { chrome.tabs.create({ url: KOFI_URL }); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.kofi", _e); window.open(KOFI_URL, "_blank"); } });
 bind("settings", () => {
   try {
     if (typeof chrome === "undefined" || !chrome.tabs) { window.open(DEFAULT_AI_URL, "_blank"); return; }
     chrome.tabs.query({}, (tabs) => {
-      const active = tabs.find((t) => t.active && t.url && SUPPORTED_HOSTS.includes(new URL(t.url).hostname));
-      const anySupported = active || tabs.find((t) => t.url && SUPPORTED_HOSTS.includes(new URL(t.url).hostname));
+      const active = tabs.find((t) => t.active && t.url && isSupportedUrl(t.url));
+      const anySupported = active || tabs.find((t) => t.url && isSupportedUrl(t.url));
       if (anySupported) {
         chrome.tabs.sendMessage(anySupported.id, { type: "zs-open-menu" });
         chrome.tabs.update(anySupported.id, { active: true });
@@ -97,12 +112,12 @@ bind("settings", () => {
         chrome.tabs.create({ url: DEFAULT_AI_URL });
       }
     });
-  } catch { window.open(DEFAULT_AI_URL, "_blank"); }
+  } catch (_e) { globalThis.ZSSafe?.seen?.("popup.settings", _e); window.open(DEFAULT_AI_URL, "_blank"); }
 });
 
 try {
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
-    chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === "zs-status") render(msg); });
+    chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === "zs-status") render(msg); else if (msg && msg.type === "zs-team-status") { refresh(); tabControl().catch(() => {}); } });
 } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 refresh();
@@ -118,14 +133,15 @@ async function teamAction(type) {
   buttons.forEach(b=>b.disabled=true);result.textContent='Working…';
   try {
     const team=document.getElementById('team-name').value.trim()||'studio';
-    await chrome.storage.local.set({zsTeamName:team});
+    await chrome.storage?.local?.set?.({zsTeamName:team});
     let r;
     if(type==='join' || type==='leave'){
       const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-      if(!tab || !SUPPORTED_HOSTS.includes(new URL(tab.url).hostname))throw new Error('Select a supported AI chat tab first');
+      if(!tab || !isSupportedUrl(tab.url))throw new Error('Select a supported AI chat tab first');
       r=await chrome.tabs.sendMessage(tab.id,{type:'zs-team-'+type,role:document.getElementById('team-role').value,team});
-    } else r=await chrome.runtime.sendMessage({type:'team_'+type,team});
-    result.textContent=r?.ok?(type==='join'?`Joined as ${r.self.role}. Join the other two roles, then Start.`:type==='leave'?'Left this tab. Rejoin with a new role when ready.':r.note||'Team stopped.'):(r?.error||'No response');
+    } else r=await new Promise(resolve=>chrome.runtime.sendMessage({type:'team_'+type,team},resolve));
+    const joinedRole=r?.self?.role||document.getElementById('team-role').value;
+    result.textContent=r?.ok?(type==='join'?`Joined as ${joinedRole}. Join the other two roles, then Start.`:type==='leave'?'Left this tab. Rejoin with a new role when ready.':r.note||r.phrase||'Team stopped.'):(r?.error||'No response');
     if(r?.results?.some(x=>!x.ok))result.textContent+='\n'+r.results.filter(x=>!x.ok).map(x=>`Tab ${x.tab}: ${x.error}`).join('\n');
   }catch(e){result.textContent=String(e.message||e);}
   finally{buttons.forEach(b=>b.disabled=false);}
@@ -134,7 +150,7 @@ bind('team-join',()=>teamAction('join'));
 bind('team-start',()=>teamAction('start'));
 bind('team-stop',()=>teamAction('stop'));
 bind('team-leave',()=>teamAction('leave'));
-chrome.storage.local.get('zsTeamName',r=>{if(r.zsTeamName)document.getElementById('team-name').value=r.zsTeamName;});
+chrome.storage?.local?.get?.('zsTeamName',r=>{if(r&&r.zsTeamName)document.getElementById('team-name').value=r.zsTeamName;});
 
 // Shared, explicit controls for the active tab. No page text/drafts in reports.
 async function tabRequest(tabId,type,timeout=5000) {
@@ -160,7 +176,9 @@ async function tabControl(type='zs-tab-status') {
     try {r=await tabRequest(tab.id,type);}
     catch(e) {if(String(e.message||e).includes('No automatic retry'))throw e;throw new Error('No ZeroScript adapter responding. Open a supported chat, reload the extension and refresh that tab.');}
     if(!r?.ok)throw new Error(r?.error||'No adapter response.');
-    output.textContent=`${r.name} · ${r.version}\nComposer: ${r.composer?'detected':'not detected'}\nToolbar: ${r.toolbarVisible?'visible':r.toolbar?'present but hidden':'missing'}\nLoop: ${r.running?'running':r.starting?'starting':'idle'} · Model generation: ${r.generating?'detected':'not detected'}\nTeam: ${r.team.active?'active':r.team.joined?'joined, inactive':'not joined'}${r.team.role?' / '+r.team.role:''}`+`\nPage: ${r.background?'background (may be throttled)':'foreground'}${r.draftPresent?' · draft present; automatic sends wait':''}\nChecked: ${new Date().toLocaleTimeString()}`+(r.note?'\n'+r.note:'');
+    const mutLabel=r.team?.role?(r.team.can_mutate?'mutates Studio':'read-only'):'';
+    const commLabel=r.team?.active?(r.team.communication_confirmed?' · verified peer link':' · awaiting ack'):'';
+    output.textContent=`${r.name} · ${r.version}\nComposer: ${r.composer?'detected':'not detected'}\nToolbar: ${r.toolbarVisible?'visible':r.toolbar?'present but hidden':'missing'}\nLoop: ${r.running?'running':r.starting?'starting':'idle'} · Model generation: ${r.generating?'detected':'not detected'}\nTeam: ${r.team.active?'active':r.team.joined?'joined, inactive':'not joined'}${r.team.role?' / '+r.team.role+(mutLabel?' ('+mutLabel+')':''):''}${commLabel}`+`\nPage: ${r.background?'background (may be throttled)':'foreground'}${r.draftPresent?' · draft present; automatic sends wait':''}\nChecked: ${new Date().toLocaleTimeString()}`+(r.note?'\n'+r.note:'');
   }catch(e){output.textContent=String(e.message||e);}
   finally {tabControlBusy=false;buttons.forEach(b=>b.disabled=false);}
 }

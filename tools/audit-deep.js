@@ -735,6 +735,35 @@ for (const { file, src } of allFiles) {
   }
 }
 
+
+// ── post-return unreachable code (caught 8 providers in 4.5.0!) ───────────
+for (const { file, ast, src } of allFiles) {
+  if (!ast) continue;
+  (function scanBlock(node) {
+    if (!node || typeof node.type !== "string") return;
+    if (node.type === "BlockStatement" && Array.isArray(node.body)) {
+      let retAt = -1;
+      for (let i = 0; i < node.body.length; i++) {
+        const st = node.body[i];
+        if (retAt === -1 && (st.type === "ReturnStatement" || st.type === "ThrowStatement")) {
+          retAt = i;
+        } else if (retAt !== -1 && st.type !== "FunctionDeclaration") {
+          const line = src.slice(0, st.start).split("\n").length;
+          add("dead-code", "P1", file, line,
+            `statement after return/throw is unreachable (${st.type})`,
+            src.slice(st.start, Math.min(st.end, st.start + 90)).replace(/\s+/g, " "));
+          break;
+        }
+      }
+    }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (Array.isArray(v)) { for (const c of v) { if (c && typeof c.type === "string") scanBlock(c); } }
+      else if (v && typeof v.type === "string") { scanBlock(v); }
+    }
+  })(ast);
+}
+
 // ── report ───────────────────────────────────────────────────────────────
 const bySev = { P0: [], P1: [], P2: [], P3: [] };
 for (const f of findings) bySev[f.sev].push(f);

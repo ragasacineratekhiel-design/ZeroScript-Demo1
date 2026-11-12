@@ -1,6 +1,6 @@
-> **ARCHIVED (historical).** This file describes work done before 4.3.0 and contains claims that were
-> later found to be inaccurate (see `/ZeroScript-Audit.md`). It is kept for history only — do not treat
-> any number here as a current measurement. Current documentation: `/README.md`.
+> **ARCHIVED (historical — superseded by ZeroScript MAX 4.6.0).** This file records pre-4.3.0 history and
+> contains legacy claims audited in `/ZeroScript-Audit.md` (§1–§12). Kept for historical reference only —
+> see `/README.md` and `/docs/TEAM_SETUP.md` for current 4.6.0 verified behavior.
 
 # Changelog
 

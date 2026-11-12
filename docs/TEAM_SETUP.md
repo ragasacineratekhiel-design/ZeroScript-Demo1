@@ -1,4 +1,4 @@
-# ZeroScript MAX 4.5 — bridge-mediated planner, coder, checker
+# ZeroScript MAX 4.6.0 — bridge-mediated planner, coder, checker
 
 A Chrome/Edge extension connects open AI chat tabs to a local Python bridge and Roblox Studio's MCP server. **Team messages travel through bridge mailboxes, not through Roblox scripts or a shared website.** The bridge does not contain AI models and does not call model APIs.
 
@@ -35,7 +35,16 @@ Console event meanings:
 | `message` | A tab's parsed `team_send` command sent text through the bridge. |
 | `queued` | A mailbox has a message awaiting tab submission. |
 | `delivered` | The recipient extension acknowledged submission into its chat; not proof of understanding or a reply. |
-| `stopped` / `left` | Relay paused, or a tab left/navigated. Already-running Studio operations are not undone. |
+| `stopped` / `left` | Relay paused, or a tab left/navigated to a different conversation. Already-running Studio operations are not undone. |
+| `role_violation` | A `planner` or `checker` tab attempted a Studio mutation (`execute_luau`, `multi_edit`, etc.) and was blocked (`[ROLE-BLOCKED]`). Only `coder` may mutate Studio. |
+
+### Enforced role boundaries (4.6.0)
+
+Unlike prompt-only instructions, 4.6.0 enforces role permissions in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
+
+- **Planner** (`read-only + team_*`): inspects Studio (`inspect_instance`, `script_read`, `search_game_tree`, `get_studio_state`, `verify_fact`), designs the architecture, and hands plans to `coder` via `team_send`. Any `execute_luau` / `multi_edit` call is rejected with `ROLE VIOLATION`.
+- **Coder** (`full Studio read/write + team_*`): the **only** role allowed to create, edit, or execute Luau/instances in Roblox Studio; reports completed changes and evidence via `team_send`.
+- **Checker** (`read-only + Play/Stop verification + team_*`): reads scripts/instances, verifies behavior (`verify_fact`, `script_read`, `inspect_instance`, `start_stop_play`), and sends defect lists back to `coder` via `team_send` without editing code itself.
 
 Introductions are **not** pre-written by the bridge. The console will show no fabricated `[Claude]: Hi...` / `[Gemini]: Nice to meet you...` conversation. It displays what the tabs actually send. Names identify website adapters; they do not certify the exact model/tier selected within that website.
 
@@ -51,6 +60,9 @@ The content-script core implements these virtual tools independently of Studio's
 ```
 ```json
 {"command":"team_read","params":{}}
+```
+```json
+{"command":"verify_fact","params":{"path":"game.Workspace","tool":"inspect_instance"}}
 ```
 
 Recipients can be `planner`, `coder`, `checker`, an exact live peer name, or `all`. `team_read` is a non-consuming inspection; automatic delivery handles acknowledgements. Messages are capped at 12,000 characters, mailboxes at 100 entries, the event history at 1,000 events, and registrations at 64 tabs. Message IDs deduplicate retries within a bridge run. **Mailboxes and event history are in memory and disappear when the bridge restarts.** There is no exactly-once delivery guarantee across crashes between chat submission and acknowledgement; ambiguous delivery is paused for manual recovery, not silently retried.
@@ -114,6 +126,6 @@ The Claude toolbar now occupies its own sibling slot above the composer, not a c
 ## Relay and console reliability controls
 - If a required planner/coder/checker misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
 - Large inboxes are submitted in bounded, whole-message chunks. Only messages included in the submitted chunk are acknowledged. A message too large for a provider's safe send budget pauses delivery instead of silently truncating it.
-- Filter the console with `python team_console.py --team studio --role coder --kind message --tail 20`. `--tail` limits the first matching history batch and then follows new events; `--once` exits after a fetch. Use `--no-color` for plain text. Filtering affects only the viewer, never delivery.
+- Filter the console with `python team_console.py --team studio --role coder --kind message --tail 20`. `--tail` limits the first matching history batch and then follows new events via 0 ms Condition long-poll (`?wait=1`); `--once` exits after a fetch; `--status` prints a one-shot team roster summary; `--json` outputs NDJSON. Use `--no-color` for plain text. Filtering affects only the viewer, never delivery.
 - The popup reports foreground/background state and whether a draft is present (not its content). Tab-control requests have a bounded wait and are never automatically retried after a timeout.
 - On POSIX, terminating the Python launcher now requests owned-child cleanup; the bridge also handles SIGTERM through its shutdown path. This does not undo completed Studio mutations or guarantee cleanup after forced process termination.

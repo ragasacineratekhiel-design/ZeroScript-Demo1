@@ -1,16 +1,54 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One service worker already serves every tab. Mutations are sent ONCE: never
 // hedge/replay them across transports after an ambiguous timeout.
+const VERSION = '4.6.0';
 const WS_URL = 'ws://127.0.0.1:17613';
 const HTTP_BASE = 'http://127.0.0.1:17614';
+const RECONNECT_MIN = 250;
+const RECONNECT_MAX = 5000;
+const HEARTBEAT_MS = 10000;
+const HTTP_TIMEOUT = 5000;
 const HOST_NAMES = {
   'chat.deepseek.com':'DeepSeek', 'deepseek.com':'DeepSeek', 'chatgpt.com':'ChatGPT', 'chat.openai.com':'ChatGPT',
   'gemini.google.com':'Gemini', 'claude.ai':'Claude', 'kimi.ai':'Kimi', 'www.kimi.ai':'Kimi',
-  'chat.z.ai':'GLM', 'chat.qwen.ai':'Qwen', 'arena.ai':'Arena', 'meta.ai':'Meta AI',
+  'chat.z.ai':'GLM', 'z.ai':'GLM', 'chat.qwen.ai':'Qwen', 'qwen.ai':'Qwen',
+  'arena.ai':'Arena', 'lmarena.ai':'Arena', 'meta.ai':'Meta AI',
   'www.meta.ai':'Meta AI', 'perplexity.ai':'Perplexity', 'www.perplexity.ai':'Perplexity',
   'copilot.microsoft.com':'Copilot', 'grok.com':'Grok', 'x.ai':'Grok', 'poe.com':'Poe',
-  'chat.mistral.ai':'Mistral'
+  'chat.mistral.ai':'Mistral', 'mistral.ai':'Mistral'
 };
+const HOST_SUFFIXES = [
+  ['deepseek.com','DeepSeek'], ['chatgpt.com','ChatGPT'], ['openai.com','ChatGPT'],
+  ['gemini.google.com','Gemini'], ['claude.ai','Claude'], ['kimi.ai','Kimi'],
+  ['z.ai','GLM'], ['qwen.ai','Qwen'], ['arena.ai','Arena'], ['lmarena.ai','Arena'],
+  ['meta.ai','Meta AI'], ['perplexity.ai','Perplexity'], ['copilot.microsoft.com','Copilot'],
+  ['grok.com','Grok'], ['x.ai','Grok'], ['poe.com','Poe'], ['mistral.ai','Mistral']
+];
+const MUTATING_TOOLS = new Set([
+  'execute_luau','multi_edit','generate_mesh','generate_procedural_model',
+  'insert_from_creator_store','store_image','script_write','create_instance',
+  'delete_instance','set_property','update_script'
+]);
+const READ_OR_TEAM_TOOLS = new Set([
+  'list_commands','list_tools','list_mcp_servers','script_read','script_search',
+  'script_grep','search_game_tree','inspect_instance','get_studio_state',
+  'get_console_output','search_creator_store','list_roblox_studios',
+  'team_status','team_read','team_send','verify_fact'
+]);
+function roleCheckTool(role, toolName){
+  if(!role) return null;
+  const bare = String(toolName||'').split('/').pop();
+  if(READ_OR_TEAM_TOOLS.has(bare)) return null;
+  if(bare === 'start_stop_play') return role === 'planner' ? 'planner may not start/stop Play — send the plan via team_send to the coder' : null;
+  const mut = MUTATING_TOOLS.has(bare) || /^(generate_|insert_|create_|delete_)/.test(bare);
+  if(mut || role !== 'coder'){
+    if(role === 'coder') return null;
+    if(role === 'planner') return 'planner may not mutate Studio — send your plan to the coder via team_send; only the coder calls execute_luau/multi_edit';
+    if(role === 'checker') return 'checker may not mutate Studio — report defects to the coder via team_send; only the coder calls execute_luau/multi_edit';
+    return role + ' may not mutate Studio';
+  }
+  return null;
+}
 let ws=null, connected=false, bridgeToken=null, tokenPromise=null, nextId=1;
 let reconnectTimer=null, reconnectDelay=250, lastMessageAt=0, httpHealthy=false;
 let toolsCache=[], serversCache=[], studio=null, studioApp=null, studioProc=null, mcpAlive=false;
@@ -20,9 +58,22 @@ const storageReady=(async()=>{
   try { const saved=await chrome.storage.session.get('zsTeamBindings'); bindings=saved.zsTeamBindings||{}; } catch (_e) { globalThis.ZSSafe?.seen?.("background.storageReady", _e); }
 })();
 function saveBindings(){ chrome.storage.session.set({zsTeamBindings:bindings}).catch(console.error); }
-function providerName(url){ try { const u=new URL(url); return u.protocol==='https:' ? (HOST_NAMES[u.hostname]||null) : null; } catch { return null; } }
+function providerName(url){
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return null;
+    const h = u.hostname.toLowerCase();
+    if (HOST_NAMES[h]) return HOST_NAMES[h];
+    const bare = h.replace(/^www\./, '');
+    if (HOST_NAMES[bare]) return HOST_NAMES[bare];
+    for (const [suf, label] of HOST_SUFFIXES) {
+      if (bare === suf || bare.endsWith('.' + suf)) return label;
+    }
+    return null;
+  } catch (_e) { globalThis.ZSSafe?.seen?.("background.providerName", _e); return null; }
+}
 function trusted(sender){ return sender.id===chrome.runtime.id && (!sender.tab || !!providerName(sender.tab.url||sender.url)); }
-function statusObj(){ return {type:'zs-status',connected:connected||httpHealthy,mcpAlive,studio,studioApp,studioProc,tools:toolsCache.length,servers:serversCache,faults:pageFaults.length,faultSites:[...new Set(pageFaults.map(f=>f.site))].slice(-6),safe:globalThis.ZSSafe?.stats?.()||null,transport:connected?'ws':'http'}; }
+function statusObj(){ return {type:'zs-status',version:VERSION,connected:connected||httpHealthy,mcpAlive,studio,studioApp,studioProc,tools:toolsCache.length,servers:serversCache,teamBindings:Object.values(bindings).map(b=>({name:b.name,role:b.role,team:b.team})),faults:pageFaults.length,faultSites:[...new Set(pageFaults.map(f=>f.site))].slice(-6),safe:globalThis.ZSSafe?.stats?.()||null,transport:connected?'ws':'http'}; }
 function updateStatus(r){
   if('mcp_alive' in r) mcpAlive=!!r.mcp_alive;
   if('studio' in r) studio=r.studio;
@@ -36,7 +87,7 @@ async function broadcastStatus(){
   try { await chrome.runtime.sendMessage(s); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
   try { for(const t of await chrome.tabs.query({})) if(providerName(t.url)) chrome.tabs.sendMessage(t.id,s).catch(()=>{}); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
 }
-async function fetchToken(){
+function fetchToken(){
   if(tokenPromise) return tokenPromise;
   tokenPromise=(async()=>{
     const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),3000);
@@ -50,7 +101,7 @@ async function fetchToken(){
   })().finally(()=>{tokenPromise=null;});
   return tokenPromise;
 }
-async function http(path, body, timeout=5000){
+async function http(path, body, timeout=HTTP_TIMEOUT){
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),timeout);
   try {
     if(!bridgeToken) await fetchToken();
@@ -58,7 +109,7 @@ async function http(path, body, timeout=5000){
     if(response.status===401){ bridgeToken=null; return {ok:false,kind:'auth',error:'Bridge restarted or pairing expired. Reconnect; this operation was not retried.'}; }
     const data=await response.json(); httpHealthy=response.ok;
     return response.ok?data:{...data,ok:false,error:data.error||'HTTP '+response.status};
-  } catch(e){ httpHealthy=false; return {ok:false,kind:'disconnected',error:String(e.message||e)+'; outcome may be unknown. Inspect state before retrying a mutation.'}; }
+  } catch(e){ globalThis.ZSSafe?.seen?.("background.http", e); httpHealthy=false; return {ok:false,kind:'disconnected',error:String(e.message||e)+'; outcome may be unknown. Inspect state before retrying a mutation.'}; }
   finally { clearTimeout(timer); }
 }
 function failPending(reason){ for(const p of pending.values()){clearTimeout(p.timer);p.resolve({ok:false,kind:'disconnected',error:reason+'; outcome unknown, not retried'});} pending.clear(); }
@@ -74,7 +125,7 @@ function sendWS(obj, timeout=128000){
 function scheduleReconnect(){
   clearTimeout(reconnectTimer);
   reconnectTimer=setTimeout(()=>connect().catch(()=>{}),reconnectDelay);
-  reconnectDelay=Math.min(5000,reconnectDelay*1.7);
+  reconnectDelay=Math.min(RECONNECT_MAX,reconnectDelay*1.7);
 }
 async function connect(){
   if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
@@ -83,10 +134,17 @@ async function connect(){
     // Another caller may have completed pairing while we waited.
     if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
     const socket=new WebSocket(WS_URL+'/?token='+encodeURIComponent(bridgeToken)); ws=socket;
-    socket.onopen=()=>{ if(ws!==socket)return; connected=true;lastMessageAt=Date.now();reconnectDelay=250;broadcastStatus().catch(console.error); };
+    socket.onopen=()=>{ if(ws!==socket)return; connected=true;lastMessageAt=Date.now();reconnectDelay=RECONNECT_MIN;broadcastStatus().catch(console.error); };
     socket.onmessage=ev=>{
       if(ws!==socket)return;
-      lastMessageAt=Date.now(); let msg;try{msg=JSON.parse(ev.data);}catch{return;}
+      lastMessageAt=Date.now(); let msg;try{msg=JSON.parse(ev.data);}catch(_e){globalThis.ZSSafe?.seen?.("background.wsParse",_e);return;}
+      if(msg.type==='team_event'){
+        for(const id of Object.keys(bindings)){
+          chrome.tabs.sendMessage(Number(id),{type:'zs-team-event',event:msg.event}).catch(()=>{});
+        }
+        try{chrome.runtime.sendMessage({type:'zs-team-status',event:msg.event}).catch(()=>{});}catch(_e){globalThis.ZSSafe?.seen?.("background.teamPush",_e);}
+        return;
+      }
       updateStatus(msg);
       const p=pending.get(msg.id);
       if(p){
@@ -99,14 +157,14 @@ async function connect(){
     };
     socket.onclose=()=>{if(ws!==socket)return;ws=null;connected=false;studio=null;studioApp=null;mcpAlive=false;failPending('WebSocket closed');broadcastStatus().catch(console.error);scheduleReconnect();};
     socket.onerror=()=>socket.close();
-  } catch {scheduleReconnect();}
+  } catch(_e) {globalThis.ZSSafe?.seen?.("background.connect",_e);scheduleReconnect();}
 }
 async function readOnce(key, fn){
   if(reads.has(key))return reads.get(key);
   const p=Promise.resolve().then(fn);reads.set(key,p);
   try{return await p;}finally{reads.delete(key);}
 }
-async function refreshStatus(){
+function refreshStatus(){
   return readOnce('status',async()=>{
     // Cached handshake is immediate; slow MCP health probes run on the bridge's
     // existing monitor instead of blocking every startup and popup request.
@@ -147,10 +205,15 @@ async function teamRequest(msg,sender){
   }
   const binding=bindings[tabId];
   if(!binding)return {ok:false,error:'Join this tab to a team first using the extension popup'};
-  if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();return http('/api/team/leave',{member_id:binding.member_id});}
+  if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();broadcastStatus().catch(()=>{});return http('/api/team/leave',{member_id:binding.member_id});}
   const action={team_status:'status',team_inbox:'inbox',team_ack:'ack',team_send:'send',team_ready:'ready'}[msg.type];
   if(!action)return {ok:false,error:'Unknown team action'};
-  return http('/api/team/'+action,{member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id}:{}),...(action==='ack'?{ids:msg.ids}:{})});
+  const body={member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id}:{}),...(action==='ack'?{ids:msg.ids}:{})};
+  if(connected){
+    const wr=await sendWS({type:'team_'+action,...body},5000);
+    if(wr && wr.kind!=='disconnected') return wr;
+  }
+  return http('/api/team/'+action,body);
 }
 async function handle(msg,sender){
   if(!msg || typeof msg!=='object' || !trusted(sender))return {ok:false,error:'Untrusted extension message'};
@@ -163,19 +226,42 @@ async function handle(msg,sender){
       const r=await http('/api/tools'+(msg.force?'?refresh=1':''));if(r.ok)updateStatus(r);return r;
     });
     case 'call_tool':{
+      await storageReady;
       const timeout=Number(msg.timeout||120000);
       if(!Number.isFinite(timeout)||timeout<=0||timeout>120000)return {ok:false,error:'Invalid timeout'};
-      const payload={type:'call_tool',name:msg.name,arguments:msg.arguments||{},timeout};
+      const binding=sender.tab?bindings[sender.tab.id]:null;
+      const blocked=binding?roleCheckTool(binding.role,msg.name):null;
+      if(blocked)return {ok:false,kind:'role_violation',error:blocked};
+      const payload={type:'call_tool',name:msg.name,arguments:msg.arguments||{},timeout,...(binding?{member_id:binding.member_id}:{})};
       return connected?sendWS(payload,timeout+8000):http('/api/call',payload,timeout+8000);
     }
-    case 'call_batch':return http('/api/batch',{calls:msg.calls},125000); // no replay
+    case 'call_batch':{
+      await storageReady;
+      const binding=sender.tab?bindings[sender.tab.id]:null;
+      if(binding && Array.isArray(msg.calls)){
+        for(const c of msg.calls){
+          const blocked=roleCheckTool(binding.role,c?.name||c?.tool||c?.command);
+          if(blocked)return {ok:false,kind:'role_violation',error:blocked};
+        }
+      }
+      return http('/api/batch',{calls:msg.calls,...(binding?{member_id:binding.member_id}:{})},125000); // no replay
+    }
+    case 'verify_fact':{
+      const vpath=String(msg.path||''), vtool=String(msg.tool||'inspect_instance');
+      if(connected){
+        const wr=await sendWS({type:'verify',path:vpath,tool:vtool},12000);
+        if(wr && wr.kind!=='disconnected') return wr;
+      }
+      return http('/api/verify',{path:vpath,tool:vtool},12000);
+    }
+    case 'team_summary':return http('/api/team/summary');
     case 'restart_mcp':return http('/api/restart_mcp',{server:msg.server},20000);
     case 'add_server':return http('/api/add_server',{server_id:msg.server_id,command:msg.command,args:msg.args,env:msg.env},10000);
     case 'remove_server':return http('/api/remove_server',{server_id:msg.server_id},10000);
     case 'metrics':return http('/api/metrics');
     case 'ping':return {ok:connected||httpHealthy};
     case 'reconnect':{
-      const old=ws;ws=null;connected=false;if(old)old.close();failPending('User reconnected');bridgeToken=null;reconnectDelay=250;
+      const old=ws;ws=null;connected=false;if(old)old.close();failPending('User reconnected');bridgeToken=null;reconnectDelay=RECONNECT_MIN;
       await connect();return {ok:true};
     }
     default:return legacyMessage(msg,sender);
@@ -202,7 +288,7 @@ async function heartbeat(){
     }));
   }finally{heartbeatBusy=false;}
 }
-const heartbeatTimer=setInterval(heartbeat,10000);
+const heartbeatTimer=setInterval(heartbeat,HEARTBEAT_MS);
 chrome.alarms.create('zs-keepalive',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(()=>heartbeat().catch(console.error));
 chrome.runtime.onStartup.addListener(()=>connect().catch(console.error));
@@ -227,7 +313,7 @@ function providerIdForHost(url){
     const M = [
       ["deepseek.com","deepseek"],["chatgpt.com","chatgpt"],["openai.com","chatgpt"],
       ["gemini.google.com","gemini"],["claude.ai","claude"],["kimi.ai","kimi"],
-      ["chat.z.ai","glm"],["z.ai","glm"],["qwen.ai","qwen"],["arena.ai","arena"],
+      ["chat.z.ai","glm"],["z.ai","glm"],["qwen.ai","qwen"],["arena.ai","arena"],["lmarena.ai","arena"],
       ["meta.ai","meta"],["perplexity.ai","perplexity"],["copilot.microsoft.com","copilot"],
       ["grok.com","grok"],["x.ai","grok"],["poe.com","poe"],["mistral.ai","mistral"],
     ];
@@ -237,7 +323,7 @@ function providerIdForHost(url){
 }
 
 
-async function legacyMessage(msg,_sender){
+function legacyMessage(msg,_sender){
   return new Promise(sendResponse=>{(async()=>{switch(msg.type){
       case "peer_route": {
         try{

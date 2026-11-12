@@ -150,7 +150,10 @@ const ZSProvider = (() => {
   // site editor this returns null, keeping the "not on a chat page" guard in
   // the send hooks intact (otherwise our own textarea would defeat it and the
   // hooks could swallow the site's login button).
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && _edCache.closest(".chat-editor") && now - _edAt < 80) return _edCache;
     const site = [...document.querySelectorAll(S.editor)].filter(
       (e) => !e.closest("#zs-root")
     );
@@ -159,7 +162,7 @@ const ZSProvider = (() => {
     // composer in DOM order, so the old "first editor" pick returned it - and
     // barAnchor() then hugged the fixed ZeroScript bar over the editor. The real
     // composer lives inside the `.chat-editor` card; the edit box does not.
-    return site.find((e) => e.closest(".chat-editor")) || site[0] || null;
+    _edCache = site.find((e) => e.closest(".chat-editor")) || site[0] || null; _edAt = now; return _edCache;
   };
   const editorText = () => {
     const e = getEditor();
@@ -170,6 +173,15 @@ const ZSProvider = (() => {
     const it = assistantItems();
     return it.length ? it[it.length - 1] : null;
   };
+  const _idMap = new WeakMap();
+  let _idSeq = 0;
+  function itemKey(it) {
+    if (!it) return null;
+    let id = _idMap.get(it);
+    if (!id) { id = "kimi-" + (++_idSeq); _idMap.set(it, id); }
+    return id;
+  }
+  const lastAssistantId = () => itemKey(lastAssistant());
 
   const chatIsEmpty = () => allItems().length === 0;
   // A genuinely fresh chat: the "/" route with the composer rendered and no
@@ -758,8 +770,23 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
+
   return {
     id: "kimi",
+    version: "4.6.0",
     displayName: "Kimi",
     // Confirmed live: Kimi (K2.6) reads attached images - it correctly described
     // a test screenshot's content. So screen_capture is exposed here (see main.js
@@ -795,10 +822,10 @@ const ZSProvider = (() => {
     unstableWarning:
       "Kimi sometimes uses its own native tools instead of the Roblox commands (model behavior, not the extension). " +
       "If it stops acting in Roblox Studio and answers in plain text or runs its own tools, remind it to use the ZeroScript commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-kimi-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
-    assistantCount, userCount, lastAssistant, readAssistant,
+    assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,
     streamLen, snapshot,
     // composer / state
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, gateTarget, barAnchor,
@@ -811,19 +838,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("kimi._zsApply", _e); }
-
 })();

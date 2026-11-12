@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ZeroScript Bridge 3.1: authenticated loopback WebSocket/HTTP MCP proxy.
+# ZeroScript Bridge 4.6.0: authenticated loopback WebSocket/HTTP MCP proxy.
+# 4.6.0: team_* over WS (not just HTTP), coder-only mutation enforcement,
+# /api/verify ground-truth reads for /truth, team-event push to WS clients,
+# long-poll team events, cached Studio probes.
 # Studio mutations are never automatically hedged or replayed. Batches are
 # sequential, non-transactional and limited to 24 calls. The team hub stores
 # bounded in-memory mailboxes and delivery evidence; it does not call AI APIs.
@@ -16,7 +19,11 @@ import os
 import queue
 import re
 import functools
-from team_hub import TeamHub, TeamError
+try:
+    from team_hub import TeamHub, TeamError, is_mutating as _team_is_mutating
+except ImportError:  # run as a package / different cwd
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from team_hub import TeamHub, TeamError, is_mutating as _team_is_mutating
 import secrets
 import socket
 import subprocess
@@ -76,7 +83,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="4.5.0"
+BRIDGE_VERSION="4.6.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -128,6 +135,8 @@ class Metrics:
         self.tool_latency=[] # last 200
         self.bytes_in=0
         self.bytes_out=0
+        self.team_messages=0
+        self.role_violations=0
         self.lock=threading.Lock()
     def record_tool(self, latency, ok=True):
         with self.lock:
@@ -151,6 +160,8 @@ class Metrics:
             "p95_latency": round(p95,3),
             "bytes_in": self.bytes_in,
             "bytes_out": self.bytes_out,
+            "team_messages": self.team_messages,
+            "role_violations": self.role_violations,
             "has_orjson": HAS_ORJSON,
             "has_msgpack": HAS_MSGPACK,
         }
@@ -686,6 +697,21 @@ def _probe_tool_text(tool):
     except: return None
     finally: holder.call_lock.release()
 
+_probe_cache={"at":0.0,"val":None}
+_probe_cache_lock=threading.Lock()
+_PROBE_TTL=1.0
+
+def probe_studio_cached():
+    """probe_studio with a 1s TTL — hello/status bursts reuse one MCP read."""
+    now=time.monotonic()
+    with _probe_cache_lock:
+        if _probe_cache["val"] is not None and now-_probe_cache["at"] < _PROBE_TTL:
+            return _probe_cache["val"]
+    val=probe_studio()
+    with _probe_cache_lock:
+        _probe_cache["at"]=time.monotonic(); _probe_cache["val"]=val
+    return val
+
 def probe_studio():
     roblox=mgr.clients.get(PRIMARY_SERVER_ID)
     if roblox is not None and roblox.is_alive() and not roblox.tools_cache:
@@ -741,14 +767,14 @@ def studio_full_tree(max_depth=2):
     root["ok"]=not root["errors"]
     return root
 
-def studio_exec(code, timeout=20, datamodel="Edit"):
+def studio_exec(code, timeout=20, datamodel="Edit", member_id=None):
     # Forward once. Studio/MCP supplies any execution restrictions, not this wrapper.
     try:
-        return safe_call("execute_luau", {"code": code, "datamodel_type": datamodel}, timeout)
+        return safe_call("execute_luau", {"code": code, "datamodel_type": datamodel}, timeout, member_id)
     except Exception as e:
         return {"ok": False, "error": str(e), "kind": "exec_fail"}
 
-def studio_bulk_ops(ops):
+def studio_bulk_ops(ops, member_id=None):
     # Sequential operations; no rollback or transaction is promised.
     results = []
     if not isinstance(ops,list) or len(ops)>24 or any(not isinstance(op,dict) for op in ops): raise ValueError("Maximum 24 object operations; nothing executed")
@@ -759,13 +785,48 @@ def studio_bulk_ops(ops):
         name = op.get("tool") or op.get("command") or op.get("name") or ""
         args = op.get("arguments") or op.get("args") or op.get("params") or {}
         t = _timeout(op.get("timeout",12000))
-        results.append({"tool": name, **safe_call(name, args, t)})
+        results.append({"tool": name, **safe_call(name, args, t, member_id)})
     return {"ok": all(r.get("ok") for r in results), "results": results, "atomic": False}
 
 _tool_slots=threading.BoundedSemaphore(16)
-def safe_call(name,arguments,timeout):
+def safe_call(name,arguments,timeout=30,member_id=None):
     if not isinstance(name,str) or not name or not isinstance(arguments,dict): return {"ok":False,"error":"tool name and object arguments required","kind":"validation"}
     if not isinstance(timeout,(int,float)) or not 0 < timeout <= 120: return {"ok":False,"error":"timeout must be 1–120000 ms","kind":"validation"}
+    bare=name.split("/")[-1]
+    # 4.6.0 virtual bridge tools: team mailboxes and ground-truth verification work
+    # even when invoked via /api/call, /api/batch, WS call_tool, or connectors.
+    if bare in ("team_status","team_read","team_send"):
+        mid=member_id or arguments.get("member_id")
+        try:
+            if bare=="team_status":
+                res=team_hub.status(mid) if mid else team_hub.summary()
+            elif bare=="team_read":
+                res=team_hub.inbox(mid)
+            else:
+                res=team_hub.send(mid, arguments.get("to","all"), arguments.get("text",""), arguments.get("message_id") or secrets.token_hex(8))
+                metrics.team_messages+=1
+                if team_hub.events: _push_team_event_sync(team_hub.events[-1])
+            return {"ok":True,"text":json.dumps(res,ensure_ascii=False),"images":[]}
+        except TeamError as e:
+            return {"ok":False,"error":str(e),"kind":"team_error"}
+    if bare=="verify_fact":
+        vpath=str(arguments.get("path") or ""); vtool=str(arguments.get("tool") or "inspect_instance")
+        if vtool not in ("inspect_instance","script_read","get_studio_state","search_game_tree","list_roblox_studios"):
+            return {"ok":False,"error":"verify_fact only supports read tools: inspect_instance, script_read, get_studio_state, search_game_tree, list_roblox_studios","kind":"validation"}
+        vargs={"path":vpath} if vpath and vtool=="inspect_instance" else ({"target_file":vpath} if vpath and vtool=="script_read" else {})
+        res=safe_call(vtool, vargs, min(float(timeout), 10.0), member_id)
+        vtext=res.get("text") or res.get("error") or ""
+        payload={"ok":bool(res.get("ok")),"tool":vtool,"path":vpath,"text":vtext,"sha256":hashlib.sha256(vtext.encode()).hexdigest(),"verified_at":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
+        return {"ok":bool(res.get("ok")),"text":json.dumps(payload,ensure_ascii=False),"images":[]} if res.get("ok") else {"ok":False,"error":vtext,"kind":"verify_failed","sha256":payload["sha256"]}
+    # 4.6.0 role enforcement: team members carry a role; only coder mutates.
+    # member_id is optional (direct/single-AI mode has no team role).
+    if member_id:
+        try:
+            team_hub.check_mutation(member_id, name)
+        except TeamError as e:
+            metrics.role_violations+=1
+            if team_hub.events: _push_team_event_sync(team_hub.events[-1])
+            return {"ok":False,"error":str(e),"kind":"role_violation"}
     if not _tool_slots.acquire(blocking=False): return {"ok":False,"error":"Bridge busy; no execution started","kind":"busy"}
     try:
         result=mgr.call(name,arguments,timeout)
@@ -776,9 +837,9 @@ def safe_call(name,arguments,timeout):
         _cache_status.clear()
         _tool_slots.release()
 
-async def run_tool_task(ws,name,args,timeout,rid):
+async def run_tool_task(ws,name,args,timeout,rid,member_id=None):
     t0=time.monotonic()
-    res=await asyncio.to_thread(safe_call,name,args,timeout)
+    res=await asyncio.to_thread(safe_call,name,args,timeout,member_id)
     elapsed=time.monotonic()-t0
     metrics.record_tool(elapsed, ok=res.get("ok"))
     tag="gr" if res.get("ok") else "rd"; summary=(res.get("text") or res.get("error") or "")[:80].replace("\n"," "); slow="  [SLOW]" if elapsed>5 else ""
@@ -794,6 +855,24 @@ async def run_tool_task(ws,name,args,timeout,rid):
         await ws.send(_dumps(payload))
     except ConnectionClosed: pass
     except Exception as e: log(f"send tool_result failed: {e}","rd")
+
+# 4.6.0: push team events to WS clients so tabs wake instantly (no 1.5s poll).
+_ws_loop = None
+async def _push_team_event(event):
+    if not clients: return
+    payload=_dumps({"type":"team_event","event":event})
+    for ws in list(clients):
+        try: await ws.send(payload)
+        except: pass
+
+def _push_team_event_sync(event):
+    """Thread-safe best-effort push from HTTP threads via the main WS event loop."""
+    try:
+        loop=_ws_loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(_push_team_event(event), loop)
+    except Exception:
+        pass
 
 # SSE event broadcast
 _event_queues=list()
@@ -843,6 +922,7 @@ def _timeout(value=120000):
     return val/1000
 
 team_hub=TeamHub()
+TEAM_HUB=team_hub
 
 class ZSHttpHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # suppress default stderr noise, use our log
@@ -886,8 +966,15 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"ok":True,"keys":_agent_temp_keys()},origin=origin)
             return
+        if path=="/api/team/summary":
+            qs=parse_qs(parsed.query)
+            self._send_json(team_hub.summary((qs.get("team") or [None])[0]),origin=origin); return
         if path=="/api/team/events":
-            self._send_json(team_hub.event_log(int((parse_qs(parsed.query).get("since") or ["0"])[0])),origin=origin); return
+            qs=parse_qs(parsed.query); since=int((qs.get("since") or ["0"])[0] or 0)
+            # 4.6.0 0ms Condition long-poll: ?wait=1 blocks until an event arrives (max 5s).
+            if qs.get("wait")==["1"]:
+                self._send_json(team_hub.wait_events(since, timeout=5.0),origin=origin); return
+            self._send_json(team_hub.event_log(since),origin=origin); return
         if path in ("/","/health","/api/health"):
             self._send_json({"ok":True,"version":BRIDGE_VERSION,"port":PORT,"http_port":PORT_HTTP,"mcp_alive":mgr.any_alive(),"status":"ok"},origin=origin)
             return
@@ -923,6 +1010,15 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             s=probe_studio(); proc=_roblox_studio_app_running()
             self._send_json({"ok":True,"studio":s,"studio_proc":proc,"heartbeat_ok":ok,"fails":_studio_consec_fails,"uptime":time.time()-_studio_last_ok},origin=origin)
             return
+        if path in ("/api/verify","/verify"):
+            qs=parse_qs(parsed.query)
+            vpath=(qs.get("path") or [""])[0]; vtool=(qs.get("tool") or ["inspect_instance"])[0]
+            if vtool not in ("inspect_instance","script_read","get_studio_state","search_game_tree","list_roblox_studios"):
+                self._send_json({"ok":False,"error":"verify only supports read tools: inspect_instance, script_read, get_studio_state, search_game_tree, list_roblox_studios"},400,origin); return
+            vargs={"path":vpath} if vpath and vtool=="inspect_instance" else ({"target_file":vpath} if vpath and vtool=="script_read" else {})
+            res=safe_call(vtool,vargs,10)
+            text=res.get("text") or res.get("error") or ""
+            self._send_json({"ok":bool(res.get("ok")),"verified":bool(res.get("ok")),"tool":vtool,"path":vpath,"text":text,"sha256":hashlib.sha256(text.encode()).hexdigest(),"verified_at":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())},origin=origin); return
         if path in ("/api/metrics","/metrics"):
             self._send_json({"ok":True,**metrics.snapshot()},origin=origin); return
         if path in ("/api/events","/events"):
@@ -989,26 +1085,42 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
             ttl=float(data.get("ttl",120000))/1000.0
             _agent_temp_set(k, data.get("value"), data.get("from","agent"), ttl)
             self._send_json({"ok":True,"key":k},origin=origin); return
+        if path in ("/api/verify","/verify"):
+            vpath=str(data.get("path") or ""); vtool=str(data.get("tool") or "inspect_instance")
+            if vtool not in ("inspect_instance","script_read","get_studio_state","search_game_tree","list_roblox_studios"):
+                self._send_json({"ok":False,"error":"verify only supports read tools: inspect_instance, script_read, get_studio_state, search_game_tree, list_roblox_studios"},400,origin); return
+            vargs={"path":vpath} if vpath and vtool=="inspect_instance" else ({"target_file":vpath} if vpath and vtool=="script_read" else {})
+            res=safe_call(vtool,vargs,10)
+            text=res.get("text") or res.get("error") or ""
+            self._send_json({"ok":bool(res.get("ok")),"verified":bool(res.get("ok")),"tool":vtool,"path":vpath,"text":text,"sha256":hashlib.sha256(text.encode()).hexdigest(),"verified_at":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())},origin=origin); return
         if path.startswith("/api/team/"):
             member=data.get("member_id")
             action=path.rsplit("/",1)[-1]
+            prev_seq=team_hub.seq
             if action=="register": res=team_hub.register(member,data.get("name"),data.get("role"),data.get("team","studio"))
             elif action=="status": res=team_hub.status(member)
+            elif action=="summary": res=team_hub.summary(data.get("team"))
             elif action=="ready": res=team_hub.ready(member)
             elif action=="leave": res=team_hub.leave(member)
             elif action=="inbox": res=team_hub.inbox(member)
             elif action=="ack": res=team_hub.ack(member,data.get("ids"))
-            elif action=="send": res=team_hub.send(member,data.get("to","all"),data.get("text"),data.get("message_id"))
+            elif action=="send":
+                res=team_hub.send(member,data.get("to","all"),data.get("text"),data.get("message_id"))
+                metrics.team_messages+=1
             elif action=="start": res=team_hub.start(data.get("team","studio"))
             elif action=="stop": res=team_hub.stop(data.get("team","studio"))
             else: raise ValueError("Unknown team action")
+            if team_hub.seq > prev_seq and team_hub.events:
+                last=team_hub.events[-1]
+                _push_team_event_sync(last)
+                _push_event({"type":"team_event","event":last})
             self._send_json(res,origin=origin); return
         if path in ("/api/call","/api/call_tool","/call_tool","/call"):
             name=data.get("name") or data.get("tool") or data.get("command") or ""
             args=data.get("arguments") or data.get("args") or data.get("params") or {}
             timeout=_timeout(data.get("timeout",120000))
             if not name: self._send_json({"ok":False,"error":"missing tool name"},400,origin); return
-            t0=time.monotonic(); res=safe_call(name,args,timeout); elapsed=time.monotonic()-t0
+            t0=time.monotonic(); res=safe_call(name,args,timeout,data.get("member_id")); elapsed=time.monotonic()-t0
             metrics.record_tool(elapsed, ok=res.get("ok"))
             _cache_status.clear()
             self._send_json(res,origin=origin); return
@@ -1026,18 +1138,20 @@ class ZSHttpHandler(BaseHTTPRequestHandler):
                 t=_timeout(c.get("timeout",120000))
                 # cap batch size
                 # Every accepted operation receives a result; never silently truncate.
-                results.append({"name":n, **safe_call(n,a,t)})
+                results.append({"name":n, **safe_call(n,a,t,data.get("member_id"))})
             self._send_json({"ok":all(r.get("ok") for r in results),"results":results,"atomic":False},origin=origin); return
         if path in ("/api/studio/exec","/studio/exec"):
             code=data.get("code") or data.get("luau") or ""
             dm=data.get("datamodel_type") or data.get("datamodel") or "Edit"
             timeout=_timeout(data.get("timeout",20000))
             if not code: self._send_json({"ok":False,"error":"missing code"},400,origin); return
-            res=studio_exec(code, timeout, dm); self._send_json(res,origin=origin); return
+            res=studio_exec(code, timeout, dm, data.get("member_id"))
+            self._send_json(res, 403 if res.get("kind")=="role_violation" else 200, origin); return
         if path in ("/api/studio/bulk","/studio/bulk"):
             ops=data.get("ops") or data.get("calls") or []
             if not isinstance(ops,list): self._send_json({"ok":False,"error":"ops must be array"},400,origin); return
-            self._send_json(studio_bulk_ops(ops),origin=origin); return
+            res=studio_bulk_ops(ops, data.get("member_id"))
+            self._send_json(res, 403 if res.get("kind")=="role_violation" else 200, origin); return
         if path in ("/api/add_server","/api/remove_server","/api/restart_mcp"):
             # these mutate config
             if path=="/api/add_server":
@@ -1132,8 +1246,10 @@ async def handler(ws):
     _CONN_TASKS[ws]=tasks
     def spawn(coro):
         task=asyncio.create_task(coro); tasks.add(task); task.add_done_callback(tasks.discard)
-    async def bounded_tool(name,args,timeout,rid):
-        async with task_slots: await run_tool_task(ws,name,args,timeout,rid)
+    async def bounded_tool(name,args,timeout,rid,member_id=None):
+        async with task_slots:
+            if member_id is not None: await run_tool_task(ws,name,args,timeout,rid,member_id)
+            else: await run_tool_task(ws,name,args,timeout,rid)
     with clients_lock: clients.add(ws)
     metrics.ws_connections=len(clients)
     # socket tuning if underlying socket accessible
@@ -1171,7 +1287,7 @@ async def handler(ws):
                 elif mtype=="ping":
                     await ws.send(_dumps({"type":"pong","id":rid,"ts":time.time()}))
                 elif mtype=="studio_status":
-                    st=await asyncio.to_thread(probe_studio)
+                    st=await asyncio.to_thread(probe_studio_cached)
                     await ws.send(_dumps({"type":"studio_status","id":rid,"studio":st["place"],"studio_app":st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"mcp_alive":mgr.any_alive()}))
                 elif mtype=="list_tools":
                     # cache-aware with optional refresh flag
@@ -1185,14 +1301,14 @@ async def handler(ws):
                             try: tools=await asyncio.to_thread(mgr.list_tools, True)
                             except Exception as e: tools=mgr.list_tools(); log(f"list_tools err {e}","yl")
                             _cache_tools.set("list_tools", tools)
-                    _st=await asyncio.to_thread(probe_studio)
+                    _st=await asyncio.to_thread(probe_studio_cached)
                     await ws.send(_dumps({"type":"tools","id":rid,"tools":tools,"mcp_alive":mgr.any_alive(),"studio":_st["place"],"studio_app":_st["app"],"studio_proc":await asyncio.to_thread(_roblox_studio_app_running),"servers":mgr.health()}))
                 elif mtype=="call_tool":
                     name=msg.get("name",""); args=msg.get("arguments") or {}; timeout=_timeout(msg.get("timeout",120000))
                     if not isinstance(args,dict):
                         await ws.send(_dumps({"type":"error","id":rid,"error":"arguments must be an object"})); continue
                     log(f"-> tool {name}","cy",terminal=False)
-                    spawn(bounded_tool(name,args,timeout,rid))
+                    spawn(bounded_tool(name,args,timeout,rid,msg.get("member_id")))
                 elif mtype=="batch":
                     calls=msg.get("calls") or []
                     # start all as tasks, preserve order via index, but run in parallel where servers differ
@@ -1202,11 +1318,11 @@ async def handler(ws):
                     for c in calls:
                         _timeout(c.get("timeout",120000))
                         if not isinstance(c.get("arguments",{}),dict): raise ValueError("arguments must be an object")
-                    async def _run_batch(calls=calls,rid=rid):
+                    async def _run_batch(calls=calls,rid=rid,member_id=msg.get("member_id")):
                         results=[]
                         for idx,c in enumerate(calls):
                             n=c.get("name",""); a=c.get("arguments") or {}; t=_timeout(c.get("timeout",120000))
-                            r=await asyncio.to_thread(safe_call,n,a,t)
+                            r=await asyncio.to_thread(safe_call,n,a,t,member_id)
                             results.append({"name":n,**r})
                             # streaming partial
                             try: await ws.send(_dumps({"type":"batch_progress","id":rid,"idx":idx,"result":r}))
@@ -1237,6 +1353,41 @@ async def handler(ws):
                     try: await asyncio.to_thread(mgr.restart,sid); ok,err=True,None
                     except Exception as e: ok,err=False,str(e)
                     await ws.send(_dumps({"type":"mcp_status","id":rid,"alive":mgr.any_alive(),"ok":ok,"error":err,"servers":mgr.health(),"tools":mgr.list_tools()}))
+                elif mtype.startswith("team_"):
+                    # 4.6.0: team mailboxes over WS (same hub as HTTP, faster than
+                    # a separate HTTP round trip per poll). Reply: team_result.
+                    action=mtype[len("team_"):]
+                    member=msg.get("member_id")
+                    try:
+                        if action=="register": res=team_hub.register(member,msg.get("name"),msg.get("role"),msg.get("team","studio"))
+                        elif action=="status": res=team_hub.status(member)
+                        elif action=="ready": res=team_hub.ready(member)
+                        elif action=="leave": res=team_hub.leave(member)
+                        elif action=="inbox": res=team_hub.inbox(member)
+                        elif action=="ack": res=team_hub.ack(member,msg.get("ids"))
+                        elif action=="send":
+                            res=team_hub.send(member,msg.get("to","all"),msg.get("text"),msg.get("message_id"))
+                            metrics.team_messages+=1
+                        elif action=="start": res=team_hub.start(msg.get("team","studio"))
+                        elif action=="stop": res=team_hub.stop(msg.get("team","studio"))
+                        elif action=="events": res=team_hub.event_log(int(msg.get("since") or 0))
+                        else: raise ValueError("Unknown team action")
+                        await ws.send(_dumps({"type":"team_result","id":rid,**res}))
+                        # Wake other tabs instantly via WS push.
+                        try:
+                            last=team_hub.events[-1] if team_hub.events else None
+                            if last: await _push_team_event(last)
+                        except Exception: pass
+                    except TeamError as e:
+                        await ws.send(_dumps({"type":"team_result","id":rid,"ok":False,"error":str(e)}))
+                elif mtype=="verify":
+                    vpath=str(msg.get("path") or ""); vtool=str(msg.get("tool") or "inspect_instance")
+                    if vtool not in ("inspect_instance","script_read","get_studio_state","search_game_tree","list_roblox_studios"):
+                        await ws.send(_dumps({"type":"error","id":rid,"error":"verify only supports read tools"})); continue
+                    vargs={"path":vpath} if vpath and vtool=="inspect_instance" else ({"target_file":vpath} if vpath and vtool=="script_read" else {})
+                    vres=await asyncio.to_thread(safe_call,vtool,vargs,10)
+                    vtext=vres.get("text") or vres.get("error") or ""
+                    await ws.send(_dumps({"type":"verify_result","id":rid,"ok":bool(vres.get("ok")),"tool":vtool,"path":vpath,"text":vtext,"sha256":hashlib.sha256(vtext.encode()).hexdigest()}))
                 elif mtype=="metrics":
                     await ws.send(_dumps({"type":"metrics","id":rid,**metrics.snapshot()}))
                 else:
@@ -1332,6 +1483,8 @@ async def _early_studio_guidance():
         action_banner(["Open your place in Roblox Studio.","Go to: Assistant Settings > MCP Servers","       > 'Enable Studio as MCP server'","It can take ~10s; this window will turn green."])
 
 async def main():
+    global _ws_loop
+    _ws_loop = asyncio.get_running_loop()
     # banner
     print(); print(f"{C['cy']}  ZeroScript Bridge v{BRIDGE_VERSION} — ULTRA  {C['dim']}(port {PORT} WS + {PORT_HTTP} HTTP/SSE){C['reset']}")
     print(f"{C['dim']}  Python {sys.version.split()[0]}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  logs: {LOG_PATH}{C['reset']}")

@@ -71,5 +71,15 @@ check("the send path waits for the draft instead of overwriting it",
 check("holding a draft tells the user why it paused",
   /Holding your draft/.test(mainSrc));
 
+
+// ── 6. 4.6.0 submitAndGetBase prefix integrity (team inbox never fails landed)
+const fnStart = code.indexOf("async function submitAndGetBase");
+const fnSlice = code.slice(fnStart, fnStart + 2600);
+check("ZSMemoryWall context is computed BEFORE expectedPrefix",
+  fnSlice.indexOf("buildTrimmedContext") > 0 && fnSlice.indexOf("buildTrimmedContext") < fnSlice.indexOf("const expectedPrefix"),
+  "buildTrimmedContext after expectedPrefix breaks landed() verification");
+check("team.active skips MemoryWall prefix mutation on inbox messages",
+  /!team\.active/.test(fnSlice.slice(0, fnSlice.indexOf("const expectedPrefix"))));
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 if (failed) process.exit(1);

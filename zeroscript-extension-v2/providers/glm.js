@@ -124,9 +124,12 @@ const ZSProvider = (() => {
   // site editor this returns null, keeping the "not on a chat page" guard in
   // the send hooks intact (otherwise our own textarea would defeat it and the
   // hooks could swallow the site's login button).
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && now - _edAt < 80) return _edCache;
     for (const e of document.querySelectorAll(S.editor)) {
-      if (!e.closest("#zs-root")) return e;
+      if (!e.closest("#zs-root")) { _edCache = e; _edAt = now; return e; }
     }
     return null;
   };
@@ -561,8 +564,23 @@ const ZSProvider = (() => {
     } catch { return null; }
   };
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
+
   return {
     id: "glm",
+    version: "4.6.0",
     displayName: "GLM",
     // GLM-5.2 is multimodal and z.ai's composer accepts image uploads (png/jpg via
     // the always-mounted file input; chip staged in .chip-scroll, upload complete
@@ -602,7 +620,7 @@ const ZSProvider = (() => {
     // Assistant turns expose a stable message-<uuid> identity (lastAssistantId),
     // so the core's watcher can refuse finalizing before this send's reply exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-glm-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("glm.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,
@@ -618,19 +636,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("glm._zsApply", _e); }
-
 })();

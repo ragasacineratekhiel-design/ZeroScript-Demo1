@@ -5,25 +5,28 @@ ExtensionPresentation/
 presentation/
 docs/
 
-# Zip files
+# Archives & backups
 *.zip
+*.bak
+package-lock.json.bak
 
-# Local dev / diagnostic tools
+# Local dev / diagnostic tools & logs
 probe.py
 logs/
 devtools/
+config.json.tmp
 
-# System files
+# System & Python bytecode
 .DS_Store
 Thumbs.db
 desktop.ini
 __pycache__/
 ZeroScript Demo/__pycache__/
-# Secrets + generated state (audit #24: the bridge token and logs must never ship)
+*.py[cod]
+.venv/
+
+# Secrets + generated state (audit #24: bridge token must never ship)
 .zs_token
-*.pyc
-__pycache__/
 
 # Node (verification tooling only — the extension itself has no build step)
 node_modules/
-package-lock.json.bak

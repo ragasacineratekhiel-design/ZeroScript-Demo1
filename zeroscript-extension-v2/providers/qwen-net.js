@@ -22,7 +22,10 @@
   if (window.__zsQwenNet) return;
   window.__zsQwenNet = true;
 
+  const VERSION = "4.6.0";
   const NODE_ID = "zs-qwen-net";
+  const PUBLISH_MIN_MS = 24;
+  let _lastPubAt = 0;
   const node = () => {
     let n = document.getElementById(NODE_ID);
     if (!n) {
@@ -33,7 +36,13 @@
     }
     return n;
   };
-  const publish = (obj) => { try { node().textContent = JSON.stringify(obj); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.publish", _e); } };
+  const publish = (obj, force = false) => {
+    const now = Date.now();
+    if (!force && !obj.done && now - _lastPubAt < PUBLISH_MIN_MS) return;
+    _lastPubAt = now;
+    try { node().textContent = JSON.stringify({ ver: VERSION, ...obj }); }
+    catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.publish", _e); }
+  };
 
   // Parse the SSE lines we have so far, folding `answer`-phase content into `acc`.
   // Returns the updated accumulator { rid, text, done }.
@@ -43,7 +52,7 @@
     const js = s.slice(5).trim();
     if (!js || js === "[DONE]") { if (js === "[DONE]") acc.done = true; return acc; }
     let o;
-    try { o = JSON.parse(js); } catch { return acc; }
+    try { o = JSON.parse(js); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.parse", _e); return acc; }
     // A new response starts a fresh answer (reset text so we never mix two turns).
     const created = o["response.created"];
     if (created && created.response_id) { acc.rid = created.response_id; acc.text = ""; acc.done = false; }
@@ -82,7 +91,7 @@
       if (buf) foldLine(buf, acc);
     } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.consume", _e); }
     acc.done = true;
-    publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
+    publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() }, true);
   }
 
   const origFetch = window.fetch;

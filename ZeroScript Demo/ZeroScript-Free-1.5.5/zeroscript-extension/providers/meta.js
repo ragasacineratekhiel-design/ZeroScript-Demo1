@@ -300,10 +300,15 @@ const ZSProvider = (() => {
   // "Agent is working…" cover and the .zs-typing mask to P.getEditor(), so it MUST
   // be the visible node (the hidden mirror textarea has a 0x0 rect and put the
   // cover off-screen). Layout (barAnchor) and event targeting use this too.
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && _edCache.offsetParent !== null && now - _edAt < 80) return _edCache;
     const all = editorEls();
-    return all.find((e) => !isTextareaEditor(e) && e.offsetParent !== null) ||
+    _edCache = all.find((e) => !isTextareaEditor(e) && e.offsetParent !== null) ||
            all.find((e) => e.offsetParent !== null) || all[0] || null;
+    _edAt = now;
+    return _edCache;
   };
   const visibleEditor = getEditor; // alias (kept for call-site clarity)
   // writeEl() = the controlled mirror textarea we WRITE to: setting its value via
@@ -744,8 +749,23 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
+
   return {
     id: "meta",
+    version: "4.6.0",
     displayName: "Meta AI",
     // Meta's composer accepts image uploads (hidden multi-file input → inline
     // Lexical preview → uploaded on send; see attachImages). Vision-capable, so
@@ -753,6 +773,7 @@ const ZSProvider = (() => {
     // path is wired from the live DOM contract but not yet exercised end-to-end.
     supportsVision: true,
     timings,
+    thinkingSel: S.reasoning,
     // React reconciles a turn's content subtree on every update, wiping a chip
     // placed inside it. Anchor chips at the turn-element level instead.
     chipAtItemLevel: true,
@@ -761,7 +782,7 @@ const ZSProvider = (() => {
     // Turn elements are not virtualized away, so assistantCount() reliably
     // increases for every reply - the core's watcher uses this.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-meta-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("meta.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,
@@ -785,19 +806,4 @@ const ZSProvider = (() => {
     // actions
     attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("meta._zsApply", _e); }
-
 })();

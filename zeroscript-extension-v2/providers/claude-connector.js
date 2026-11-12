@@ -1,139 +1,142 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude-connector.js — Claude-specific handshake + wall/enhancer bootstrap
-// UPGRADED: fieldset-aware, hedge 80ms, tighter retry, never drops.
-// Dedicated custom connector for claude.ai — standalone handshake that binds Claude's ProseMirror composer to Roblox Studio bridge.
-// Why separate from providers/claude.js? User requested explicit file named for Claude custom connector.
-// This file is loaded BEFORE providers/claude.js on claude.ai via manifest content_scripts, and augments ZSProvider with MAX handshake.
-// It guarantees: if claude.ai loads, Studio is reachable in ≤80ms, Play mode is controllable, and prompt wall is active.
-// eslint-disable-next-line no-unused-vars
+// providers/claude-connector.js — Claude-specific handshake + wall/enhancer bootstrap v4.6.0
+// Loaded BEFORE providers/claude.js on claude.ai via manifest content_scripts.
+// Parallelizes bridge status + tool prefetch with a 1.5s warm handshake cache,
+// and preserves raw system/feedback/Bridge-team messages untouched so landed()
+// verification and multi-AI team turns never desynchronize.
 const ZSClaudeConnector = (() => {
   "use strict";
 
-  const CONNECTOR_VERSION = "4.5.0";
+  const CONNECTOR_VERSION = "4.6.0";
   const CONNECTOR_ID = "claude-custom-connector";
+  const HANDSHAKE_TTL_MS = 1500;
 
-  // ── Claude-specific handshake state ────────────────────────────────
-  let _connected = false, _studio = null, _tools = [], _connectAt = 0, _lastPingAt = 0;
-  let _wallReady = false, _promptReady = false;
+  let _connected = false, _studio = null, _tools = [], _connectAt = 0;
+  let _wallReady = false, _promptReady = false, _lastHs = null;
 
-  function log(...a){ try{ console.log(`[zs-claude-connector ${CONNECTOR_VERSION}]`, ...a); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.log", _e); } }
-
-  async function pingBridge(){
-    _lastPingAt = Date.now();
-    try{
-      const r = await new Promise(res=>{
-        try{ chrome.runtime.sendMessage({type:"status"}, x=> res(x)); }catch(e){ res(null); }
-      });
-      if(!r) return { connected:false, studio:null, tools:[] };
-      _connected = !!r.connected;
-      _studio = (typeof r.studio==="boolean"? r.studio : null);
-      _tools = Array.isArray(r.tools) ? r.tools : (Array.isArray(r.servers) ? r.servers.flatMap(s=> Array(s.tools||0).fill(0)) : []);
-      if(r.tools && typeof r.tools === "number") _tools = Array(r.tools).fill(0);
-      // Normalize tools count
-      if(typeof r.tools==="number") _tools = Array(r.tools).fill(0);
-      if(Array.isArray(r.servers)){
-        const roblox = r.servers.find(s=> s.id==="roblox");
-        if(roblox) _studio = roblox.alive;
-      }
-      return { connected:_connected, studio:_studio, toolsLen: (r.tools?.length ?? r.tools ?? 0), raw:r };
-    }catch(e){ log("pingBridge err", e); return { connected:false, studio:null, tools:[] }; }
+  function log(...a) {
+    try { console.log(`[zs-claude-connector ${CONNECTOR_VERSION}]`, ...a); }
+    catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.log", _e); }
   }
 
-  async function ensureStudioReady(maxWaitMs=4000){
-    const t0=Date.now();
-    let last=null;
-    while(Date.now()-t0 < maxWaitMs){
+  async function pingBridge() {
+    try {
+      const r = await new Promise((res) => {
+        try { chrome.runtime.sendMessage({ type: "status" }, (x) => res(x)); }
+        catch (e) { globalThis.ZSSafe?.seen?.("claude-connector.ping", e); res(null); }
+      });
+      if (!r) return { connected: false, studio: null, tools: [], toolsLen: 0 };
+      _connected = !!r.connected;
+      _studio = typeof r.studio === "boolean" ? r.studio : null;
+      const toolsCount = Array.isArray(r.tools) ? r.tools.length : (typeof r.tools === "number" ? r.tools : 0);
+      if (Array.isArray(r.servers)) {
+        const roblox = r.servers.find((s) => s.id === "roblox");
+        if (roblox) _studio = roblox.alive;
+      }
+      return { connected: _connected, studio: _studio, toolsLen: toolsCount, raw: r };
+    } catch (e) {
+      globalThis.ZSSafe?.seen?.("claude-connector.pingBridge", e);
+      log("pingBridge err", e);
+      return { connected: false, studio: null, tools: [], toolsLen: 0 };
+    }
+  }
+
+  async function ensureStudioReady(maxWaitMs = 4000) {
+    const t0 = Date.now();
+    let last = null;
+    while (Date.now() - t0 < maxWaitMs) {
       last = await pingBridge();
-      if(last.connected && last.studio===true) return last;
-      if(last.studio===false) {
-        // Studio reachable but no place — still usable for Edit mode, report as degraded
-        log("Studio degraded — no place, but Edit mode ok");
+      if (last.connected && last.studio === true) return last;
+      if (last.studio === false) {
+        log("Studio degraded — no place, Edit mode ok");
         return last;
       }
-      await new Promise(r=> setTimeout(r, 12)); // was 75ms — loopback RTT is <1ms
+      await new Promise((r) => setTimeout(r, 12));
     }
     return last;
   }
 
-  async function handshake(){
-    const t0=Date.now();
-    log("handshake start");
-    // 1) Bridge
-    const s = await pingBridge();
-    log("bridge", s.connected?"connected":"offline", "studio", s.studio, "toolsLen", s.toolsLen??s.tools?.length);
-    // 2) Wall
-    try{ await (window.ZSMemoryWall && window.ZSMemoryWall.load ? window.ZSMemoryWall.load() : Promise.resolve()); _wallReady=true; log("wall ready"); }catch(e){ log("wall err", e); }
-    // 3) Prompt enhancer
-    try{ if(window.ZSPromptEnhancer){ _promptReady=true; log("prompt enhancer ready", window.ZSPromptEnhancer.version); }}catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
-    // 4) Tools list prefetch (so list_commands is instant when Claude asks)
-    try{
-      const t = await new Promise(res=> chrome.runtime.sendMessage({type:"list_tools"}, x=> res(x)));
-      if(t && Array.isArray(t.tools)) { _tools=t.tools; log("tools prefetched", t.tools.length); }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
+  async function handshake(force = false) {
+    const now = Date.now();
+    if (!force && _lastHs && _connected && now - _connectAt < HANDSHAKE_TTL_MS) {
+      return _lastHs;
+    }
+    const t0 = now;
+    const [s, wallRes, toolsRes] = await Promise.all([
+      pingBridge(),
+      Promise.resolve().then(() => (window.ZSMemoryWall && window.ZSMemoryWall.load ? window.ZSMemoryWall.load() : null)).catch((e) => { globalThis.ZSSafe?.seen?.("claude-connector.wall", e); return null; }),
+      new Promise((res) => {
+        try { chrome.runtime.sendMessage({ type: "list_tools" }, (x) => res(x)); }
+        catch (e) { globalThis.ZSSafe?.seen?.("claude-connector.tools", e); res(null); }
+      }),
+    ]);
+    _wallReady = wallRes !== undefined;
+    _promptReady = !!window.ZSPromptEnhancer;
+    if (toolsRes && Array.isArray(toolsRes.tools)) _tools = toolsRes.tools;
     _connectAt = Date.now();
     const ms = _connectAt - t0;
-    log(`handshake done in ${ms}ms`, {connected:s.connected, studio:s.studio, wall:_wallReady, prompt:_promptReady});
-    // Beacon for diagnostics
-    try{
-      let el=document.getElementById("zs-claude-wall");
-      if(!el){ el=document.createElement("script"); el.type="application/json"; el.id="zs-claude-wall"; (document.documentElement||document.body).appendChild(el); }
-      el.textContent = JSON.stringify({ version: CONNECTOR_VERSION, at: new Date().toISOString(), ms, connected:s.connected, studio:s.studio, tools: (_tools?.length||0), wall:_wallReady, prompt:_promptReady });
-      try{ window.__zsClaudeConnector = { version: CONNECTOR_VERSION, connected:s.connected, studio:s.studio, tools:_tools, ms, wall:_wallReady, prompt:_promptReady }; }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
-    }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.handshake", _e); }
+    _lastHs = s;
+    try {
+      let el = document.getElementById("zs-claude-wall");
+      if (!el) {
+        el = document.createElement("script");
+        el.type = "application/json";
+        el.id = "zs-claude-wall";
+        (document.documentElement || document.body).appendChild(el);
+      }
+      el.textContent = JSON.stringify({
+        version: CONNECTOR_VERSION, at: new Date().toISOString(), ms,
+        connected: s.connected, studio: s.studio, tools: _tools?.length || s.toolsLen || 0,
+        wall: _wallReady, prompt: _promptReady,
+      });
+      window.__zsClaudeConnector = {
+        version: CONNECTOR_VERSION, connected: s.connected, studio: s.studio,
+        tools: _tools, ms, wall: _wallReady, prompt: _promptReady,
+      };
+    } catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.beacon", _e); }
     return s;
   }
 
-  // ── Hook into provider lifecycle — called when ZSProvider inits ──────
-  function attachToProvider(){
-    const P = (typeof ZSProvider!=="undefined"? ZSProvider : window.ZSProvider);
-    if(!P || P._zsClaudeConnectorAttached) return false;
-    if(P.id !== "claude") return false;
+  function attachToProvider() {
+    const P = typeof ZSProvider !== "undefined" ? ZSProvider : window.ZSProvider;
+    if (!P || P._zsClaudeConnectorAttached) return false;
+    if (P.id !== "claude") return false;
 
     P._zsClaudeConnectorAttached = true;
     P._connectorVersion = CONNECTOR_VERSION;
 
-    // Wrap ensureComposerReady to run handshake first — guarantees Studio is checked before Claude can type
     const _origEnsure = P.ensureComposerReady ? P.ensureComposerReady.bind(P) : null;
-    P.ensureComposerReady = async (reason)=>{
-      log("ensureComposerReady", reason);
-      const hs = await handshake();
-      let base=null;
-      if(_origEnsure){ try{ base = await _origEnsure(reason); }catch(e){ base={ready: !!P.getEditor()}; }}
-      else base={ready: !!P.getEditor()};
-      // Annotate with connector status so main.js banner can show degraded vs full
-      return { ...base, claudeConnector:true, connectorVersion: CONNECTOR_VERSION, bridgeConnected: hs.connected, studio: hs.studio, studioReady: hs.studio===true };
+    P.ensureComposerReady = async (reason) => {
+      const hs = await handshake(false);
+      let base = null;
+      if (_origEnsure) {
+        try { base = await _origEnsure(reason); }
+        catch (e) { globalThis.ZSSafe?.seen?.("claude-connector.ensure", e); base = { ready: !!P.getEditor() }; }
+      } else {
+        base = { ready: !!P.getEditor() };
+      }
+      return {
+        ...base, claudeConnector: true, connectorVersion: CONNECTOR_VERSION,
+        bridgeConnected: hs.connected, studio: hs.studio, studioReady: hs.studio === true,
+      };
     };
 
-    // Wrap typeAndSend to route through wall+enhancer — bad→best happens transparently
-    if(P.typeAndSend && window.ZSPromptEnhancer){
-      try{ window.ZSPromptEnhancer.wrapTypeAndSend(P); log("prompt enhancer wrapped Claude typeAndSend"); }catch(e){ log("wrap err", e); }
-    }
-
-    // Expose memory wall helper on provider for main.js to call after Studio tools loaded
-    P.getMemoryWall = ()=> (window.ZSMemoryWall||null);
-    P.getPromptEnhancer = ()=> (window.ZSPromptEnhancer||null);
+    // Expose enhancer + memory wall without mutating injected system/team messages
+    // behind main.js submitAndGetBase's expectedPrefix check.
+    P.getMemoryWall = () => window.ZSMemoryWall || null;
+    P.getPromptEnhancer = () => window.ZSPromptEnhancer || null;
     P.claudeHandshake = handshake;
-
-    log("attached to ZSProvider claude — full Studio control (Play, settings, all services) via custom connector");
+    log("attached to ZSProvider claude v" + CONNECTOR_VERSION);
     return true;
   }
 
-  // Try attach now and on intervals (SPA nav race)
-  try{ setTimeout(attachToProvider, 20); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
-  try{ setTimeout(attachToProvider, 100); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
-  try{ setTimeout(attachToProvider, 300); }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
-  try{
-    let tries=0; const iv=setInterval(()=>{ if(attachToProvider() || ++tries>40) clearInterval(iv); }, 50);
-  }catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attachToProvider", _e); }
-  // REMOVED: a `Object.defineProperty(window, "ZSProvider", …)` watcher used to
-  // live here to catch "future redefine". It could never fire: every provider
-  // declares `const ZSProvider = (() => …)()` at content-script top level, which
-  // is a LEXICAL binding — it does not create a window property and does not
-  // invoke a window setter. Proven by loading this file plus claude.js into one
-  // VM realm: the setter fires zero times and `typeof window.ZSProvider` stays
-  // "undefined" while the provider attaches fine. The retry timers above and the
-  // 50ms/40-try interval below are what actually attach the connector.
+  try { setTimeout(attachToProvider, 20); } catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attach", _e); }
+  try { setTimeout(attachToProvider, 100); } catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attach", _e); }
+  try {
+    let tries = 0;
+    const iv = setInterval(() => { if (attachToProvider() || ++tries > 40) clearInterval(iv); }, 50);
+  } catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.attach", _e); }
 
-  // Public
   return { version: CONNECTOR_VERSION, id: CONNECTOR_ID, handshake, pingBridge, ensureStudioReady, attachToProvider };
 })();
+try { window.ZSClaudeConnector = ZSClaudeConnector; } catch (_e) { globalThis.ZSSafe?.seen?.("claude-connector.export", _e); }

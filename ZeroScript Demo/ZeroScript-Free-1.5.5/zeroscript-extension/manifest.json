@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.5.0",
-  "description": "ZeroScript with bounded execution modes, memory/wall tools, authenticated bridge teams and tab recovery controls.",
+  "version": "4.6.0",
+  "description": "ZeroScript 4.6.0 \u2014 enforced planner/coder/checker roles, real-time WS bridge teams, verified /truth ground-truth reads, and fast Roblox Studio MCP automation.",
   "permissions": [
     "storage",
     "alarms",
@@ -32,7 +32,11 @@
     "https://chat.mistral.ai/*",
     "https://*.mistral.ai/*",
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://lmarena.ai/*",
+    "https://*.arena.ai/*",
+    "https://z.ai/*",
+    "https://qwen.ai/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -44,7 +48,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ZeroScript MAX 4.3.0",
+    "default_title": "ZeroScript MAX 4.6.0",
     "default_icon": {
       "16": "icon.png",
       "48": "icon.png",
@@ -59,6 +63,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -95,6 +100,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -118,6 +124,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -142,6 +149,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -165,6 +173,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -183,11 +192,14 @@
     },
     {
       "matches": [
-        "https://arena.ai/*"
+        "https://arena.ai/*",
+        "https://lmarena.ai/*",
+        "https://*.arena.ai/*"
       ],
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -212,6 +224,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -246,6 +259,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -270,6 +284,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -295,6 +310,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -319,6 +335,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -344,6 +361,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -368,6 +386,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",
@@ -393,6 +412,7 @@
       "js": [
         "core/safe.js",
         "core/config.js",
+        "core/transport.js",
         "core/agent_stability.js",
         "core/parser.js",
         "core/memory_wall.js",

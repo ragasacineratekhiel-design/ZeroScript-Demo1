@@ -38,8 +38,10 @@
   if (window.__zsChatgptCm) return;
   window.__zsChatgptCm = true;
 
+  const VERSION = "4.6.0";
   const ATTR = "data-zs-cm";
   const LEN = "data-zs-cm-len";
+  try { document.documentElement.setAttribute("data-zs-cm-ver", VERSION); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.ver", _e); }
 
   // Republishing a 10k-char attribute on every sample would churn the DOM (the
   // core samples the stream ~8x/s). Only write when the document actually grew
@@ -67,12 +69,12 @@
     const len = doc.length;
     if (seen.get(content) === len && content.hasAttribute(ATTR)) return true;
     let text;
-    try { text = doc.toString(); } catch { return false; }
+    try { text = doc.toString(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.docStr", _e); return false; }
     try {
       content.setAttribute(ATTR, text);
       content.setAttribute(LEN, String(len));
       seen.set(content, len);
-    } catch { return false; }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.setAttr", _e); return false; }
     return true;
   }
 

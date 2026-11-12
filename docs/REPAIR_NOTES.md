@@ -1,4 +1,4 @@
-# 3.1 repair and validation notes
+# 4.6.0 repair and validation notes (cumulative from 3.1–4.6)
 
 This implements repairs to the verified findings in the earlier partial audit. It is **not** a certification that every repository file is bug-free. Provider websites, Windows shell behavior and Roblox integration require real-machine testing beyond the isolated tests.
 
@@ -24,7 +24,10 @@ This implements repairs to the verified findings in the earlier partial audit. I
 | Reconnect doesn't replace current socket | Explicitly close/replace it and clear ambiguous pending requests without replay. |
 | Unknown health shows ready | Require positive Studio evidence for green/ready status. |
 | Missing health poll, stale hype and contradictory batch prompt | Removed undefined poll; aligned prompt with one-call execution and non-transactional transport; replaced current docs/metadata with evidence-based descriptions. Historical changelogs remain historical. |
-| Copy drift and narrow tests | Canonical source policy, read-only sync check, Python and Node regression suites, plus CI. |
+| Team startup/inbox broken by enhancer & landing URLs | Isolated `PromptEnhancer` and `MemoryWall` from team/internal sends, hoisted normal-mode enhancement before `expectedPrefix`, stripped `location.hostname` in `isLandingKey()`, and added `pendingWake` + WS/Condition push delivery. |
+| Planner/checker mutating Studio directly | Enforced coder-only Studio mutations across `core/main.js`, `background.js`, and `bridge.py`/`team_hub.py`, emitting `role_violation` (`[ROLE-BLOCKED]`) events when planner/checker attempts a write tool. |
+| `/truth` unverified claims & dead post-`return` stability blocks | Added `/api/verify` (`verify_fact`) SHA-256 Studio read proof + `r.ok`-gated `[VERIFIED via …]` stamps, and moved unreachable post-`return` stability hooks before `return` in 8 bespoke providers (enforced by `audit-deep.js`). |
+| Copy drift and narrow tests | Canonical source policy, SHA-256 sync script (`scripts/sync_copies.py`), Python and Node regression suites, `[4g]` role/truth verifier gate, plus CI. |
 
 ## New collaboration design
 

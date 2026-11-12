@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // tools/fixtures/undefined-inside-function.js
-// INTENTIONAL FAILURE FIXTURE — never loaded by the extension.
+// INTENTIONAL FAILURE FIXTURE (v4.6.0) — never loaded by the extension; verified by tools/verify.js [4b].
 //
 // The verifier's scope check missed this exact shape for the entire life of the
 // project: a call to a name that is declared NOWHERE, placed INSIDE a function

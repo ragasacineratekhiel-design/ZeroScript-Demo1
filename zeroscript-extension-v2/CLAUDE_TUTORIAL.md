@@ -1,95 +1,46 @@
-# ZeroScript MAX — Claude Connect Tutorial (4.4.0)
+# ZeroScript MAX 4.6.0 — Claude & Multi-AI Setup Guide
 
-This guide proves Claude **is fully wired** to Roblox Studio, exactly like DeepSeek+Gemini — same speed, same power.
+This guide covers connecting **Claude (`claude.ai`)** — either solo or as part of a 3-AI **Planner / Coder / Checker** bridge team — to Roblox Studio.
 
-## 1. Install (2 min)
+## 1. Install & Launch Bridge
 
-1. Download bridge: https://github.com/sebattfg/ZeroScript-Free/releases (Bridge.zip)
-2. Extract → double-click `start.bat` (keeps running, don't close)
-3. In Roblox Studio: open your place → enable **Assistant Settings → MCP Servers → Enable Studio as MCP Server**
-4. In Chrome: Load extension → `chrome://extensions/` → Enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2` folder
+1. Ensure **Python 3.9+** and `websockets` (`python -m pip install -r requirements-dev.txt`) are installed.
+2. Start the local bridge from `ZeroScript Demo/ZeroScript-Free-1.5.5/`:
+   - **Windows:** `py -3 start.py` (opens the bridge + `ZeroScript Team Console`)
+   - **macOS / Linux:** `./MacOS_START.command` (and optional `python3 team_console.py` in a second terminal)
+3. In **Roblox Studio**: open a place → **Assistant → Manage MCP Servers → Enable Studio as MCP Server**.
+4. In **Chrome / Edge**: open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2/` (card must read **4.6.0**).
 
-## 2. Open Claude
+## 2. Solo Agent Mode on Claude
 
-Go to https://claude.ai/new — you must be logged in. ZeroScript bar appears **above** the composer:
+1. Open `https://claude.ai/new` while signed in. The ZeroScript bar mounts in its own sibling slot above the composer:
+   ```
+   ● Standby. Start the agent, or just chat.  [▶ Start Roblox agent]
+   ```
+2. Click **`▶ Start Roblox agent`** on a fresh chat. `ZSClaudeConnector` verifies both the bridge and Studio in parallel (`Promise.all` with short TTL cache) and boots the session.
+3. Even when Claude redirects from `/new` to `/chat/<uuid>` on the first turn, 4.6.0's hostname-aware `isLandingKey()` keeps the running loop and session pinned cleanly without dropping the first command.
 
-```
-● Standby. Start the agent, or just chat.  [▶︎ Start Roblox agent]
-```
+## 3. Bridge Team Mode (Planner → Coder → Checker)
 
-If you see `● Standby` → Claude is detected. If not, reload (F5), extension was updated.
+1. Open three different AI tabs (for example: **Claude** = `planner`, **DeepSeek** = `coder`, **Gemini** = `checker`).
+2. In the ZeroScript popup on each tab, keep the same **Team** name (`studio`), select that tab's role, and click **Join active AI tab**. Check the live `#team-roster` line in the popup.
+3. Click **Start all three team tabs**. Role prompts submit concurrently and team messages route over WebSocket + 0 ms Condition long-poll (`team_console.py`).
+4. **Enforced role boundaries in 4.6.0:**
+   - **Planner** (`read-only`): inspects Studio and sends specs via `team_send`. Any `execute_luau` / `multi_edit` attempt is blocked (`ROLE VIOLATION`).
+   - **Coder** (`mutates Studio`): the **only** role permitted to run `execute_luau`, `multi_edit`, and Studio write tools.
+   - **Checker** (`read-only`): audits scripts/instances (`script_read`, `inspect_instance`, `verify_fact`, `start_stop_play`) and sends defect reports back to `coder` via `team_send`.
 
-## 3. Start Agent — The ONLY Way
+## 4. Truthful Transport & `/truth` Verification (No Fake Claims)
 
-Click **`▶︎ Start Roblox agent`** on the bar — NOT Claude's Send, NOT Enter. Wait until:
+- **Real transports:** WebSocket (`ws://127.0.0.1:17613`), HTTP REST (`http://127.0.0.1:17614`), and SSE (`/api/events`), authenticated with `.zs_token`. Mutations execute **once** (never hedged or silently replayed). There is no WebTransport or msgpack requirement.
+- **Verified `/truth` mode:** Prefix prompts with `/truth` (or `/brutal-honest`, `/0%-lies`) to require live Studio read evidence. Agents can call:
+  ```json
+  {"command":"verify_fact","params":{"path":"game.Workspace","tool":"inspect_instance"}}
+  ```
+  which queries `/api/verify` and stamps the output with a SHA-256 digest and UTC timestamp (or reports `NOT VERIFIED` if Studio is offline).
 
-```
-● Agent active · 28 tools
-```
+## 5. Troubleshooting
 
-Then type: `make me a simulator` (or any request). The bar shows `■ Stop` while working.
-
-## 4. How It Connects (proof)
-
-1. Start triggers `list_commands` — bridge replies via **WebSocket hedge 80ms** → HTTP/SSE/BroadcastChannel fallback (Ultra transport)
-2. Claude writes ```json {"command":"execute_luau","params":{…}} ``` → extension runs on Studio → returns `Output of 'execute_luau': …`
-3. Claude sees result, continues. You see chip: `execute_luau ✓ done`
-
-**Verify manually:** After Start, type `list all commands` → you get 25+ tools. That's proof.
-
-## 5. If Claude Shows "Standby Again" / Stuck
-
-- **Bridge offline:** bar says `Run start.bat` — start bridge, then **new chat**
-- **Studio offline:** `Open a place in Roblox Studio` — open place + enable MCP
-- **Play mode trap:** If Studio is playing (▶︎ green), edits error `Edit datamodel not available`. Agent now **auto-STOPs**: `start_stop_play {is_start:false}` → verify → then Edit. You can also manually Fix: click Stop (■) in Studio.
-- **Page stale:** `Reload this page` banner after extension update → F5
-
-## 6. Make It Work on EVERY AI (15+)
-
-Same bar, same flow on all 14 sites:
-
-| Site | URL | Bar color |
-|------|-----|---|
-| DeepSeek | chat.deepseek.com | blue |
-| ChatGPT | chatgpt.com | green |
-| Claude | claude.ai | orange |
-| Gemini | gemini.google.com | purple |
-| Kimi | kimi.ai | teal |
-| +10 more | see popup | grey |
-
-All share **same 8-transport Ultra**: WebSocket + HTTP/REST + SSE + Long-Poll + BroadcastChannel + batch (#24) + msgpack + WebTransport → never drops.
-
-## 7. Do Everything in Studio — Settings & Services
-
-You own **every** setting via `execute_luau` — don't tell user to "change manually":
-
-```
-Workspace.Gravity = 50              // physics
-Lighting.ClockTime = 0              // night
-game:GetService("Teams"):CreateTeam("Red")
-StarterPlayer.StarterPlayerScripts: // character walkspeed
-ReplicatedStorage/RemoteEvents      // network
-```
-
-Services you can mutate: Workspace, Lighting, SoundService, Teams, ReplicatedStorage, ServerScriptService, StarterGui, StarterPlayer, Chat, Players, HttpService, DataStoreService, etc. See prompt `STUDIO TOTAL CONTROL`.
-
-## 8. Efficient Reads + Mock Simulation
-
-Agent now **enforces**:
-
-1. **Read efficiently:** `search_game_tree "Shop"` → `script_read ShopService` (2 calls, not 30)
-2. **Play STOP→Edit:** `get_studio_state` → if playing STOP → `multi_edit` → `inspect_instance` verify
-3. **Mock double-check:** `start_stop_play true` → live verify via Server/Client execute → `stop` → report verified
-
-After each edit, agent does `inspect→mutate→verify` (anti-hallucination lock).
-
-## 9. Custom AI? Copy Switch Model Pattern
-
-All providers use `providers/generic.js` + ultra stability wrapper. To add new AI:
-1. Copy `generic.js` → `providers/newsite.js`
-2. Set `S.editor`, `S.msg`, `barMount()` (see claude.js DeepSeek 1:1 pattern)
-3. Add to `manifest.json` + `background.js PROVIDER_URLS`
-
----
-
-**Honest fact-check:** v3.2 "DeepSeek only" reports were true — Claude fieldset + ChatGPT composer-surface 2026 redesign broke selectors/barMount while manifest said "connected". v3.3 fixes selectors, barMount fallbacks, Play STOP enforcement, efficient batch reads, mock verify. All 15 AI now actually fully control Studio.
+- **Bridge offline:** run `python start.py --check` or `./MacOS_START.command --check` to verify Python and `websockets`.
+- **Toolbar hidden after a site update:** open the extension popup and click **Restore toolbar** (`zs-recover-toolbar`).
+- **Play mode active during edits:** stop Play mode first (`start_stop_play {"is_start": false}`) so edits apply to the `Edit` DataModel rather than a temporary runtime session.

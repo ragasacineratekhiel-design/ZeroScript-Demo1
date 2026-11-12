@@ -1,16 +1,19 @@
-# Node (tools/verify.js only — the extension itself needs no build)
+# Node (tools/verify.js & JSDOM tests only — the extension itself needs no build)
 node_modules/
 
-# Generated / local
+# Python virtual environments & bytecode
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated / local runtime state (secrets and logs must never be committed)
 .DS_Store
 Thumbs.db
 *.log
-
-__pycache__/
-*.py[cod]
+*.bak
 .zs_token
 config.json.tmp
 logs/
-.venv/
-node_modules/
 ZeroScript Demo/config.json
+Unselected files/

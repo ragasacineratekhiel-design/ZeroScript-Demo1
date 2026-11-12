@@ -110,6 +110,19 @@ async function main(){
   await c.api.handle({type:'agent_temp_write',key:'integration',value:{text:'retained temp'}},sender);
   const temp=await c.api.handle({type:'agent_temp_read',key:'integration'},sender);
   check('main agent temp hub remains functional',()=>assert.equal(temp.payload.value.text,'retained temp'));
+  // 4.6.0 role enforcement, subdomain hosts (lmarena.ai, z.ai), and verify_fact routing
+  c.fetch=async(url,opts)=>({ok:true,status:200,json:async()=>({ok:true,verified:true,sha256:'a'.repeat(64),self:{id:`m-${JSON.parse(opts.body||'{}').role||'x'}`,role:JSON.parse(opts.body||'{}').role||'coder'}})});
+  await c.api.handle({type:'team_register',session_id:'s46',role:'planner',team:'r46'},{id:'extension-id',tab:{id:21,url:'https://claude.ai/new'}});
+  await c.api.handle({type:'team_register',session_id:'s46',role:'coder',team:'r46'},{id:'extension-id',tab:{id:22,url:'https://lmarena.ai/c/1'}});
+  await c.api.handle({type:'team_register',session_id:'s46',role:'checker',team:'r46'},{id:'extension-id',tab:{id:23,url:'https://z.ai/'}});
+  const pBlock=await c.api.handle({type:'call_tool',name:'execute_luau',arguments:{code:'return 1'}},{id:'extension-id',tab:{id:21,url:'https://claude.ai/new'}});
+  check('4.6.0 background role gate blocks planner from execute_luau',()=>{assert.equal(pBlock.ok,false);assert.equal(pBlock.kind,'role_violation');});
+  const kBlock=await c.api.handle({type:'call_tool',name:'multi_edit',arguments:{}},{id:'extension-id',tab:{id:23,url:'https://z.ai/'}});
+  check('4.6.0 background role gate blocks checker from multi_edit',()=>{assert.equal(kBlock.ok,false);assert.equal(kBlock.kind,'role_violation');});
+  const cAllow=await c.api.handle({type:'call_tool',name:'execute_luau',arguments:{code:'return 1'}},{id:'extension-id',tab:{id:22,url:'https://lmarena.ai/c/1'}});
+  check('4.6.0 background role gate allows coder on lmarena.ai to execute_luau',()=>assert.equal(cAllow.ok,true));
+  const vf=await c.api.handle({type:'verify_fact',path:'game.Workspace',tool:'inspect_instance'},{id:'extension-id',tab:{id:21,url:'https://claude.ai/new'}});
+  check('4.6.0 verify_fact routes to /api/verify with sha256 proof',()=>{assert.equal(vf.ok,true);assert.equal(vf.verified,true);});
   console.log(`\n${passed} extension regression checks passed.`);
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

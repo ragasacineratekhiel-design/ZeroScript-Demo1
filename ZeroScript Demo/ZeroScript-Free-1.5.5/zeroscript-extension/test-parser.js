@@ -108,3 +108,12 @@ ok("no dsml false positive on prose",
    !ZSParse.DSML_RE.test("I considered the DSML invoke and parameter tags, but used JSON instead."));
 ok("no dsml false positive on a real command",
    !ZSParse.DSML_RE.test('{"command": "script_read", "params": {"target_file": "x"}}'));
+
+// ── 4.6.0 team + verify_fact + Bridge team inbox feedback recognition ──────
+const vf = ZSParse.parseToolCalls('{"command":"verify_fact","params":{"path":"game.Workspace.SpawnLocation","tool":"inspect_instance"}}');
+ok("verify_fact command parses", vf.length === 1 && vf[0].tool === "verify_fact" && vf[0].arguments.path === "game.Workspace.SpawnLocation");
+const ts = ZSParse.parseToolCalls('```json\n{"command":"team_send","params":{"to":"coder","text":"Build ShopService"}}\n```');
+ok("team_send command parses", ts.length === 1 && ts[0].tool === "team_send" && ts[0].arguments.to === "coder");
+ok("Bridge team inbox note is recognized as injected feedback",
+   ZSParse.isInjectedFeedback("(System note: Bridge team inbox — actual messages queued for you)"));
+ok("parser version is 4.6.0", ZSParse.VERSION === "4.6.0");

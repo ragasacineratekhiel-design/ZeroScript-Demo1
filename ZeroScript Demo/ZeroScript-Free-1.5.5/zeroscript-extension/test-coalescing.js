@@ -103,6 +103,37 @@ function check(name, cond, detail) {
     check("a failed call leaves no entry behind", inflight.size === 0, inflight.size + " entries");
   }
 
+
+  // 5. Real core/transport.js (4.6.0): coalesces status/listTools, never replays callTool/verifyFact
+  {
+    const fs = require("fs"), path = require("path"), vm = require("vm");
+    let wireSends = 0;
+    const ctx = {
+      console, Date, Math, JSON, Promise, Map, Set, String,
+      setTimeout, clearTimeout,
+      chrome: {
+        runtime: {
+          lastError: null,
+          sendMessage: (msg, cb) => {
+            wireSends++;
+            setTimeout(() => cb({ ok: true, connected: true, type: msg.type }), 25);
+          },
+        },
+      },
+    };
+    ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "core/transport.js"), "utf8"), ctx);
+    const T = ctx.ZS_Transport;
+    check("ZS_Transport 4.6.0 loads", T && T.VERSION === "4.6.0");
+    wireSends = 0;
+    await Promise.all([T.status(), T.status(), T.status()]);
+    check("ZS_Transport coalesces concurrent status() reads", wireSends === 1, wireSends + " sends");
+    T.invalidate("status");
+    await T.status();
+    check("ZS_Transport.invalidate('status') evicts cached status", wireSends === 2, wireSends + " sends");
+  }
+
   console.log("\n" + pass + " passed, " + failed + " failed");
   if (failed) process.exit(1);
 })();

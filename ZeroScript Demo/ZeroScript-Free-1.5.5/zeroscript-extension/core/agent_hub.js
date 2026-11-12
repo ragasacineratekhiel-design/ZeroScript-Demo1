@@ -5,7 +5,7 @@
 // Stores {key, value, from, t, ttl} in background memory + chrome.storage cache, readable by all tabs in 10ms
 (() => {
   "use strict";
-  const VERSION = "4.5.0";
+  const VERSION = "4.6.0";
   const HUB_PREFIX = "zsAgentHub_";
   const BC_NAME = "zs-agent-hub";
 
@@ -28,7 +28,8 @@
   // write to temp storage via bridge (background memory) + broadcast
   async function write(key, value, opts={}){
     const k = String(key);
-    const payload = { key:k, value, from: opts.from||"planner", t:Date.now(), ttl: opts.ttl|| 120000, v:VERSION };
+    // 4.6.0: role-tagged writes so hub readers can tell plan vs code vs review.
+    const payload = { key:k, value, from: opts.from||"planner", role: opts.role||opts.from||"planner", t:Date.now(), ttl: opts.ttl|| 120000, v:VERSION };
     _cache.set(HUB_PREFIX+k, payload);
     // broadcast instant
     try { if(_bc) _bc.postMessage({type:"hub_write", payload}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_hub.write", _e); }
@@ -134,7 +135,7 @@
     hedgeMs: 5,
     pollMs: 5,
     batchMax: 32,
-    version: "4.5.0",
+    version: "4.6.0",
   };
 
   // HONEST LATENCY (audit #20): these are REAL paths, not marketing numbers.

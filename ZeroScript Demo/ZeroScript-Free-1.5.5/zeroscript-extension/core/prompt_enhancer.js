@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.5.0";
+  const ENHANCER_VERSION = "4.6.0";
 
   function getPlanOrchestration(raw){
     try{
@@ -25,7 +25,7 @@
       }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.wall", _e); }
       const roleList=planDef.roles.join(" → ");
       const assigned=Object.entries(roles).map(([k,v])=>`${k}:${v}`).join(", ") || "auto";
-      return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${planDef.roles.length===3 ? "Planner designs blueprint + file tree, Coder builds (Instance.new + multi_edit), Checker audits + fixes. Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review})." : planDef.roles[0]==="planner" ? "Planner → Coder: Planner outputs blueprint (phases + paths + economy), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff." : "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes fix list to wall 10ms."}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
+      return `\n\n━━━ SWITCH PLAN ORCHESTRATION: ${planDef.name.toUpperCase()} (${planDef.ais} AIs) — ${roleList} — 10ms WALL ━━━\nYou are orchestrated as ${planDef.name}: ${planDef.roles.length===3 ? "Planner designs blueprint + file tree (NEVER calls execute_luau/multi_edit — rejected for planner), Coder builds (Instance.new + multi_edit, ONLY mutator), Checker audits via script_read/inspect and reports defects to Coder (NEVER edits). Each writes to wall via ZSPlanWall.send(myRole,nextRole,{spec|code|review})." : planDef.roles[0]==="planner" ? "Planner → Coder: Planner outputs blueprint (phases + paths + economy, never mutates), Coder implements immediately with enriched internal commands (10ms). Use wall for handoff." : "Coder → Checker: Coder builds, Checker verifies via script_read + get_studio_state + inspect, writes defect list to Coder via wall 10ms (never edits itself)."}\nAssigned: ${assigned}\nWall: 10ms honest (BroadcastChannel + chrome.storage). Handoff format: {phase, spec, files, notes}. After you finish your role, send to next role via wall 10ms and tell user what you handed off. GUI plugin: inspect StarterGui with inspect_instance to get UDim2/Color3, then design scale-based GUI (UDim2.fromScale, UICorner 8, dark glass, Tween, Sound).\n${wallSnippet}\n━━━ END PLAN ORCHESTRATION ━━━\n`;
     }catch{ return ""; }
   }
 
@@ -84,18 +84,16 @@ This scaffolding gives you a checklist, trimmer context and a syntax gate before
     truth: {
       name: "TRUTH",
       desc: "Always tell truth without lying, follow instructions exactly, zero mistakes — fact-checked",
-      template: (raw, theme, wallCtx, placeInfo) => `━━━ /truth — ABSOLUTE TRUTH MODE — MAX — FACT-CHECKED ━━━
+      template: (raw, theme, wallCtx, placeInfo) => `━━━ /truth — EVIDENCE MODE (extension-enforced) ━━━
 User truth request: "${raw.slice(0,350)}"
-RULES FOR THIS TURN ONLY — TRUTH MAX (1 prompt = 1 response, truthfully):
-- You MUST tell truth, no lying, no guessing, no hallucination. Every claim must be GROUNDED in a tool result you just read (inspect_instance/script_read/get_studio_state/return).
-- Follow user instructions LITERALLY, step by step, with zero deviation. If instruction conflicts with anti-hallucination, follow instruction BUT verify via tool first.
-- Before answering factual question: run the exact tool to get real value (e.g. inspect_instance Workspace, search_game_tree), then quote that value verbatim.
-- Fact-check: cross-verify via 2nd tool if critical (e.g. inspect + script_read). If mismatch, report mismatch truthfully, don't invent.
-- If you think you made mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3).
-- Zero mistakes: if unsure, say "not verified via tool" instead of inventing. Never fabricate API, property, path.
-- After truth answer, return {verified:true, source:"toolName"} via return.
+RULES FOR THIS TURN ONLY — /truth is ENFORCED, not just suggested:
+- STEP 1 (mandatory): call a READ tool FIRST — inspect_instance / script_read / get_studio_state / search_game_tree / list_commands, or verify_fact {"path":"Workspace"} for a bridge-verified read. The extension counts your tool calls: a /truth answer with ZERO tool calls is REJECTED and you are forced to call a tool. Never answer from memory.
+- STEP 2: quote the tool output VERBATIM. Tag every factual claim [VERIFIED: toolName] or [NOT VERIFIED]. Anything you did not read via a tool is NOT VERIFIED — say so, never invent.
+- Fact-check: cross-verify via a 2nd tool if critical (e.g. inspect + script_read). If mismatch, report the mismatch truthfully.
+- If you think you made a mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3).
+- Zero mistakes: if unsure, say "NOT VERIFIED" instead of inventing. Never fabricate API, property, path.
 ${wallCtx ? `MemoryWall:\n${wallCtx}\n` : ""}${placeInfo?`Place:\n${placeInfo}\n`:""}
-EXECUTE truthfully now with MAX tokens, no plain chat without tool proof.
+Call the read tool NOW, then answer with verbatim quotes + VERIFIED/NOT VERIFIED tags.
 ━━━ END /truth ━━━`
     },
     code: {
@@ -175,18 +173,30 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
   };
 
   // Parse MULTIPLE slashes: "/truth /code /force <body>" → [{cmd, body}]
-  // Old single-slash still works. Combines truthfully — merges templates.
+  // 4.6.0: aliases /brutal-honest & /0%-lies → truth, /follow-everything → prompt,
+  // /absolute-effort → force so real-world truth/effort flags activate enforcement.
+  const SLASH_ALIASES = {
+    "brutal-honest": "truth",
+    "0%-lies": "truth",
+    "follow-everything": "prompt",
+    "absolute-effort": "force",
+  };
+  const SLASH_RE = /\/(truth|brutal-honest|0%-lies|code|prompt|follow-everything|force|absolute-effort|smart)(?=\s|$)/gi;
   function parseSlash(raw){
     const t = String(raw||"").trim();
-    const re = /\/(truth|code|prompt|force|smart)\b/gi;
+    if (!t.includes("/")) return null; // fast path: no slash, no scan
+    const re = new RegExp(SLASH_RE.source, "gi");
     const cmds = [];
     let m;
-    while ((m = re.exec(t)) !== null) cmds.push(m[1].toLowerCase());
+    while ((m = re.exec(t)) !== null) {
+      const k = m[1].toLowerCase();
+      cmds.push(SLASH_ALIASES[k] || k);
+    }
     if (!cmds.length) return null;
     // Unique preserve order, max 5
     const uniq = [...new Set(cmds)].slice(0,5);
     // Body = text after last slash command
-    const lastMatch = [...t.matchAll(/\/(truth|code|prompt|force|smart)\b\s*/gi)].pop();
+    const lastMatch = [...t.matchAll(/\/(truth|brutal-honest|0%-lies|code|prompt|follow-everything|force|absolute-effort|smart)(?=\s|$)\s*/gi)].pop();
     const bodyStart = lastMatch ? lastMatch.index + lastMatch[0].length : 0;
     const body = t.slice(bodyStart).trim();
     return { cmds: uniq, cmd: uniq[0], body: body || raw, raw, multi: uniq.length>1 };
@@ -339,6 +349,14 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
 ━━━ END AUTO-SPEC ━━━`;
   }
 
+  function isInternalPrompt(raw){
+    const s = String(raw||"");
+    return /^\s*(?:Output of '|ERROR\b|\(System note:|# ZeroScript|ZeroScript\s+—|# Studio Wall|\[PEER MESSAGE FROM )/i.test(s) ||
+      s.includes("⟦ZS-") ||
+      s.includes("ZeroScript bridge team") ||
+      s.includes("━━━ ZeroScript MAX");
+  }
+
   function scoreEnhancement(raw, enhanced){
     if(raw===enhanced) return 0;
     const rawLen=String(raw||"").length;
@@ -352,6 +370,7 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
     parseSlash,
     isBadPrompt,
     isVagueRequest,
+    isInternalPrompt,
     detectTheme,
     buildSpec,
     scoreEnhancement,
@@ -366,8 +385,7 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
       provider.typeAndSend = async (text, images)=>{
         let out = text;
         try{
-          const isFeedback = /Output of '|ERROR:|⟦ZS-/.test(text);
-          if(!isFeedback){
+          if(!window.__zsSkipEnhance && !window.__zsTeamActive && !isInternalPrompt(text)){
             const r = enhance(text, { placeInfo: window.__zsWallPlaceInfo||"" });
             if(r.changed){
               console.log("[zs-prompt] enhanced", { mode: r.mode, rawLen: text.length, enhLen: r.enhanced.length, theme: r.theme.name });

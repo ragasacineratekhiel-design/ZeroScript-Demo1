@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""ZeroScript launcher. No automatic installs, process killing or crash replay."""
+"""ZeroScript launcher. No automatic installs, process killing or crash replay.
+
+4.6.0: --status bridge/team health summary, port + config validation in
+--check, console launched after bridge health (no false "waiting" noise).
+"""
 import argparse
 import importlib.metadata
+import json
 import os
+import socket
+import time
+import urllib.request
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +18,7 @@ import signal
 import traceback
 from datetime import datetime, timezone
 
+VERSION = "4.6.0"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -50,7 +59,62 @@ def check():
         raise RuntimeError('Missing websockets. Run: python -m pip install "websockets>=13,<16"') from None
     if not 13 <= int(version.split('.')[0]) < 16:
         raise RuntimeError('Unsupported websockets ' + version + '; install websockets>=13,<16.')
+    # 4.6.0: validate config + warn (never fail) on busy ports so --check
+    # stays fast and scriptable.
+    config_path = ROOT / 'config.json'
+    if config_path.is_file():
+        try:
+            json.loads(config_path.read_text(encoding='utf-8-sig'))
+        except (ValueError, OSError) as exc:
+            raise RuntimeError('config.json is not valid JSON: ' + str(exc)) from None
+    for env_name, default in (('ZS_BRIDGE_PORT', 17613), ('ZS_BRIDGE_HTTP_PORT', 17614)):
+        try:
+            port = int(os.environ.get(env_name, default))
+        except ValueError:
+            continue
+        probe = socket.socket()
+        try:
+            probe.bind(('127.0.0.1', port))
+        except OSError:
+            print('Warning: port ' + str(port) + ' is already in use (bridge may already be running).', flush=True)
+        finally:
+            probe.close()
     print('Checks passed: Python ' + sys.version.split()[0] + ', websockets ' + version, flush=True)
+
+
+def bridge_health(timeout=2.0):
+    """Best-effort /health probe. Returns dict or None. Never raises."""
+    try:
+        port = int(os.environ.get('ZS_BRIDGE_HTTP_PORT', str(int(os.environ.get('ZS_BRIDGE_PORT', '17613')) + 1)))
+    except ValueError:
+        return None
+    try:
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=timeout) as response:
+            return json.load(response)
+    except (OSError, ValueError):
+        return None
+
+
+def status_summary():
+    """--status: bridge health + recent team events. Exit 0 if bridge is up."""
+    health = bridge_health(timeout=3.0)
+    if not health:
+        print('Bridge is not running. Start it with: python start.py', flush=True)
+        return 1
+    print('Bridge: ' + json.dumps(health), flush=True)
+    try:
+        port = int(os.environ.get('ZS_BRIDGE_HTTP_PORT', str(int(os.environ.get('ZS_BRIDGE_PORT', '17613')) + 1)))
+        token = (Path(os.environ.get('ZS_DATA_DIR', ROOT)) / '.zs_token').read_text(encoding='utf-8').strip()
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/team/events?since=0', headers={'X-ZS-Token': token})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            events = json.load(response).get('events', [])
+        kinds = {}
+        for event in events:
+            kinds[event.get('kind', 'event')] = kinds.get(event.get('kind', 'event'), 0) + 1
+        print('Team events: ' + json.dumps(kinds), flush=True)
+    except (OSError, ValueError) as exc:
+        print('Team status unavailable: ' + str(exc), flush=True)
+    return 0
 
 
 def launch_console():
@@ -67,6 +131,7 @@ def main(argv=None):
     parser.add_argument('--install-deps', action='store_true', help='Explicitly create a local virtual environment and install websockets; requires internet')
     parser.add_argument('--check', action='store_true', help='Validate prerequisites without starting processes')
     parser.add_argument('--no-console', action='store_true', help='Run only the bridge')
+    parser.add_argument('--status', action='store_true', help='Print bridge/team health and exit (no processes started)')
     args = parser.parse_args(argv)
     if args.install_deps:
         return install_dependencies()
@@ -78,12 +143,22 @@ def main(argv=None):
         print('Startup failed: ' + str(exc), file=sys.stderr)
         print('To install dependencies locally: python start.py --install-deps', file=sys.stderr)
         return 1
+    if args.status:
+        return status_summary()
     if args.check:
         return 0
     viewer = bridge = None
     try:
         print('Keep this process open. Ctrl+C stops the bridge. No automatic crash restart.', flush=True)
         bridge = subprocess.Popen([sys.executable, str(ROOT / 'bridge.py')], cwd=ROOT)
+        # 4.6.0: wait briefly for bridge health so the console does not open
+        # into a false "waiting for bridge" state. Best-effort, never fatal.
+        if bridge.poll() is None:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and bridge.poll() is None:
+                if bridge_health(timeout=0.2):
+                    break
+                time.sleep(0.05)
         if not args.no_console:
             try:
                 viewer = launch_console()

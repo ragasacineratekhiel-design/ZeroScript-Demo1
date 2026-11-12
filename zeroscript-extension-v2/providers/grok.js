@@ -15,10 +15,10 @@ const ZSProvider = (() => {
   const P = Object.create(G);
   Object.defineProperty(P, "id", { get: () => META.id });
   Object.defineProperty(P, "displayName", { get: () => META.displayName });
-  P.promptExtra = "- GROK: Be witty but precise. For Studio control (Play/Stop, Workspace, Lighting) use start_stop_play and execute_luau — never hand-wave.";
-  P.version = "4.3.0";
+  P.promptExtra = "- GROK: Be witty but precise. For Studio control (Play/Stop, Workspace, Lighting) use start_stop_play and execute_luau — never hand-wave. In Bridge Team mode, strictly obey your assigned planner/coder/checker role and hand off via team_send.";
+  P.version = "4.6.0";
   // Re-apply the stability patch as the composer mounts (the alias files are
   // loaded before the site has finished painting its first frame).
-  try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch (_e) { globalThis.ZSSafe?.seen?.("grok._a", _e); } }; _a(); setTimeout(_a, 50); setTimeout(_a, 300); }catch (_e) { globalThis.ZSSafe?.seen?.("grok._a", _e); }
+  try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch (_e) { globalThis.ZSSafe?.seen?.("grok._a", _e); } }; _a(); if (typeof requestAnimationFrame === "function") requestAnimationFrame(_a); setTimeout(_a, 50); setTimeout(_a, 250); }catch (_e) { globalThis.ZSSafe?.seen?.("grok._a", _e); }
   return P;
 })();

@@ -228,9 +228,12 @@ const ZSProvider = (() => {
   // textareas are recaptcha/aria-hidden). Scope away ZeroScript's own settings
   // textarea (#zs-root) so the send hooks' "not on a chat page" guard holds on
   // login/OAuth pages that have no site composer.
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && now - _edAt < 80) return _edCache;
     for (const e of document.querySelectorAll("form textarea")) {
-      if (!e.closest("#zs-root")) return e;
+      if (!e.closest("#zs-root")) { _edCache = e; _edAt = now; return e; }
     }
     return null;
   };
@@ -254,13 +257,13 @@ const ZSProvider = (() => {
   // a genuinely new reply node therefore yields a new id immediately.
   const _idMap = new WeakMap();
   let _idSeq = 0;
-  function lastAssistantId() {
-    const it = lastAssistant();
+  function itemKey(it) {
     if (!it) return null;
     let id = _idMap.get(it);
     if (!id) { id = ++_idSeq; _idMap.set(it, id); }
     return id;
   }
+  const lastAssistantId = () => itemKey(lastAssistant());
 
   const chatIsEmpty = () => allItems().length === 0;
   // A genuinely fresh chat: the /text/* route with the composer rendered and no
@@ -852,8 +855,23 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
+
   return {
     id: "arena",
+    version: "4.6.0",
     displayName: "Arena",
     // Arena's chat composer accepts image uploads (hidden `input[type=file]` in
     // the form → staged preview card → uploaded on send; see attachImages). The
@@ -883,10 +901,10 @@ const ZSProvider = (() => {
     // increases for every new reply - the core's watcher uses this to refuse
     // finalizing before this send's reply turn exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; Promise.resolve().then(restoreDirectOnce).catch((e) => globalThis.ZSSafe?.seen?.("arena.findToolBlockSpot", e)); },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-arena-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.init", _e); } Promise.resolve().then(restoreDirectOnce).catch((e) => globalThis.ZSSafe?.seen?.("arena.restoreDirect", e)); },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
-    assistantCount, userCount, lastAssistant, lastAssistantId, readAssistant,
+    assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,
     streamLen, snapshot,
     // composer / state
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barAnchor,
@@ -899,19 +917,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("arena._zsApply", _e); }
-
 })();

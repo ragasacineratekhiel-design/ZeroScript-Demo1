@@ -4,7 +4,7 @@
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX 4.3.0 — universal editor/generation hardening
+// core/agent_stability.js — ZeroScript MAX 4.6.0 — universal editor/generation hardening (role/truth aware)
 // honest: real-world polls, no fake millisecond claims
 const ZSAgentStability = (() => {
   "use strict";
