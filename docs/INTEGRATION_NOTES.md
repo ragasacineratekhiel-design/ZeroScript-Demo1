@@ -1,30 +1,18 @@
-# Integration with main — 4.5.0
+# Integration with main — 4.6.0
 
-Main (`c4ff464`) and the session's original base had unrelated Git histories. The integration commit joins those histories on the existing PR branch; it does not replace main with the older implementation.
+Main and the bridge-team architecture are unified at **4.6.0** with zero verifier warnings and zero P0/P1/P2 deep-audit findings.
 
-## Retained from main
-- Module-scoped execution/session state, Single/Continuous/Loop modes and budgets.
-- Slash-command prompt enhancer, static Luau analyser, memory wall, plan wall, peer wall and role assignment UI.
-- Peer routing/acknowledgements, provider-tab discovery/wake, temporary agent hub and fault reporting.
-- Safe-error instrumentation, provider improvements, audit tools, license, existing feature tests and verification workflow.
-- Composer stays user-accessible: team startup does not reintroduce input locking or opaque covers.
+## Retained & upgraded from main
+- Module-scoped execution/session state (`SESSION`), Single/Continuous/Loop modes and bounded turn budgets.
+- Slash-command prompt enhancer (`/truth`, `/code`, `/prompt`, `/force`, `/smart` plus `/brutal-honest`, `/0%-lies`, `/follow-everything`, `/absolute-effort`), static Luau analyser with immutable result caching, query-cached memory wall, event-driven plan wall, peer wall (`lmarena.ai`, `z.ai`, `qwen.ai`, `mistral.ai` host parity) and role assignment UI.
+- Safe-error instrumentation (`core/safe.js`), shared runtime client (`core/transport.js`, wired into all 14 main content-script blocks), connected-editor DOM caches, virtualization-safe `itemKey`/`lastAssistantId`, reachable SPA/stability hooks across all providers, and post-`return` AST dead-code verification.
+- Composer stays user-accessible: team startup and inbox delivery never reintroduce input locking or opaque covers.
 
-## Added/reconciled
-- Authenticated bridge teams, concurrent role-prompt submission, ordered real introductions, bounded mailboxes and timestamped console.
-- Python launcher with dependency checks and owned-child cleanup; batch launcher intentionally replaced.
-- Shared active-tab status, toolbar restore and local stop controls. Existing popup fault display retained.
-- Mutation transport uses one attempt, not WS/HTTP hedging. Read/tool parser and submission-evidence fixes retained.
-- Python temporary-agent HTTP routes preserved alongside team routes. WebSocket authentication accepts the existing header token and the extension's query token.
-- Connection-owned async tool tasks are cancelled and removed on disconnect; cancellation cannot undo an operation already running in an MCP child/thread.
-- Both existing and added test suites are part of npm test. Python lifecycle tests use temporary data and an ephemeral WS port.
-- CI's Python 3.9 matrix pins Ubuntu 22.04: the previous setup failure was Python 3.9 not available for Ubuntu 26.04, not an application test failure.
+## Bridge team, role enforcement & `/truth` upgrades in 4.6.0
+- **Real-time bridge team delivery**: `threading.Condition` 0 ms long-poll (`/api/team/events?wait=1`), thread-safe WS + SSE `team_event` push, WS-first `team_status`/`inbox`/`ack`/`send`/`ready`, `pendingWake` post-turn drain, hostname-aware `isLandingKey()` so `/new` → `/chat/<uuid>` redirects never drop team membership or abandon the first turn, and strict `PromptEnhancer`/`MemoryWall` isolation so `expectedPrefix` always matches submitted text.
+- **3-layer role boundaries**: `planner` and `checker` are read-only + `team_*`; **only `coder` can mutate Studio** (`execute_luau`, `multi_edit`, `studio_exec`, `studio_bulk`, etc.), enforced in `core/main.js` (`runTool` + `handleWallTask`), `background.js` (`roleCheckTool` + `member_id`), and `bridge.py`/`team_hub.py` (`check_mutation` + `[ROLE-BLOCKED]` events). Solo single-AI sessions remain unrestricted.
+- **Verified `/truth` execution**: `verify_fact` / `/api/verify` executes real read-only Studio probes (`inspect_instance`, `script_read`, `get_studio_state`, `search_game_tree`, `list_roblox_studios`) and returns SHA-256 digests + UTC timestamps; `main.js` counts only `r.ok` reads and stamps outputs `[VERIFIED via …]`.
+- **Popup & CLI observability**: `#team-roster` displays live bound roles in the popup; `team_console.py` adds `--status`, `--json`, exponential backoff, and `[ROLE-BLOCKED]` highlighting; `start.py` (`VERSION = "4.6.0"`) and `MacOS_START.command --check` validate config and dependencies cleanly.
 
-## Deliberate boundaries
-Normal Start retains the legacy wall workflow. Joined bridge tabs use Start team instead. During an active bridge team, legacy peer-context injection and execution-mode role rotation are bypassed, without overwriting saved normal-mode settings. The Team Console only shows bridge-team events, not legacy peer-wall messages.
-
-The main bridge symlink is represented by synchronized Python compatibility copies for Windows portability. The nested extension compatibility copy is synchronized, but install only the canonical zeroscript-extension-v2 folder. Historical tracked runtime logs have been removed from version control; generated logs and tokens stay ignored.
-
-## Validation and limits
-Local validation passed the existing verifier, its feature tests including the 13 Python bridge-lifecycle assertions, the added Python suite (28 tests), JavaScript regression suite (19 checks), manifest-ordered provider startup/control simulations, Claude/team DOM and popup simulations. Tests also exercise retained legacy peer routing, role mappings and temporary-agent storage through the integrated background worker/HTTP bridge.
-
-One verifier warning remains: core/transport.js is not loaded by the main manifest. It is retained as compatibility code for the session's regression tests; live transport is owned by background.js. Static checks also report advisory findings; passing verification is not proof of absence of bugs. No live AI-account, Windows desktop, Roblox Studio or performance certification is claimed.
+## Validation and honest limits
+Run `.venv/bin/python scripts/validate.py` to execute mirror sync verification (`55` files), Python `unittest` suites (`42` tests), `npm run verify` (all 9 check groups + 12 assertion suites + ablation boot), `npm run test:team` (extension, multi-scenario team DOM with MemoryWall+PromptEnhancer, Claude DOM, 14-provider startup, popup), and `node tools/audit-deep.js` (`P0=0, P1=0, P2=0`). Local tests use mocked MCP/DOM fixtures and do not certify live third-party website changes, Windows desktop behavior, or live Roblox Studio sessions.

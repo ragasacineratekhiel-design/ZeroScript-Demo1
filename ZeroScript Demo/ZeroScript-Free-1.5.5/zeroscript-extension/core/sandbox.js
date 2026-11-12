@@ -24,7 +24,7 @@
 //     runtime nil-derefs. No claim is made that it can.
 (() => {
   "use strict";
-  const VERSION = "4.5.0";
+  const VERSION = "4.6.0";
 
   // ── Tokenizer ────────────────────────────────────────────────────────────
   // Returns { tokens:[{type,value,line}], error } — never throws on bad input,
@@ -152,9 +152,25 @@
   // ── Block balance on tokens ──────────────────────────────────────────────
   const LOOP_HEADS = new Set(["for", "while"]);
 
+  // 4.6.0 speed: identical Luau blocks are analysed once (bounded cache).
+  const _analyseCache = new Map();
   function analyseLuau(code) {
     const src = String(code || "");
     if (!src.trim()) return { ok: false, kind: "syntax", error: "empty code block", line: 0 };
+    const cacheKey = src.length + ":" + src.slice(0, 64) + ":" + src.slice(-64);
+    const hit = _analyseCache.get(cacheKey);
+    if (hit && hit.src === src) {
+      return hit.result.warnings ? { ...hit.result, warnings: hit.result.warnings.slice() } : { ...hit.result };
+    }
+    const result = _analyseLuauInner(src);
+    if (_analyseCache.size >= 128) _analyseCache.delete(_analyseCache.keys().next().value);
+    _analyseCache.set(cacheKey, {
+      src,
+      result: result.warnings ? { ...result, warnings: result.warnings.slice() } : { ...result },
+    });
+    return result;
+  }
+  function _analyseLuauInner(src) {
 
     const { tokens, error } = tokenize(src);
     if (error) return { ok: false, kind: "syntax", error: error.msg, line: error.line };

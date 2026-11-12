@@ -561,3 +561,18 @@ ever engaged, no cover is created, no mask is added, a stale build's panel is
 forced hidden by the stylesheet, and a draft is protected. **11 of the 12 fail
 against the previous code**, so the suite measures the change rather than
 describing it.
+
+---
+
+## 12. Remediation pass — 4.6.0 (Bridge Teams, Strict Role Enforcement, `/truth` Verification & Post-Return Dead Code)
+
+User-reported production failures investigated line-by-line across every canonical file:
+
+| # | Sev | Area | Exact root cause | 4.6.0 fix & regression test |
+|---|---|---|---|---|
+| 44 | 🔴 P0 | `core/main.js`, `core/prompt_enhancer.js`, `providers/claude-connector.js` | `submitAndGetBase` computed `expectedPrefix` *before* `ZSMemoryWall.buildTrimmedContext` and `ZSPromptEnhancer.wrapTypeAndSend` rewrote outgoing prompts. On team startup (`ZS.buildTeamPrompt`) and inbox delivery (`Bridge team inbox`), the enhancer rewrote the role prompt into a Tap Simulator spec, breaking `landed()` so `team_ready` and `team_ack` never fired in real Chrome. | Hoisted context/enhancement before `expectedPrefix`, added `isInternalPrompt()` + `__zsTeamActive` / `__zsSkipEnhance` guards, removed duplicate `wrapTypeAndSend` in `claude-connector.js`. Covered by `tests/test-team-dom.js` (now loading real `memory_wall.js` + `prompt_enhancer.js`) and `test-composer.js`. |
+| 45 | 🔴 P0 | `core/main.js` (`P.conversationKey`, `startTeam`, `syncSessionState`) | `main.js:18` prefixes `P.conversationKey()` with `location.hostname` (`"claude.ai/new"`). When Claude, DeepSeek or generic sites redirected from `/new` to `/chat/<uuid>` on the first send, `syncSessionState` saw `key !== "claude.ai/new"` and immediately fired `team_leave` and `loop.abandonedNewChat`. | Added hostname-stripping `isLandingKey()` in `startTeam`, `syncSessionState`, `A.startingKey` and `A.loopKey`, plus `pendingWake` post-`loop.end` inbox drain, WS-first `team_*` actions and `threading.Condition` 0 ms long-poll (`?wait=1`). Covered by `tests/test-team-dom.js` (`/new` → `/chat/test`) and `tests/test_bridge_team.py`. |
+| 46 | 🔴 P0 | `core/config.js`, `core/main.js`, `background.js`, `team_hub.py`, `bridge.py` | Planner and Checker roles were enforced only by prose instructions; `handleWallTask` even matched `/coder\|checker\|executor/`, causing Checker tabs to execute Luau directly. | Added 3-layer hard role enforcement: `ZS.roleAllowsTool` in `runTool` + coder-only `handleWallTask`, `roleCheckTool` + `member_id` forwarding in `background.js`, and `TeamHub.check_mutation` + HTTP 403 / `role_violation` console `[ROLE-BLOCKED]` events in `bridge.py`. Covered by `[4g]` in `tools/verify.js`, `tests/test-team-dom.js`, `tests/test-extension.js` and `tests/test_bridge_team.py`. |
+| 47 | 🟠 P1 | `core/main.js`, `core/prompt_enhancer.js`, `bridge.py`, `background.js` | `/truth` counted failed reads toward `truthReads`, produced no cryptographic/content proof stamp, looped forever if Studio was offline, and ignored `/brutal-honest` / `/0%-lies`. | Added `verify_fact` tool + `GET/POST /api/verify` (Studio read-only probe returning SHA-256 + UTC timestamp), FNV-1a `[VERIFIED via …]` stamps on successful reads, `NOT VERIFIED` fallback when Studio is offline, and `/brutal-honest` / `/0%-lies` / `/follow-everything` / `/absolute-effort` aliases. |
+| 48 | 🟠 P1 | 8 providers (`glm`, `gemini`, `meta`, `kimi`, `arena`, `deepseek`, `qwen`, `chatgpt`) | `ULTRA+` `ZSAgentStability.tryPatch` + SPA `history.pushState`/`replaceState` blocks sat *after* `return { ... };` and never executed. | Moved before `return` in all 8 providers; added AST post-`return` dead-code gate in `tools/audit-deep.js` (`P0=0, P1=0, P2=0`). |
+

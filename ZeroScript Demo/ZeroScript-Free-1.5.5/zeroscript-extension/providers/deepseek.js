@@ -142,7 +142,10 @@ const ZSProvider = (() => {
   // our own panel's textarea, defeating the "not on a chat page" guard in the
   // send hooks and letting them swallow the DeepSeek "Log in" click (which is
   // itself a .ds-button--primary, the same selector as the send button).
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && !_edCache.closest(S.msgEditBox) && now - _edAt < 80) return _edCache;
     const site = [...document.querySelectorAll(S.editor)].filter(
       (e) => !e.closest("#zs-root")
     );
@@ -151,7 +154,7 @@ const ZSProvider = (() => {
     // it precedes the composer in DOM order, so the old "first textarea" pick
     // returned it - and barMount() then dragged the whole ZeroScript bar INTO the
     // editor. Skip any textarea inside that DS component; the composer isn't one.
-    return site.find((e) => !e.closest(S.msgEditBox)) || site[0] || null;
+    _edCache = site.find((e) => !e.closest(S.msgEditBox)) || site[0] || null; _edAt = now; return _edCache;
   };
   // The composer is a <textarea>, so its live content is .value (NOT textContent).
   const editorText = () => {
@@ -962,8 +965,23 @@ const ZSProvider = (() => {
     } catch { return null; }
   };
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
+
   return {
     id: "deepseek",
+    version: "4.6.0",
     displayName: "DeepSeek",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see
@@ -983,7 +1001,7 @@ const ZSProvider = (() => {
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsDsVer).
       // BUMP DS_VER on meaningful deepseek.js changes worth verifying live.
-      try { document.documentElement.setAttribute("data-zs-ds-ver", "2026-09_unified-model"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
+      try { document.documentElement.setAttribute("data-zs-ds-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
@@ -1000,19 +1018,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("deepseek._zsApply", _e); }
-
 })();

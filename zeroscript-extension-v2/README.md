@@ -1,7 +1,7 @@
-# ZeroScript MAX 4.3.0 — extension (load THIS folder)
+# ZeroScript MAX 4.6.0 — extension (load THIS folder)
 
 `chrome://extensions` → Developer mode → **Load unpacked** → select this folder
-(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.3.0**.
+(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.6.0**.
 Remove any older `zeroscript-extension` card.
 
 ## What it is
@@ -11,7 +11,7 @@ A content script that drops a small control bar above the composer on 20 AI chat
 extracts the ZeroScript command, executes it through `background.js` → `bridge.py` → Roblox Studio MCP,
 and types the result back so the model can continue.
 
-## Verified behaviour in 4.3.0
+## Verified behaviour in 4.6.0
 
 | Area | Reality |
 |---|---|
@@ -23,14 +23,16 @@ and types the result back so the model can continue.
 | Memory wall | `core/memory_wall.js` persists project memory and is injected into the system prompt **and** every agent turn (query-trimmed to ~700 chars). |
 | **Cross-AI peer channel** | `core/peer_wall.js`. One AI's message is delivered into another AI's **context window** — not just into a log. Distinctness is enforced at delivery: a message addressed to the same provider is refused. |
 | Wall / orchestration | Event-driven (`BroadcastChannel` + background routing by provider). Tasks are re-published as runtime messages so the executor tab receives them. |
-| Slash modes | `/truth /code /prompt /force /smart` — the enhancer wraps **every** provider's `typeAndSend`. |
+| **Bridge teams & enforced roles** | Join 3 open tabs as `planner`, `coder`, `checker` in the popup. Real-time WS + Condition long-poll mailboxes; **only `coder` can mutate Studio** (planner/checker mutations are blocked at 3 layers). |
+| **`/truth` ground-truth proof** | `/truth` (plus `/brutal-honest`, `/0%-lies`) gates answers on successful Studio reads (`verify_fact` SHA-256 + FNV-1a `[VERIFIED via …]` stamps) and falls back to `NOT VERIFIED` if Studio is offline. |
+| Slash modes | `/truth /code /prompt /force /smart` (plus `/follow-everything`, `/absolute-effort`) — applied before `expectedPrefix` and bypassed on team/internal turns. |
 | Providers | 7 bespoke drivers (DeepSeek, ChatGPT, Gemini, Claude, Kimi, GLM, Qwen, Arena, Meta) + one generic driver + 5 thin wrappers (Perplexity, Copilot, Grok, Poe, Mistral). |
 | Transport | WebSocket to the bridge with an HTTP REST fallback, SSE for status. No WebTransport, no long-poll. |
 
 ## Requirements
 
 - Roblox Studio with **Assistant → Manage MCP Servers → Studio as MCP Server** enabled.
-- The local bridge running (`start.bat` / `MacOS_START.command`, `127.0.0.1:17613` WS / `17614` HTTP, token-protected).
+- The local bridge running (`python start.py` / `./MacOS_START.command`, `127.0.0.1:17613` WS / `17614` HTTP, token-protected).
 
 ## Files
 
@@ -45,6 +47,7 @@ core/plan_wall.js         event-driven inter-tab wall (18 assertions)
 core/peer_wall.js         cross-AI peer channel (60 assertions)
 core/agent_hub.js         agent temp storage
 core/prompt_enhancer.js   slash modes + spec expansion
+core/transport.js         promise-based runtime transport (coalesced reads + verifyFact)
 core/agent_stability.js   composer/generation hardening
 core/main.js              agentic loop, exec modes, UI, chips, diagnostics
 providers/*.js            per-site drivers
@@ -54,14 +57,14 @@ overlay.css               in-page UI styles
 
 ## Does the AI actually talk to a *different* AI?
 
-Mostly it did **not** before 4.4.0, despite the "2–3 AI" badge. What existed was a
+Mostly it did **not** before 4.6.0, despite the "2–3 AI" badge. What existed was a
 `BroadcastChannel` plus a storage log: a message posted there was never turned into a turn on
 another tab, and the one cross-tab action that *did* run (`execute_luau`) executed code silently
 — the receiving AI never saw the sending AI's words. Two more holes: roles were assigned by
 **tab index**, ignoring your role→AI mapping, and nothing stopped two roles landing on the **same**
 model, which makes the "review" step a model grading itself.
 
-4.4.0 adds `core/peer_wall.js`:
+4.6.0 adds `core/peer_wall.js`:
 
 | Property | How it is guaranteed |
 |---|---|
@@ -96,7 +99,7 @@ fails if a documented value disagrees with the live one, or if a declared knob h
 | Theme sync | **800 ms** (was 250) | a colour swap is not a hot path |
 | Camouflage sweep | **400 ms** (was 10) | a full-document `MutationObserver` already covers every change; the interval is only a convergence net |
 | `chatgpt-cm` sync | **signature-gated, 400 ms ceiling** | previously a full DOM sweep 4×/s forever; now zero work when nothing changed or the tab is hidden |
-| Bridge `HTTP_TIMEOUT` | **4000 ms** (was 600) | 600 ms produced false "bridge offline": `/api/status` fans out to a PowerShell probe budgeted 8 s |
+| Bridge `HTTP_TIMEOUT` | **5000 ms** (was 600) | 600 ms produced false "bridge offline": `/api/status` fans out to a PowerShell probe budgeted 8 s |
 | Bridge status/tools TTL | **0.4 s / 0.5 s** (was 0.06/0.08) | a TTL shorter than the work it caches guarantees a miss — we paid for the cache *and* re-ran the probe |
 | Bridge Studio confirm | **0.35 s** (was 1.5) | re-probe to reject a flapping read |
 | Connector handshake poll | **12 ms** (was 75) | loopback RTT is <1 ms |
@@ -119,7 +122,7 @@ and recorded; clicking it copies a full JSON dump for a bug report.
 
 ### Errors are not silently swallowed any more
 
-There were 392 empty `catch {}` blocks in 4.3.0. They are all instrumented through `core/safe.js`
+There were 392 empty `catch {}` blocks in 4.6.0. They are all instrumented through `core/safe.js`
 with three different semantics, because "caught" and "ignored" are not the same thing:
 
 | API | Use | Behaviour |

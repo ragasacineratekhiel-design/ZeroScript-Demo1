@@ -32,7 +32,7 @@
 //                   conversation between two different AIs.
 (() => {
   "use strict";
-  const VERSION = "4.5.0";
+  const VERSION = "4.6.0";
 
   // hostname → stable provider id. Must stay in sync with manifest matches;
   // background.js has its own copy for tab routing (it cannot see this module's
@@ -48,6 +48,7 @@
     ["z.ai", "glm"],
     ["qwen.ai", "qwen"],
     ["arena.ai", "arena"],
+    ["lmarena.ai", "arena"],
     ["meta.ai", "meta"],
     ["perplexity.ai", "perplexity"],
     ["copilot.microsoft.com", "copilot"],
@@ -372,14 +373,23 @@
   // The legacy wall stays (it carries plan/config messages) but every message
   // that crosses AI boundaries now goes through here so identity + distinctness
   // + acknowledgement are guaranteed exactly once.
+  // 4.6.0 role gate: planner/checker may not send executable code tasks.
+  // Only the coder executes; planner sends plans (text), checker sends defects.
+  function canMutate(role) { return role === "coder"; }
   function sendToRole(planRoles, targetRole, kind, payload) {
     const provider = String((planRoles && planRoles[targetRole]) || "").toLowerCase();
     if (!provider) return { ok: false, refused: "no-provider-for-role", role: targetRole };
-    return send(kind, provider, { ...(payload || {}), role: targetRole });
+    const pl = payload || {};
+    const isExec = pl.type === "wall_exec" || pl.type === "execute" || !!pl.code;
+    if (isExec && targetRole !== "coder" && targetRole !== "executor") {
+      return { ok: false, refused: "role: only the coder executes code tasks", role: targetRole };
+    }
+    return send(kind, provider, { ...pl, role: targetRole });
   }
 
   const API = {
     version: VERSION,
+    canMutate,
     self: SELF,
     hostname: HOSTNAME,
     providerOf,

@@ -1,2 +1,3 @@
-# Only required Python dependency; stdlib supplies tests and team console.
+# ZeroScript MAX 4.6.0 — Python 3.9+ runtime & test dependency.
+# Standard library supplies http.server, unittest, and team_console.py.
 websockets>=13,<16

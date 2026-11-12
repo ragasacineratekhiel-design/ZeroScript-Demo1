@@ -20,6 +20,7 @@ import os
 import subprocess
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -122,7 +123,32 @@ def _find_studio_mcp_mac() -> Optional[Path]:
     return None
 
 
+_find_cache: dict = {"at": None, "override": None, "value": None}
+_FIND_TTL_HIT = 30.0   # paired StudioMCP binary rarely moves mid-session
+_FIND_TTL_MISS = 2.0   # re-check quickly if Studio is still installing/opening
+
+
 def find_studio_mcp() -> Optional[Path]:
+    # 4.6.0 speed: avoid repeating a full Versions/ directory walk on every
+    # watch tick, while invalidating immediately if ZS_STUDIO_MCP_PATH changes.
+    now = time.monotonic()
+    cur_override = os.environ.get(ENV_OVERRIDE)
+    ttl = _FIND_TTL_HIT if _find_cache["value"] is not None else _FIND_TTL_MISS
+    if (
+        _find_cache["at"] is not None
+        and _find_cache["override"] == cur_override
+        and 0.0 <= now - _find_cache["at"] < ttl
+        and (_find_cache["value"] is None or _find_cache["value"].is_file())
+    ):
+        return _find_cache["value"]
+    value = _find_studio_mcp_uncached()
+    _find_cache["at"] = now
+    _find_cache["override"] = cur_override
+    _find_cache["value"] = value
+    return value
+
+
+def _find_studio_mcp_uncached() -> Optional[Path]:
     override_value = os.environ.get(ENV_OVERRIDE)
     if override_value:
         override_path = _resolve_override_path(override_value)
@@ -136,7 +162,15 @@ def find_studio_mcp() -> Optional[Path]:
     return _find_studio_mcp_windows()
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        exe = find_studio_mcp()
+        if exe:
+            print(f"StudioMCP found: {exe}")
+            return 0
+        print("StudioMCP not found. Open Roblox Studio and enable 'Studio as MCP server'.")
+        return 1
     exe = find_studio_mcp()
     binary_name = "StudioMCP" if sys.platform == "darwin" else "StudioMCP.exe"
     if not exe:
@@ -147,10 +181,11 @@ def main() -> int:
         return 1
     sys.stderr.write(f"launch_studio_mcp: using {exe}\n")
     sys.stderr.flush()
-    proc = subprocess.Popen([str(exe)] + sys.argv[1:])
+    proc = subprocess.Popen([str(exe)] + args)
     # Forward bridge shutdown to our owned child on macOS too; never kill by name.
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, lambda signum, frame: proc.terminate() if proc.poll() is None else None)
+        signal.signal(signal.SIGINT, lambda signum, frame: proc.terminate() if proc.poll() is None else None)
     try:
         return proc.wait()
     except KeyboardInterrupt:

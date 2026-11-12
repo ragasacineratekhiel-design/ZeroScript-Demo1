@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# tools/sync-bridge.sh — the bridge used to exist as two identical 72 KB files
-# (audit #21), so every fix had to be applied twice and drift was guaranteed.
-# `ZeroScript Demo/bridge.py` is now a symlink to the canonical copy; this script
-# verifies that and re-links if a checkout (e.g. on Windows) turned it into a copy.
+# tools/sync-bridge.sh (v4.6.0) — verifies canonical Python modules in
+# ZeroScript Demo/ZeroScript-Free-1.5.5/ match their ZeroScript Demo/ mirrors
+# (or symlinks), repairing any drift cleanly.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-CANON="ZeroScript Demo/ZeroScript-Free-1.5.5/bridge.py"
-LINK="ZeroScript Demo/bridge.py"
-if [ -L "$LINK" ]; then
-  echo "OK   $LINK -> $(readlink "$LINK")"
-  exit 0
-fi
-if [ -f "$LINK" ]; then
-  if cmp -s "$CANON" "$LINK"; then
-    echo "OK   $LINK is an identical copy"
-  else
-    echo "DRIFT $LINK differs from $CANON — re-linking"
-    rm -f "$LINK"; ln -s "ZeroScript-Free-1.5.5/bridge.py" "$LINK"
+FILES=(bridge.py team_hub.py team_console.py start.py launch_studio_mcp.py)
+for f in "${FILES[@]}"; do
+  CANON="ZeroScript Demo/ZeroScript-Free-1.5.5/$f"
+  LINK="ZeroScript Demo/$f"
+  if [ -L "$LINK" ]; then
+    echo "OK   $LINK -> $(readlink "$LINK")"
+    continue
   fi
-  exit 0
-fi
-ln -s "ZeroScript-Free-1.5.5/bridge.py" "$LINK"
-echo "RELINKED $LINK"
+  if [ -f "$LINK" ] && cmp -s "$CANON" "$LINK"; then
+    echo "OK   $LINK matches canonical $f"
+    continue
+  fi
+  cp "$CANON" "$LINK"
+  echo "SYNC $LINK <- $CANON"
+done

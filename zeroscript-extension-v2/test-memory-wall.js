@@ -104,5 +104,14 @@ check("adoptStudioText adopts a richer wall", /## C/.test(W.get().wall));
 W.save();
 check("save writes to chrome.storage", Object.keys(storage).some((k) => k.startsWith("zsWall:") || k === "zsMemoryWall"));
 
+
+// ── 4.6.0 query-keyed trimmed context cache ────────────────────────────────
+const tr1 = W.buildTrimmedContext("shop pricing formula", 400);
+check("buildTrimmedContext populates query cache", W.stats().ctxCached === true);
+const tr2 = W.buildTrimmedContext("shop pricing formula", 400);
+check("cached buildTrimmedContext returns identical text", tr1 === tr2);
+W.remember("gotcha", "Cache invalidates on mutation", "test");
+check("remember() invalidates trimmed context cache", W.stats().ctxCached === false);
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

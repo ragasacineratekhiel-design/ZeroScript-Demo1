@@ -53,7 +53,7 @@ global.document = {
   querySelectorAll: () => [],
   addEventListener: () => {},
   dispatchEvent: () => {},
-  documentElement: { classList: { contains: () => false } },
+  documentElement: { classList: { contains: () => false }, setAttribute() {} },
   body: null,
 };
 global.window = { location: { pathname: "/" }, addEventListener: () => {} };
@@ -123,3 +123,7 @@ const withChip = P.textWithout(
   ".zs-chip"
 );
 ok("excluded subtree is skipped", withChip.includes("real reply") && !withChip.includes("execute_luau"));
+
+// ── 4.6.0 version + virtualization-safe turn identity ──────────────────────
+ok("chatgpt provider version is 4.6.0", P.version === "4.6.0");
+ok("itemKey extracts data-message-id UUID", P.itemKey(el("div", { attrs: { "data-message-id": "uuid-42" } }, [])) === "uuid-42");

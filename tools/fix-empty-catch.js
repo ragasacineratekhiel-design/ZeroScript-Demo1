@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// tools/fix-empty-catch.js — one-shot, auditable transformer.
+// tools/fix-empty-catch.js — one-shot, auditable transformer (v4.6.0).
 //
 // Replaces `catch {}` / `catch (e) {}` with `catch (e) { ZSSafe.seen("<site>", e); }`
 // so that every previously-swallowed failure is at least COUNTED, and reports
@@ -133,7 +133,7 @@ function findEmptyCatches(src, mask) {
 function siteName(src, offset, file) {
   const before = src.slice(0, offset);
   // nearest enclosing top-level-ish function declaration or arrow assignment
-  const fnRe = /(?:function\s+([A-Za-z0-9_$]+)\s*\(|(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?(?:function|\())/g;
+  const fnRe = /(?:(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(|(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?(?:function|\(|[A-Za-z0-9_$]+\s*=>))/g;
   const candidates = [];
   let mm;
   while ((mm = fnRe.exec(before))) candidates.push(mm[1] || mm[2]);
@@ -181,7 +181,8 @@ function processFile(rel, write) {
   return { rel, changed: hits.length, sites };
 }
 
-module.exports = { codeMask, findEmptyCatches, siteName };
+const VERSION = "4.6.0";
+module.exports = { VERSION, codeMask, findEmptyCatches, siteName };
 
 function walk(dir) {
   const out = [];

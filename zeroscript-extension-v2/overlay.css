@@ -1074,9 +1074,22 @@ html.zs-light .zs-rbx-cur,
 html.zs-light .zs-tip-sep { color: #6b7280; }
 html.zs-light .zs-tip-rbx { color: #374151; }
 
-/* ULTRA 3.2.0 perf — no color change, pure logic speed */
-#zs-bar, #zs-menu, .zs-chip { will-change: transform; contain: layout style; }
-.zs-chip-body pre { contain: layout; }
+/* 4.6.0 compositor & containment optimization: avoid permanent GPU layer promotion
+   on every historical .zs-chip (only promote active menus/running chips), and
+   isolate layout/style recalculation across long 100+ turn conversations. */
+#zs-bar, #zs-menu, #zs-plan-menu, #zs-exec-menu { contain: layout style; }
+.zs-chip { contain: layout style; }
+.zs-chip.run { will-change: background-position; }
+.zs-chip-body pre { contain: content; }
+.zs-role-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.25px;
+  background: rgba(99, 102, 241, 0.18); color: #c7d2fe;
+}
+.zs-role-pill[data-role="coder"] { background: rgba(16, 185, 129, 0.20); color: #6ee7b7; }
+.zs-role-pill[data-role="planner"] { background: rgba(59, 130, 246, 0.20); color: #93c5fd; }
+.zs-role-pill[data-role="checker"] { background: rgba(245, 158, 11, 0.20); color: #fcd34d; }
 
 /* Claude owns the composer. Our independent sibling reserves its own height. */
 #zs-claude-toolbar-slot {

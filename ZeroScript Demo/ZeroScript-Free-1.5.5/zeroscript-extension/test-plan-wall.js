@@ -89,5 +89,9 @@ const before = W.getWallLog().length;
 W.send("coder", "__all", { type: "code_ready" }, "wall");
 check("local send is immediate", W.getWallLog().length === before + 1);
 
+
+check("plan_wall VERSION is 4.6.0", W.VERSION === "4.6.0", W.VERSION);
+check("close() releases resources cleanly", typeof W.close === "function" && (W.close(), true));
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

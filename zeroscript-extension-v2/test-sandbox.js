@@ -95,5 +95,13 @@ check("feedback includes the line number", typeof fb === "string" && /line 12/.t
 check("js: valid parses", S.checkJS("const a = 1;").ok);
 check("js: invalid rejected", !S.checkJS("const a = ;").ok);
 
+
+// ── 4.6.0 version + memoized static analysis immutability ──────────────────
+check("sandbox version is 4.6.0", S.version === "4.6.0", S.version);
+const c1 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
+c1.warnings.push("mutated-by-caller");
+const c2 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
+check("cached analyseLuau clones warnings so caller mutation cannot corrupt cache", !c2.warnings.includes("mutated-by-caller"));
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

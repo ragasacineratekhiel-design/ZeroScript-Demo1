@@ -223,7 +223,11 @@ const ZSProvider = (() => {
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
   // ULTRA 3.4 getEditor — universal bottom-scan, never loses composer across redesigns
+  let _edCache = null, _edAt = 0, _edPath = "";
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && _edPath === location.pathname && now - _edAt < 80 && _edCache.offsetParent !== null) return _edCache;
+    _edPath = location.pathname;
     const priority = [
       "#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid='composer-input']", "[data-testid='composer']",
       "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][role='textbox']",
@@ -246,14 +250,14 @@ const ZSProvider = (() => {
         // if we already found a high-confidence bottom editor, keep it — but continue scanning for even lower one
       }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
     }
-    if(best) return best;
+    if(best) { _edCache = best; _edAt = now; return best; }
     try{
       const all=[...document.querySelectorAll("[contenteditable=true], [contenteditable='true'], textarea, [role=textbox], [data-testid*='composer']")].filter(e=>!e.closest("#zs-root"));
       let last=null, lastY=-1;
       for(const e of all){
         try{ const r=e.getBoundingClientRect(); if(r.width>35 && r.top>lastY){ last=e; lastY=r.top; } }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
       }
-      if(last) return last;
+      if(last) { _edCache = last; _edAt = now; return last; }
     }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
     return null;
   };
@@ -1012,8 +1016,23 @@ const ZSProvider = (() => {
     } catch { return null; }
   };
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
+
   return {
     id: "chatgpt",
+    version: "4.6.0",
     displayName: "ChatGPT",
     timings,
     // Exported for test-chatgpt.js (the Node smoke test drives it against a stub
@@ -1048,7 +1067,7 @@ const ZSProvider = (() => {
       if (d) diag = d;
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsGptVer).
-      try { document.documentElement.setAttribute("data-zs-gpt-ver", "2026-10-27_Ultra34_ChatGPT_Universal"); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.modeWarning", _e); }
+      try { document.documentElement.setAttribute("data-zs-gpt-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
@@ -1082,19 +1101,4 @@ const ZSProvider = (() => {
     // The margin absorbs the rider growing with a long user custom prompt.
     sendCharBudget: SEND_HARD_CAP - 4000,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
-
 })();

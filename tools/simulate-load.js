@@ -191,7 +191,8 @@ for (const block of blocks) {
   await new Promise((r) => setTimeout(r, 120));
   console.log("\nAPIs the loop depends on:");
   const need = {
-    ZS: ["buildSystemPrompt", "FEEDBACK", "PLANS", "APP_VERSION"],
+    ZS: ["buildSystemPrompt", "FEEDBACK", "PLANS", "APP_VERSION", "roleAllowsTool", "isMutatingTool"],
+    ZS_Transport: ["status", "listTools", "callTool", "verifyFact", "invalidate"],
     ZSParse: ["parseToolCalls", "toolNameFromText", "extractJson", "salvageCutOff"],
     ZSSandbox: ["analyseLuau"],
     ZSMemoryWall: ["buildTrimmedContext", "buildContext", "remember", "stats"],
@@ -228,6 +229,12 @@ for (const block of blocks) {
     if (!st || typeof st.wallLen !== "number") errors.push("memory wall stats() did not report wallLen");
   }
 
+  const zsObj = vm.runInContext('typeof ZS !== "undefined" ? ZS : null', LAST_BLOCK_CTX || ctx);
+  if (zsObj && zsObj.roleAllowsTool) {
+    if (zsObj.roleAllowsTool("planner", "execute_luau").ok !== false || zsObj.roleAllowsTool("coder", "execute_luau").ok !== true) {
+      errors.push("ZS.roleAllowsTool failed planner/coder sanity check during boot");
+    }
+  }
   console.log("\nconsole output during load (" + log.length + " lines):");
   for (const line of log.slice(0, 12)) console.log("   ", line.join(" ").slice(0, 150));
 

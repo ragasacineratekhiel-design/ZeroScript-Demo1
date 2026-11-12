@@ -42,11 +42,12 @@
     <hr />
     <div class="row"><b>Bridge team</b> — join each tab once</div>
     <label class="row">Team <input id="team-name" value="studio" maxlength="64" /></label>
-    <label class="row">Role <select id="team-role"><option value="planner">Planner (first)</option><option value="coder">Coder (second)</option><option value="checker">Checker (third)</option></select></label>
+    <label class="row">Role <select id="team-role"><option value="planner">Planner (first · read-only)</option><option value="coder">Coder (second · mutates Studio)</option><option value="checker">Checker (third · read-only)</option></select></label>
     <button class="ghost" id="team-join">Join active AI tab</button>
     <button class="ghost" id="team-leave">Leave active team tab</button>
     <button class="ghost" id="team-start">Start all three team tabs</button>
     <button class="ghost" id="team-stop">Stop team</button>
+    <div class="row" id="team-roster" style="white-space:pre-line;font-family:ui-monospace,monospace;font-size:11px;opacity:.85"></div>
     <div class="row" id="team-result" role="status" style="white-space:pre-wrap"></div>
     <div class="row">Messages travel through the bridge. Open AI tabs are required. Background tabs may be throttled; bring a stalled tab forward. See the separate Team Console for timestamps.</div>
     <button class="kofi" id="kofi">♥ Tip the developer on Ko-fi</button>

@@ -13,7 +13,7 @@ const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json')));
   w.HTMLElement.prototype.getBoundingClientRect=()=>({x:0,y:400,top:400,left:0,right:700,bottom:600,width:700,height:200});
   Object.defineProperty(w.HTMLElement.prototype,'offsetParent',{get(){return this.parentElement;}});
   w.HTMLElement.prototype.scrollIntoView=function(){};
-  w.chrome={runtime:{id:'fixture',getManifest:()=>({version:'3.1.0'}),onMessage:{addListener(fn){listeners.push(fn);}},sendMessage:(m,cb)=>queueMicrotask(()=>{if(!w.document)return;cb?.(m.type==='status'?{connected:false,studio:false,tools:0,servers:[]}:{ok:false,error:'Mock disconnected'});})},storage:{local:{get:(k,cb)=>queueMicrotask(()=>{if(w.document)cb({});}),set(){}}}};
+  w.chrome={runtime:{id:'fixture',getManifest:()=>({version:'4.6.0'}),onMessage:{addListener(fn){listeners.push(fn);}},sendMessage:(m,cb)=>queueMicrotask(()=>{if(!w.document)return;cb?.(m.type==='status'?{connected:false,studio:false,tools:0,servers:[]}:{ok:false,error:'Mock disconnected'});})},storage:{local:{get:(k,cb)=>queueMicrotask(()=>{if(w.document)cb({});}),set(){}}}};
   try{
    w.eval(entry.js.map(p=>fs.readFileSync(path.join(root,p),'utf8')).join('\n')+'\nwindow.provider=ZSProvider;');
    await new Promise(r=>setTimeout(r,200));
@@ -26,7 +26,7 @@ const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json')));
     return response;
    }
    const status=control('zs-tab-status');
-   assert.equal(status.ok,true);assert.equal(status.composer,true);
+   assert.equal(status.ok,true);assert.equal(status.version,'4.6.0');assert.equal(w.provider.version,'4.6.0');assert.equal(status.composer,true);
    assert.equal(status.toolbarVisible,true);
    assert.equal(control('zs-tab-status','other-extension').ok,false);
    w.document.querySelector('#zs-bar').remove();

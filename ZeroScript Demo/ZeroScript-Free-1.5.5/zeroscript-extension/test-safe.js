@@ -119,6 +119,8 @@ check("describe() never leaks a stack frame", !/at \w+ \(/.test(S.describe(new E
   let attempts = 0;
   await S.retry("none", async () => { attempts++; return 1; }, { tries: 3, baseMs: 1 });
   check("retry() does not retry a success", attempts === 1);
+  const wa = await S.wrapAsync("async.fail", async () => { throw new Error("async boom"); });
+  check("wrapAsync() catches async rejection and returns undefined", wa === undefined);
 
   // ── the module must survive being loaded with no browser at all ───────
   check("stats() is always a well-formed object", (() => {

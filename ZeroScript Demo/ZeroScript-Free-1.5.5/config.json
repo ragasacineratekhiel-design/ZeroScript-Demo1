@@ -1,8 +1,10 @@
 {
+  "version": "4.6.0",
   "mcpServers": {
     "roblox": {
       "command": "launch_studio_mcp.py",
-      "args": []
+      "args": [],
+      "env": {}
     }
   }
 }

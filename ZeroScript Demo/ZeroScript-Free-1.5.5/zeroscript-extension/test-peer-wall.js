@@ -44,7 +44,7 @@ check("providerOf maps every supported host",
   [
     ["chat.deepseek.com", "deepseek"], ["chatgpt.com", "chatgpt"], ["chat.openai.com", "chatgpt"],
     ["gemini.google.com", "gemini"], ["claude.ai", "claude"], ["www.kimi.ai", "kimi"],
-    ["chat.z.ai", "glm"], ["chat.qwen.ai", "qwen"], ["arena.ai", "arena"],
+    ["chat.z.ai", "glm"], ["z.ai", "glm"], ["chat.qwen.ai", "qwen"], ["qwen.ai", "qwen"], ["arena.ai", "arena"], ["lmarena.ai", "arena"],
     ["www.meta.ai", "meta"], ["perplexity.ai", "perplexity"],
     ["copilot.microsoft.com", "copilot"], ["grok.com", "grok"], ["x.ai", "grok"],
     ["poe.com", "poe"], ["chat.mistral.ai", "mistral"],
@@ -94,7 +94,7 @@ check("the envelope demands a different provider", ok.envelope.requireDifferent 
 // ── 5. receiving: identity + addressing enforced ─────────────────────────
 const caught = [];
 P.onInbound((m) => caught.push(m));
-const inbound = { id: "in-1", v: "4.5.0", kind: "review", fromProvider: "claude", toProvider: "chatgpt", requireDifferent: true, payload: { text: "your loop leaks memory" } };
+const inbound = { id: "in-1", v: "4.6.0", kind: "review", fromProvider: "claude", toProvider: "chatgpt", requireDifferent: true, payload: { text: "your loop leaks memory" } };
 const r1 = P.receive(inbound, "test");
 check("a peer message is accepted", r1.ok === true, JSON.stringify(r1));
 check("it fires the inbound listener", caught.length === 1);

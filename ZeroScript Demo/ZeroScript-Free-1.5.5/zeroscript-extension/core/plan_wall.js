@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.5.0";
+  const VERSION = "4.6.0";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
@@ -134,6 +134,9 @@
   }
   // Public: send a task straight to another tab's executor (deterministic path,
   // does not rely on BC listeners existing on the far side).
+  // 4.6.0: only the coder executes wall tasks. Planner/checker tasks are
+  // recorded as context but never run Luau (checker used to execute too).
+  function canMutate(role) { return role === "coder"; }
   function sendWallTask(from, to, task){
     const env = send(from || "planner", to || "__all", { type: "wall_exec", ...(task || {}) }, "exec");
     _rebroadcastToRuntime(env);
@@ -319,7 +322,7 @@
   }
 
   // Extended API with per-role magic (brutally honest upgrade)
-  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, canMutate, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
     // peer_wall.js exposed a close() and nothing ever called it; plan_wall.js
     // exposed nothing at all, so its BroadcastChannel was held open for the life
     // of the document with no way to release it. One unload hook, owned here,

@@ -87,3 +87,6 @@ class LauncherTests(unittest.TestCase):
             target.return_value.__str__.return_value='/local/venv/bin/python'
             self.assertEqual(launcher.entrypoint(),0)
             call.assert_called_once()
+
+    def test_launcher_version_is_4_6_0(self):
+        self.assertEqual(launcher.VERSION, '4.6.0')

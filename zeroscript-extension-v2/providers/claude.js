@@ -104,17 +104,22 @@ const ZSProvider = (() => {
   const userCount = () => allItems().filter(isUserItem).length;
 
   // MAX getEditor ULTRA 3.4 — universal bottom-scan (survives ANY 2026 redesign)
+  let _edCache = null, _edAt = 0;
   function getEditor(){
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && !_edCache.closest('#zs-root, [hidden], [aria-hidden="true"]') && now - _edAt < 80) return _edCache;
     // Prefer the chat composer over unrelated artifact/search editors. Keep a
     // locked composer discoverable; never return a detached or hidden candidate.
     const candidates = [...document.querySelectorAll(
       "[data-testid='composer'] .ProseMirror, form .ProseMirror, .ProseMirror[role='textbox'], form [contenteditable], [contenteditable='true'][role='textbox'], textarea, .ProseMirror[data-zs-locked='1']"
     )];
-    return candidates.find(e=>{
+    const found = candidates.find(e=>{
       if(e.closest('#zs-root, [hidden], [aria-hidden="true"]'))return false;
       const style=getComputedStyle(e),r=e.getBoundingClientRect();
       return e.isConnected && style.display!=='none' && style.visibility!=='hidden' && r.width>0 && r.height>0;
     }) || null;
+    _edCache = found; _edAt = now;
+    return found;
   }
 
   const editorText = () => {
@@ -283,10 +288,10 @@ const ZSProvider = (() => {
     }
     return null;
   }
-  function clickContinueBtn(){ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch{return false;}}
+  function clickContinueBtn(){ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch(_e){globalThis.ZSSafe?.seen?.("claude.continue",_e);return false;}}
 
   function snapshot(){
-    try{ const it=lastAssistant(); if(!it) return{th:0,rp:0}; return{th:0,rp:(it.textContent||"").length}; }catch{return{};}
+    try{ const it=lastAssistant(); if(!it) return{th:0,rp:0}; return{th:0,rp:(it.textContent||"").length}; }catch(_e){globalThis.ZSSafe?.seen?.("claude.snapshot",_e);return{};}
   }
   function readAssistant(){
     const it=lastAssistant();
@@ -341,7 +346,7 @@ const ZSProvider = (() => {
     selectAll(ed);
     let ok=false;
     // Method 1: execCommand insertText (works for ProseMirror)
-    try{ ok=document.execCommand("insertText",false,text); }catch{ ok=false; }
+    try{ ok=document.execCommand("insertText",false,text); }catch(_e){ globalThis.ZSSafe?.seen?.("claude.insertText",_e); ok=false; }
     // Method 2: clipboard paste
     if(!ok){
       try{
@@ -579,12 +584,23 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
 
 
   // Site-specific pre-session warning (main.js renders it in the bar).
+  const _claudeIdMap = new WeakMap();
+  let _claudeIdSeq = 0;
+  function _claudeItemKey(it) {
+    if (!it) return null;
+    const attr = it.getAttribute("data-message-id") || it.getAttribute("data-test-id");
+    if (attr) return attr;
+    let id = _claudeIdMap.get(it);
+    if (!id) { id = "claude-" + (++_claudeIdSeq); _claudeIdMap.set(it, id); }
+    return id;
+  }
+
   const modeWarning = () => {
     try {
       if (!getEditor()) return "Claude composer not found — open a new chat";
       if (location.pathname.includes("/projects/")) return "Project chats restrict tools — use a normal chat";
       return null;
-    } catch { return null; }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("claude.modeWarning", _e); return null; }
   };
 
   return {
@@ -598,22 +614,26 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    init({diag:d}={}){ if(d) diag=d; try{document.documentElement.setAttribute("data-zs-claude-ver","2026-05-max")}catch (_e) { globalThis.ZSSafe?.seen?.("claude.modeWarning", _e); } },
+    version: "4.6.0",
+    init({diag:d}={}){
+      if(d) diag=d;
+      try{document.documentElement.setAttribute("data-zs-claude-ver","4.6.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }
+      try{window.ZSClaudeConnector?.attachToProvider?.();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.connector", _e); }
+    },
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
     scanError, modeWarning, isTooLongMsg, isBusyMsg,
-    isFreshChat, chatIsEmpty, editorText,
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
     promptExtra: PROMPT_EXTRA,
     sendCharBudget: 120000,
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant,
-    lastAssistantId: ()=> null,
-    itemKey: (it)=> it? (it.getAttribute("data-message-id")||it.getAttribute("data-test-id")||null): null,
+    lastAssistantId: ()=> _claudeItemKey(lastAssistant()),
+    itemKey: _claudeItemKey,
     readAssistant, streamLen, snapshot,
   };
 })();

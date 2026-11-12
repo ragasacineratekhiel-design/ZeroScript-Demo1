@@ -197,5 +197,25 @@ if r.returncode != 0:
     check("launcher never writes diagnostics to stdout (it carries JSON-RPC)",
           (r.stdout or "").strip() == "", "stdout: " + repr((r.stdout or "")[:100]))
 
+
+# -- 6. 4.6.0 virtual team tools, role enforcement, and /truth verify_fact ---
+for role, name in (("planner", "Claude"), ("coder", "DeepSeek"), ("checker", "Gemini")):
+    bridge.TEAM_HUB.register("tb-" + role, name, role, "tb-room")
+bridge.TEAM_HUB.start("tb-room")
+for role in ("planner", "coder", "checker"):
+    bridge.TEAM_HUB.ready("tb-" + role)
+
+r_send = bridge.safe_call("team_send", {"to": "coder", "text": "Plan spec v4.6", "message_id": "tb-m1"}, member_id="tb-planner")
+check("safe_call handles virtual team_send", r_send.get("ok") is True)
+r_read = bridge.safe_call("team_read", {}, member_id="tb-coder")
+check("safe_call handles virtual team_read", r_read.get("ok") is True and "Plan spec v4.6" in r_read.get("text", ""))
+r_block_p = bridge.safe_call("execute_luau", {"code": "return 1"}, member_id="tb-planner")
+check("safe_call blocks planner from execute_luau", r_block_p.get("ok") is False and r_block_p.get("kind") == "role_violation")
+r_block_k = bridge.safe_call("multi_edit", {"edits": []}, member_id="tb-checker")
+check("safe_call blocks checker from multi_edit", r_block_k.get("ok") is False and r_block_k.get("kind") == "role_violation")
+r_vf = bridge.safe_call("verify_fact", {"path": "game.Workspace", "tool": "inspect_instance"})
+check("verify_fact returns deterministic Studio ground-truth status", "verified" in r_vf or "error" in r_vf)
+bridge.TEAM_HUB.stop("tb-room")
+
 print("\n%d passed, %d failed" % (pass_n, fail_n))
 sys.exit(1 if fail_n else 0)

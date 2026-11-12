@@ -96,6 +96,27 @@ check("roles follow the user mapping, not tab order", rG === "planner", rG);
 const rC = LW.resolveRoles("claude",roles,["planner","coder","checker"]).role;
 check("the two tabs get different roles", rC === "coder" && rC !== rG, rC);
 
+
+// 4.6.0 role permission matrix + slash-alias enhancer + team inbox bypass
+const ZSRef = chatgpt.ctx.ZS;
+check("ZS.roleAllowsTool blocks planner from execute_luau", ZSRef.roleAllowsTool("planner", "execute_luau").ok === false);
+check("ZS.roleAllowsTool blocks checker from multi_edit", ZSRef.roleAllowsTool("checker", "multi_edit").ok === false);
+check("ZS.roleAllowsTool allows coder to execute_luau", ZSRef.roleAllowsTool("coder", "execute_luau").ok === true);
+check("ZS.roleAllowsTool allows planner & checker to verify_fact and team_send",
+  ZSRef.roleAllowsTool("planner", "verify_fact").ok === true && ZSRef.roleAllowsTool("checker", "team_send").ok === true);
+
+const PE = claude.ctx.ZSPromptEnhancer;
+const parsedAliases = PE.parseSlash("/brutal-honest /0%-Lies /Follow-Everything /Absolute-effort /code build shop");
+check("ZSPromptEnhancer maps /brutal-honest, /0%-Lies, /Follow-Everything, /Absolute-effort",
+  ["truth", "prompt", "force", "code"].every((m) => parsedAliases.cmds.includes(m)),
+  JSON.stringify(parsedAliases.cmds));
+let sentText = null;
+const mockProv = { id: "claude", typeAndSend: async (t) => { sentText = t; } };
+PE.wrapTypeAndSend(mockProv);
+const inboxMsg = "(System note: Bridge team inbox — actual messages queued for you)\n[Planner]: build shop";
+mockProv.typeAndSend(inboxMsg);
+check("wrapTypeAndSend leaves Bridge team inbox untouched", sentText === inboxMsg);
+
 // the audit removes the first two lines of scratch console output
 console.log("\n" + pass + "/" + (pass + failed) + " passed" + (failed ? ", " + failed + " FAILED" : ""));
 process.exit(failed ? 1 : 0);

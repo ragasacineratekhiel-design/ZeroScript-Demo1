@@ -8,7 +8,7 @@ const ZS = (() => {
 
   // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.5.0";
+  const APP_VERSION = "4.6.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
@@ -21,6 +21,36 @@ const ZS = (() => {
   const DEFAULT_EXEC = "single";
   const EXEC_MODES = { single: { label: "Single", def: true }, continuous: { label: "Continuous" }, loop: { label: "Loop" } };
 
+  // ── ROLE PERMISSIONS 4.6.0 (single source of truth, mirrored in team_hub.py) ──
+  // Only the coder mutates Studio. Planner plans, checker verifies — both are
+  // read-only + team_send. Enforced in main.js runTool, background.js and
+  // bridge.py safe_call; prompt text alone never stopped a planner from coding.
+  const MUTATING_TOOLS = new Set(["execute_luau","multi_edit","generate_mesh","generate_procedural_model","insert_from_creator_store","store_image","script_write","create_instance","delete_instance","set_property","update_script"]);
+  const READ_TOOLS = new Set(["list_commands","list_tools","list_mcp_servers","script_read","script_search","script_grep","search_game_tree","inspect_instance","get_studio_state","get_console_output","search_creator_store","list_roblox_studios","verify_fact"]);
+  const TEAM_TOOLS = new Set(["team_status","team_read","team_send","verify_fact"]);
+  function bareToolName(name){ return String(name||"").includes("/") ? String(name).split("/").pop() : String(name||""); }
+  function isMutatingTool(name){
+    const n = bareToolName(name);
+    return MUTATING_TOOLS.has(n) || /^(generate_|insert_|create_|delete_)/.test(n);
+  }
+  function roleAllowsTool(role, name){
+    const n = bareToolName(name);
+    if (TEAM_TOOLS.has(n) || READ_TOOLS.has(n)) return { ok: true };
+    if (n === "start_stop_play") {
+      if (role === "planner") return { ok: false, reason: "planner may not start/stop Play — send the plan via team_send and let the coder test it" };
+      return { ok: true };
+    }
+    if (isMutatingTool(n)) {
+      if (role === "coder") return { ok: true };
+      if (role === "planner") return { ok: false, reason: "planner may not mutate Studio — send your plan to the coder via team_send; only the coder calls execute_luau/multi_edit" };
+      if (role === "checker") return { ok: false, reason: "checker may not mutate Studio — report defects to the coder via team_send; only the coder calls execute_luau/multi_edit" };
+      return { ok: false, reason: "unknown role may not mutate Studio" };
+    }
+    if (role === "coder") return { ok: true };
+    return { ok: false, reason: String(role||"unknown") + " may only use read-only tools and team_send" };
+  }
+  const ROLE_PERMISSIONS = { planner: "read-only + team_send (plan only, never mutates)", coder: "full Studio access (only mutator)", checker: "read-only + team_send (verify + report defects, never edits)" };
+
   // ── MAX Transport — 8 methods, 5ms ULTRA hedge, zero drops — TELEMETRY 4.2 — FACT-CHECKED ────────
   const TRANSPORT = {
     WS_URL: "ws://127.0.0.1:17613",
@@ -28,9 +58,9 @@ const ZS = (() => {
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","batch"],
-    RECONNECT_MIN: 80,       // MAX 80ms — instant reconnect
-    RECONNECT_MAX: 2500,
-    HEARTBEAT_MS: 2800,      // MAX 2.8s — instant Studio drop
+    RECONNECT_MIN: 250,      // honest live value in background.js
+    RECONNECT_MAX: 5000,
+    HEARTBEAT_MS: 10000,     // honest live value in background.js
     STALE_MS: 5000,          // MAX 5s stale detection
     HTTP_TIMEOUT: 5000,      // MAX 5s timeout
     WS_PING_MS: 2800,
@@ -176,7 +206,7 @@ const STABILITY = {
       const wall = (typeof window!=="undefined" && window.ZSPlanWall) ? window.ZSPlanWall.getMagicForPrompt() : null;
       const magic = wall ? wall.magic : (p==="direct" ? "im connected to other agent" : "im not connected to other agents no external commands");
       const tabWarn = wall && wall.warn ? ` TAB WARN: ${wall.warn}` : (tabInfo && tabInfo.total ? ` Tabs: ${tabInfo.total} (arena ${tabInfo.arena||0})` : "");
-      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers, Coder builds via bulk execute_luau + multi_edit, Checker audits via script_read/inspect + auto-fixes. Communicate via the peer channel: ZSPeerWall.sendToRole (or simply reply — peers receive it automatically) — and READ what peers send you via ZSPeerWall.takeInbound(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec → Coder implements immediately, delivered by the peer channel." : "2-AI Coder→Checker: Coder builds, Checker verifies + fixes via the peer channel."}\nPeer delivery: event-driven (BroadcastChannel + background routing). A peer message arrives in YOUR context automatically — do not claim to be the other AI.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
+      planInfo = `\n\n━━━ SWITCH PLAN — CURRENT: ${meta.name.toUpperCase()} (${meta.ais} AI${meta.ais>1?"s":""}) — ${meta.desc} ━━━\nRoles: ${meta.roles.join(" → ")}${Object.keys(roles).length ? " (assigned: "+Object.entries(roles).map(([k,v])=>k+":"+v).join(", ")+")" : ""}${tabWarn}\nExternal commands available to user: /code /force /prompt /truth /smart (these are EXTERNAL slash, you must list in Ready). Internal bridge tools (start_stop_play etc) are HIDDEN, never list.\nMagic word handshake: ${magic} — you MUST start your Ready line with this exact magic phrase  Exec mode: ${typeof window!=="undefined" && window.__zsExecMode || "single"} — single=one-shot, continuous=until full game, loop=planner loop. All via hub temp storage. to signal connection state.\nOrchestration: ${p==="direct" ? "You are solo Direct — 1 AI does everything, but still has model picker (check window.__zsPlanRoles.coder for your assigned model). No wall handoff needed, but you can still use external slash." : p==="agent" ? "3-AI Agent team: Planner designs blueprint + file tree + economy numbers (NEVER calls execute_luau/multi_edit — rejected for planner), Coder builds via bulk execute_luau + multi_edit (ONLY mutator), Checker audits via script_read/inspect and reports defects to Coder via team_send (NEVER edits). Communicate via the peer channel: ZSPeerWall.sendToRole (or simply reply — peers receive it automatically) — and READ what peers send you via ZSPeerWall.takeInbound(). If wall says no external commands, warn user about tabs." : p==="plan" ? "2-AI Plan→Coder: Planner outputs spec (never mutates) → Coder implements immediately, delivered by the peer channel." : "2-AI Coder→Checker: Coder builds, Checker verifies and reports defects to Coder (never edits) via the peer channel."}\nPeer delivery: event-driven (BroadcastChannel + background routing). A peer message arrives in YOUR context automatically — do not claim to be the other AI.\nWhen one AI starts in Agent mode, ALL start — background wakes tabs via zs-plan-wake. You will receive wall message agent_start with magic.\n`;
     }catch (_e) { globalThis.ZSSafe?.seen?.("config.wall", _e); }
 
     // ── PROJECT MEMORY (audit #16): injected from core/memory_wall.js ───────
@@ -271,7 +301,7 @@ Every build ends with: 1) Pre-check get_studio_state (STOP if needed). 2) Read-b
 ━━━ SLASH COMMANDS — MAX POWER ONCE + COMBINABLE — 1 PROMPT = 1 RESPONSE — TRUTHFUL ━━━
 DEFAULT is 1 prompt = 1 response (NOT continuous). Every slash triggers MAX power FOR THAT TURN ONLY, truthfully verified via tools, then back to normal. You can COMBINE prompts: e.g. "/truth /code Build X" merges both modes truthfully. You MUST honor them 100%:
 
-- /truth <question|request> → ABSOLUTE TRUTH MODE: tell truth without lying, 100% truthfully, follow user instructions EXACTLY with zero mistakes. Every claim GROUNDED in tool result (inspect_instance/script_read/get_studio_state/return you just read). Before answering: run the tool to get real value, quote it verbatim. Fact-check via 2nd tool if critical. If unsure, say "not verified via tool" never invent. If you realize mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3). Truth means zero hallucination, fact-checked.
+- /truth <question|request> → EVIDENCE MODE (extension-enforced): you MUST call a read tool FIRST (inspect_instance/script_read/get_studio_state/search_game_tree/list_commands or verify_fact), then quote its output VERBATIM. Tag every factual claim [VERIFIED: toolName] or [NOT VERIFIED]. The extension rejects a /truth answer with zero tool calls and forces a tool call — never answer from memory. If unsure, say "NOT VERIFIED" — never invent. If you realize a mistake: immediate self-heal — get_studio_state→if playing start_stop_play false→verify→script_read→fix→retry (like Play STOP, ≤3).
 
 - /code <build request> → MAX CODE INTELLIGENCE — SUPER OP: maximize efforts, intelligence, tokens. Do NOT reply with plain text description — you MUST build code truthfully and verify. Use 20-40 tool calls, bulk payload (one execute_luau = entire folder tree via loops, 50 Instances per call), then multi_edit each full Script/ModuleScript. For 3D maps: generate_procedural_model/generate_mesh for hero meshes + Instance.new Parts with Vector3 math, terrain, biomes, lighting, streaming. For complex coding: ModuleScripts, RemoteEvents, DataStore pcall+retry, anti-exploit, mobile + gamepad, TweenService + particles + Sound. Use many tokens, super complex, publish-ready — truthful.
 
@@ -559,9 +589,9 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
 
   function buildTeamPrompt({name,role,status,initialMessages=[]}) {
     const instructions={
-      planner:"Plan the requested work, coordinate ownership, and hand an explicit plan to the coder. Do not modify Studio unless the user requests it.",
-      coder:"Implement the agreed plan in small verified steps. Report actual changed paths and hand evidence to the checker. Coordinate before editing shared files.",
-      checker:"Independently inspect and test the coder's work. Report reproducible defects and unverified assumptions. Never invent a successful test."
+      planner:"Plan the requested work, coordinate ownership, and hand an explicit plan to the coder via team_send. NEVER call execute_luau/multi_edit or any Studio mutation — the extension and bridge reject them for planner.",
+      coder:"Implement the agreed plan in small verified steps. You are the ONLY role allowed to mutate Studio. Report actual changed paths and hand evidence to the checker via team_send. Coordinate before editing shared files.",
+      checker:"Independently inspect and test the coder's work with read-only tools. Report reproducible defects to the coder via team_send. NEVER edit Studio yourself — only the coder mutates. Never invent a successful test."
     };
     return SYS_MARKER+"\n"+`You are ${name}, the ${role} in bridge team ${status.self.team}.
 YOUR ROLE: ${instructions[role]}
@@ -578,6 +608,12 @@ ${initialMessages.length ? "The following coordinator invitation is already deli
   return {
     APP_NAME,
     APP_VERSION,
+    MUTATING_TOOLS,
+    READ_TOOLS,
+    TEAM_TOOLS,
+    ROLE_PERMISSIONS,
+    isMutatingTool,
+    roleAllowsTool,
     SYS_MARKER,
     RESEND_MARKER,
     TRANSPORT,
@@ -597,3 +633,4 @@ ${initialMessages.length ? "The following coordinator invitation is already deli
     TOOL_NOTES,
   };
 })();
+try { globalThis.ZS = ZS; } catch (_e) { globalThis.ZSSafe?.seen?.("config.global", _e); }

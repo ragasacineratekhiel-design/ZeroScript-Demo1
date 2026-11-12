@@ -121,10 +121,13 @@ const ZSProvider = (() => {
   // site editor this returns null, keeping the "not on a chat page" guard in
   // the send hooks intact (otherwise our own textarea would defeat it and the
   // hooks could swallow the site's login button).
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && now - _edAt < 80) return _edCache;
     for (const sel of [S.editor, ".ql-editor"]) {
       for (const e of document.querySelectorAll(sel)) {
-        if (!e.closest("#zs-root")) return e;
+        if (!e.closest("#zs-root")) { _edCache = e; _edAt = now; return e; }
       }
     }
     return null;
@@ -138,6 +141,15 @@ const ZSProvider = (() => {
     const it = assistantItems();
     return it.length ? it[it.length - 1] : null;
   };
+  const _idMap = new WeakMap();
+  let _idSeq = 0;
+  function itemKey(it) {
+    if (!it) return null;
+    let id = _idMap.get(it);
+    if (!id) { id = "gem-" + (++_idSeq); _idMap.set(it, id); }
+    return id;
+  }
+  const lastAssistantId = () => itemKey(lastAssistant());
 
   const chatIsEmpty = () => allItems().length === 0;
   // A genuinely fresh chat: no turns rendered yet, with the composer mounted.
@@ -664,8 +676,23 @@ const ZSProvider = (() => {
     } catch { return null; }
   };
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
+
   return {
     id: "gemini",
+    version: "4.6.0",
     displayName: "Gemini",
     // Gemini's web model is natively multimodal (image understanding), so
     // screen_capture is safe to expose here. Other providers default this
@@ -702,10 +729,10 @@ const ZSProvider = (() => {
     unstableWarning:
       "Gemini tends to stop using the Roblox tools after a while in long sessions (model behavior, not the extension). " +
       "If it starts answering in plain text instead of acting, remind it to use the commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-gemini-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
-    assistantCount, userCount, lastAssistant, readAssistant,
+    assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,
     streamLen, snapshot,
     // composer / state
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,
@@ -718,19 +745,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
-
 })();

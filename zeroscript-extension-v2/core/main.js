@@ -158,7 +158,7 @@
   function ensureMO(){
     if(_mo) return;
     try{
-      _mo=new MutationObserver(()=>{ if (document.hidden) return; const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
+      _mo=new MutationObserver(()=>{ if (typeof document === "undefined" || !document || document.hidden) return; const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
       _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
     }catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); }
   }
@@ -253,6 +253,10 @@
     toolName: "",
     toolItem: null,
     toolArg: "",
+    // 4.6.0 /truth enforcement: pending flag + read-tool evidence count.
+    truthPending: false,
+    truthReads: 0,
+    truthRetries: 0,
     toolList: [],
     toolNames: new Set(),
     // Successful tool calls since the last command-list reminder. DeepSeek (and
@@ -451,6 +455,31 @@
           P.streamLen(_settleItem) > _settleLen0) {
         await waitFor(() => !P.isGenerating(), 4000);
       }
+      // ── MEMORY WALL CONTEXT (4.6.0: hoisted BEFORE expectedPrefix & retry loop) ──
+      // Previously this ran INSIDE the retry loop AFTER expectedPrefix was captured,
+      // which (1) broke landed() prefix matching on every team inbox delivery and
+      // (2) double-prepended MemoryWall on send retries. Bridge team turns skip
+      // legacy wall injection so expectedPrefix and team prompts stay exact.
+      try {
+        window.__zsTeamActive = !!team.active;
+        const sText = String(text || "");
+        const isFeedback = /^\s*(?:Output of '|ERROR\b|\(System note:|# ZeroScript|ZeroScript\s+—)/i.test(sText) ||
+          sText.includes("⟦ZS-") || sText.includes("ZeroScript bridge team");
+        const isSystem = sText.startsWith((ZS.SYS_MARKER || "⟦ZS-SYS⟧"));
+        if (!team.active && !isFeedback && !isSystem) {
+          if (window.ZSPromptEnhancer && window.ZSPromptEnhancer.enhance) {
+            const enh = window.ZSPromptEnhancer.enhance(sText, { placeInfo: window.__zsWallPlaceInfo || "" });
+            if (enh && enh.changed && enh.enhanced) text = enh.enhanced;
+          }
+          if (window.ZSMemoryWall && window.ZSMemoryWall.buildTrimmedContext) {
+            const digest = window.ZSMemoryWall.buildTrimmedContext(sText.slice(0, 300), 700);
+            if (digest && digest.length > 40) {
+              text = `${digest}\n\n${text}`;
+              diag("wall.context", { len: digest.length });
+            }
+          }
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("main.landed", _e); }
       const base = P.assistantCount();
       const preUser = P.userCount();
       const beforeUsers=P.allItems().filter(P.isUserItem);
@@ -513,24 +542,12 @@
           }
         }
         diag("submit.typeAndSend", { hasImages: !!(images && images.length) });
-        // ── MEMORY WALL CONTEXT (HONEST FIX, audit #16) ──────────────────────
-        // memory_wall.js was fully implemented but nothing in the agent loop ever
-        // read it, so the "persistent project memory" never reached the model.
-        // Every agent-issued turn now carries a budgeted, query-trimmed digest of
-        // the wall (skipped for tool-result feedback and system re-injections so
-        // the context does not balloon).
-        try{
-          const isFeedback = /Output of '|^ERROR|⟦ZS-/.test(String(text||""));
-          const isSystem = String(text||"").startsWith((ZS.SYS_MARKER||"⟦ZS-SYS⟧"));
-          if(!isFeedback && !isSystem && window.ZSMemoryWall && window.ZSMemoryWall.buildTrimmedContext){
-            const digest = window.ZSMemoryWall.buildTrimmedContext(String(text||"").slice(0,300), 700);
-            if(digest && digest.length > 40){
-              text = `${digest}\n\n${text}`;
-              diag("wall.context", { len: digest.length });
-            }
-          }
-        }catch (_e) { globalThis.ZSSafe?.seen?.("main.landed", _e); }
-        await P.typeAndSend(text, images);
+        window.__zsSkipEnhance = true;
+        try {
+          await P.typeAndSend(text, images);
+        } finally {
+          window.__zsSkipEnhance = false;
+        }
         // Re-arm the pre-hide window NOW that typeAndSend has returned (the send
         // was just clicked, so our result turn is about to render). The initial
         // arm above can EXPIRE during an image upload - typeAndSend blocks ~3-6s
@@ -1176,7 +1193,12 @@
     return A.toolList;
   }
 
-  const team = {joined:false, active:false, role:null, name:P.displayName, team:"studio", session:crypto.randomUUID(), chatKey:null, busy:false, status:null, polling:false};
+  const team = {joined:false, active:false, role:null, name:P.displayName, team:"studio", session:crypto.randomUUID(), chatKey:null, busy:false, status:null, polling:false, pendingWake:false};
+  function isLandingKey(k) {
+    if (!k) return true;
+    const s = String(k).trim().replace(/^[a-z0-9.-]+(?::\d+)?(?=\/)/i, "");
+    return !s || /^\/?(?:new|app|chat|c|a\/chat|a\/chat\/s)?\/?(?:\?.*)?$/i.test(s);
+  }
   async function teamTool(call) {
     if(!team.joined) return "ERROR: Join this tab to a team using the extension popup first.";
     const args=call.arguments||{};
@@ -1215,7 +1237,8 @@
         const ack=await bg({type:"team_ack",ids:initialMessages.map(m=>m.id)});
         if(!ack.ok)throw new Error("Role prompt submitted but mailbox acknowledgement failed; stop and restart team");
       }
-      team.chatKey=P.conversationKey()||null;
+      const _initKey=P.conversationKey()||null;
+      team.chatKey=isLandingKey(_initKey)?null:_initKey;
       A.started=true;rememberSession(P.conversationKey());
       // Startup is one prompt per tab, submitted concurrently. No MCP catalogue
       // round trips or forced list_commands/ready exchange for a team-only session.
@@ -1226,24 +1249,37 @@
     finally {A.starting=false;if(!A.running){P.setInputLock(false);ui.inputCover(false);}ui.setStarting();}
   }
   async function pollTeam() {
-    if(!team.joined||team.polling)return;
+    if(!team.joined)return;
+    if(team.polling){team.pendingWake=true;return;}
     team.polling=true;
     try {
       const r=await bg({type:"team_status"});if(!r.ok)return;
       team.status=r;
-      if(!r.active){if(team.active){if(A.running)stopLoop();if(r.stop_reason)ui.toast(r.stop_reason);}team.active=false;return;}
+      if(!r.active){if(team.active){if(A.running)stopLoop();if(r.stop_reason)ui.toast(r.stop_reason);}team.active=false;window.__zsTeamActive=false;return;}
       if(!team.active || !r.self.ready || A.running || A.starting || A.injecting || A.userStopped || P.isGenerating() || (P.editorText()||"").trim())return;
       const inbox=await bg({type:"team_inbox"});if(!inbox.ok||!inbox.messages.length)return;
       const {messages,text}=ZS.buildTeamInbox(inbox.messages,P.sendCharBudget||50000);
       const base=await submitAndGetBase(text);
       const ack=await bg({type:"team_ack",ids:messages.map(m=>m.id)});
-      if(!ack.ok){team.active=false;ui.toast("Inbox submitted but acknowledgement failed. Stop and restart the team to avoid duplicates.");}
-      agentLoop(base).catch(e=>{team.active=false;diag("team.loop.error",{error:String(e)});});
-    } catch(e){team.active=false;ui.toast("Team delivery paused: "+String(e.message||e));diag("team.poll.error",{error:String(e)});}
-    finally {team.polling=false;}
+      if(!ack.ok){team.active=false;window.__zsTeamActive=false;ui.toast("Inbox submitted but acknowledgement failed. Stop and restart the team to avoid duplicates.");}
+      agentLoop(base).catch(e=>{team.active=false;window.__zsTeamActive=false;diag("team.loop.error",{error:String(e)});});
+    } catch(e){team.active=false;window.__zsTeamActive=false;ui.toast("Team delivery paused: "+String(e.message||e));diag("team.poll.error",{error:String(e)});}
+    finally {
+      team.polling=false;
+      if(team.pendingWake && team.active && !A.running && !A.starting){
+        team.pendingWake=false;
+        setTimeout(()=>{ pollTeam().catch((_e)=>{ globalThis.ZSSafe?.seen?.("main.pollTeam.wake", _e); }); }, 15);
+      }
+    }
   }
   setInterval(pollTeam,1500);
   chrome.runtime.onMessage.addListener((msg,sender,respond)=>{
+    // 4.6.0: bridge WS push wakes this tab instantly (no 1.5s blind poll).
+    if(msg?.type==="zs-team-event" || msg?.type==="zs-team-push"){
+      team.pendingWake=true;
+      pollTeam().catch((_e)=>{ globalThis.ZSSafe?.seen?.("main.pollTeam.push", _e); });
+      return;
+    }
     if(!["zs-team-join","zs-team-start","zs-team-stop","zs-team-leave"].includes(msg?.type))return;
     if(sender.id!==chrome.runtime.id){respond({ok:false,error:"Untrusted sender"});return;}
     (async()=>{
@@ -1258,11 +1294,81 @@
     return true;
   });
 
+  // ── 4.6.0 ROLE GATE + /truth EVIDENCE (brutal-honest) ──────────────────
+  // Prompt text alone never stopped a planner from coding. This gate runs in
+  // runTool (the single choke point for ALL execution) and is mirrored in
+  // background.js + bridge.py. Only the coder mutates Studio.
+  function effectiveRole() {
+    try {
+      if (typeof team !== "undefined" && (team.active || team.joined) && team.role) return team.role;
+      const assigned = String(window.__zsAssignedRole || "").toLowerCase();
+      if (assigned === "planner" || assigned === "coder" || assigned === "checker") return assigned;
+      // Legacy Switch Plan: enforce read-only ONLY when multiple distinct AIs share
+      // the plan and this tab does not hold the coder role.
+      const PW = window.ZSPeerWall;
+      if (PW && PW.resolveRoles && PW.self && SESSION && SESSION.plan && SESSION.plan !== "direct") {
+        const resolved = PW.resolveRoles(PW.self, SESSION.roles || {}, (ZS.PLANS[SESSION.plan] || {}).roles);
+        if (resolved && resolved.multiAI && resolved.role && !(resolved.roles || []).includes("coder")) {
+          return resolved.role;
+        }
+      }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.effectiveRole", _e); }
+    return null; // direct/single-AI mode: no role gate (one AI does everything)
+  }
+  function isReadTool(name) {
+    const bare = String(name || "").split("/").pop();
+    if (bare === "list_commands" || bare === "list_tools" || bare === "list_mcp_servers" || bare === "verify_fact") return true;
+    try { return ZS.toolCategory(bare) === "read"; } catch (_e) { globalThis.ZSSafe?.seen?.("main.isReadTool", _e); return false; }
+  }
+  function truthDigest(str) {
+    let h = 2166136261;
+    const s2 = String(str || "");
+    for (let i = 0; i < s2.length; i++) { h ^= s2.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h.toString(16).padStart(8, "0");
+  }
+  function lastUserText() {
+    try {
+      const users = P.allItems().filter(P.isUserItem);
+      const last = users[users.length - 1];
+      return last ? String(P.itemText(last) || "") : "";
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.lastUserText", _e); return ""; }
+  }
+  function armTruthIfNeeded() {
+    try {
+      if (/\/(truth|brutal-honest|0%-lies)(?=\s|$)|EVIDENCE MODE \(extension-enforced\)/i.test(lastUserText())) {
+        A.truthPending = true; A.truthReads = 0; A.truthRetries = 0;
+        diag("truth.armed");
+      } else { A.truthPending = false; A.truthReads = 0; A.truthRetries = 0; }
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.armTruth", _e); }
+  }
+
   async function runTool(call) {
     const name = call.tool;
     const args = call.arguments || {};
     if (["team_status","team_read","team_send"].includes(name)) return teamTool(call);
     if (!name) return ZS.FEEDBACK.parseError("malformed");
+    // Virtual command: bridge-verified ground truth for /truth. Real Studio
+    // read via /api/verify (inspect_instance etc), never model memory.
+    if (name === "verify_fact") {
+      const r = await bg({ type: "verify_fact", path: args.path || "", tool: args.tool || "inspect_instance" });
+      if (!r || !r.ok) return "ERROR: verify_fact could not read Studio: " + String((r && r.error) || "bridge offline") + ". Say NOT VERIFIED for this claim.";
+      if (A.truthPending) A.truthReads++;
+      return "Output of 'verify_fact':\n" + String(r.text || "") + "\n[VERIFIED via " + String(r.tool || "inspect_instance") + " sha256:" + String(r.sha256 || "").slice(0, 12) + "]";
+    }
+    // ROLE GATE: planner/checker mutations are rejected with a redirect.
+    // The model sees a clear ERROR and learns to hand off via team_send.
+    {
+      const role = effectiveRole();
+      if (role && ZS.roleAllowsTool) {
+        const verdict = ZS.roleAllowsTool(role, name);
+        if (!verdict.ok) {
+          diag("role.block", { role, name, reason: verdict.reason });
+          ui.banner("warn", "Role boundary: " + role + " cannot mutate Studio",
+            verdict.reason + ". Hand off via team_send instead.");
+          return "ERROR [ROLE VIOLATION]: " + verdict.reason + ". Do NOT retry this command — it will be rejected again. Use team_send to hand off to the coder instead.";
+        }
+      }
+    }
     // NEVER execute while the AI tab is backgrounded/minimized. This is the single
     // choke point for ALL execution (agentLoop's tool dispatch AND the bootstrap's
     // list_commands), so it closes the hole the loop-entry gate alone left open:
@@ -1375,6 +1481,7 @@
         const noteStr = note ? `\n    ⚠ ${note}` : "";
         return `${t.name}: ${(t.description || "").split("\n")[0]}${paramLines ? "\n" + paramLines : ""}${noteStr}`;
       });
+      if (A.truthPending) A.truthReads++;
       return `Output of '${name}':\n${requested} commands (${scoped.length}):\n\n${lines.join("\n\n")}`;
     }
     if (A.toolNames.size && !A.toolNames.has(name)) {
@@ -1478,6 +1585,10 @@
         return `Output of '${name}':\n${caption}\n(The image is attached to THIS message - you can see it directly. Analyse it and continue.)`;
       }
       const text = r.text && r.text.length ? r.text : "(tool returned an empty result)";
+      if (A.truthPending && isReadTool(name)) {
+        A.truthReads++;
+        return `Output of '${name}':\n${text}\n[VERIFIED via ${bareName} digest:${truthDigest(text)}]`;
+      }
       return `Output of '${name}':\n${text}`;
     }
     // Orphaned content script - a page reload is the only cure, so say exactly
@@ -1626,14 +1737,17 @@
     // Exec-mode budget (HONEST: bounded, so a stuck model can never spin forever).
     const EXEC_MAX_TURNS = { single: 1, continuous: 24, loop: 40 };
     let execTurns = 0;
+    armTruthIfNeeded();
 
     const loopRolePrompt = (role, turn, maxTurns) => {
       const head = `[ZeroScript loop ${turn}/${maxTurns} — you are the ${role.toUpperCase()}]`;
       if (role === "planner") return `${head} Produce the NEXT piece of the blueprint only: file tree, exact ` +
         `instance paths, economy numbers, and the single most important blocker. No code yet. ` +
-        `Write it to the agent hub with ZSAgentHub.write("plan", …) and end with "PLAN READY".`;
+        `NEVER emit execute_luau/multi_edit — the extension rejects mutations for planner. ` +
+        `Send the plan to the coder via team_send (or ZSAgentHub.write("plan", …)) and end with "PLAN READY".`;
       if (role === "checker") return `${head} Audit what exists NOW with get_studio_state / script_read / ` +
-        `inspect_instance. List concrete defects with file paths, then fix the top defect via multi_edit. ` +
+        `inspect_instance. List concrete defects with file paths and send them to the CODER via team_send. ` +
+        `NEVER edit anything yourself — only the coder mutates Studio; your job is to find and report. ` +
         `If nothing is broken, reply exactly "LOOP DONE".`;
       return `${head} Implement the pending plan with execute_luau / multi_edit. Bulk payloads, no TODO, ` +
         `no placeholder. Verify with get_studio_state when done, then reply "CODE READY".`;
@@ -1751,6 +1865,21 @@
           continue;
         }
         if (res.kind === "text") {
+          // ── 4.6.0 /truth ENFORCEMENT: an answer with zero tool evidence is
+          // rejected and the model is forced to call a read tool. This is what
+          // makes /truth actually true instead of a prompt suggestion.
+          const studioLive = !!(A.bridge && A.bridge.connected && A.bridge.studio === true);
+          const honestOfflineRefusal = !studioLive && /\bnot verified\b/i.test(res.text || "");
+          if (A.truthPending && A.truthReads === 0 && !honestOfflineRefusal && A.truthRetries < 2) {
+            A.truthRetries++;
+            diag("truth.reject", { retries: A.truthRetries });
+            base = await submitAndGetBase(
+              "ERROR: /truth requires tool evidence. Your answer cited no tool result, so it was rejected. " +
+              "Call a read tool NOW (inspect_instance / script_read / get_studio_state / search_game_tree / list_commands, or verify_fact with a path), " +
+              "then answer quoting that output verbatim with [VERIFIED: toolName] tags. Anything you did not read is [NOT VERIFIED].");
+            continue;
+          }
+          if (A.truthPending && A.truthReads > 0) { A.truthPending = false; diag("truth.satisfied", { reads: A.truthReads }); }
           // ── EXEC MODES — real engine, not prose ─────────────────────────
           // HONEST FIX (audit #2): Continuous / Loop were previously an unbounded
           // `continue` that relied on the model saying "I'm done". They now have
@@ -1790,22 +1919,18 @@
           // mode === "loop" — planner → coder → checker, one role per turn.
           // Deterministic rotation in canonical order, limited to the roles the
           // ACTIVE PLAN actually uses (Direct has one role, Agent three).
-          const planRoles = (ZS.PLANS && ZS.PLANS[planNow()] && ZS.PLANS[planNow()].roles) || ["planner", "coder", "checker"];
-          const role = planRoles[(execTurns - 1) % planRoles.length];
+          const loopRoles = (ZS.PLANS && ZS.PLANS[planNow()] && ZS.PLANS[planNow()].roles) || ["planner", "coder", "checker"];
+          const role = loopRoles[(execTurns - 1) % loopRoles.length];
           diag("exec.loop.turn", { turn: execTurns, maxTurns, role });
           // ── distribute the turn to the REAL peer AI ────────────────────
-          // Loop mode runs planner→coder→checker inside ONE tab, which means one
-          // model plays all three roles — the exact thing the peer channel
-          // exists to prevent. When the active plan assigns this role to a
-          // DIFFERENT provider, the turn is handed to that tab and we wait for
-          // its answer instead of impersonating it.
+          // 4.6.0 fix: read SESSION.roles (role→provider map) instead of indexing
+          // the loopRoles array by string key (which was always undefined).
           try {
             const PW = window.ZSPeerWall;
-            const def = (window.ZSPlanWall && window.ZSPlanWall.getPLANS && window.ZSPlanWall.getPLANS()[planNow()]) || null;
-            const roleNames = (def && def.roles) || ["planner", "coder", "checker"];
-            const assigned = String((planRoles[role] || "")).toLowerCase();
+            const roleMap = (SESSION && SESSION.roles) || {};
+            const assigned = String((roleMap[role] || "")).toLowerCase();
             if (PW && assigned && assigned !== "unknown" && !PW.sameProvider(assigned, PW.self)) {
-              const sent = PW.sendToRole(planRoles, role, "task", {
+              const sent = PW.sendToRole(roleMap, role, "task", {
                 turn: execTurns, maxTurns, plan: planNow(),
                 text: `[turn ${execTurns}/${maxTurns}] You are the ${role.toUpperCase()}. ` +
                       `Continue the build from the shared state and reply with your result.`,
@@ -2009,6 +2134,9 @@
       ui.inputCover(false); // no-op now; kept so a stale cover from an older build is cleared
       P.setInputLock(false); // always unlock, even on error or stop
       diag("loop.end");
+      if (team.active && !A.stop) {
+        setTimeout(() => { pollTeam().catch((_e) => { globalThis.ZSSafe?.seen?.("main.loopEnd.pollTeam", _e); }); }, 15);
+      }
     }
   }
 
@@ -2532,9 +2660,17 @@
           console.log('[ZeroScript] wall task received', task.from, '→', task.to, task.code.slice(0,80));
           // Store in hub temp for audit trail
           try{ window.ZSAgentHub && window.ZSAgentHub.pushTemp && window.ZSAgentHub.pushTemp({type:'wall_exec', from:task.from, to:task.to, code:String(task.code||'').slice(0,500), ts:Date.now()}); }catch (_e) { globalThis.ZSSafe?.seen?.("main.handleWallTask", _e); }
-          // Actually execute if we are the coder/checker target
+          // 4.6.0: ONLY the coder executes wall tasks. Planner/checker receive
+          // the task as context but never run Luau (previously checker executed
+          // too via the /coder|checker|executor/ regex — that was the bug).
           const myRole = (window.__zsAssignedRole || (window.ZSPlanWall && window.ZSPlanWall.magicForCurrentTab && window.ZSPlanWall.magicForCurrentTab()) || '').toLowerCase();
-          const isTarget = !task.to || task.to==='__all' || myRole.includes((task.to||'').toLowerCase()) || /coder|checker|executor/.test(myRole);
+          const isCoder = myRole === "coder" || myRole === "executor";
+          const isTarget = isCoder && (!task.to || task.to==='__all' || task.to==='coder' || task.to==='executor');
+          if (!isTarget && task.to && (task.to==='coder' || task.to==='executor')) {
+            try{ window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
+              { type: "wall_result", ok: false, output: "role: only the coder executes wall tasks (this tab is " + (myRole || "unassigned") + ")", ts: Date.now() }, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
+            return;
+          }
           if(isTarget){
             // Defer execution slightly to let UI settle
             setTimeout(async ()=>{
@@ -4926,7 +5062,7 @@
       toolbarVisible:!!bar?.isConnected && style.display!=="none" && style.visibility!=="hidden" && bar.getBoundingClientRect().width>0,
       running:A.running,starting:A.starting,generating:!!P.isGenerating(),
       background:document.hidden,draftPresent:!!(P.editorText()||" ").trim(),
-      team:{joined:team.joined,active:team.active,role:team.role},
+      team:{joined:team.joined,active:team.active,role:team.role,communication_confirmed:!!(team.status&&team.status.communication_confirmed),phrase:(team.status&&team.status.phrase)||null,can_mutate:team.role==="coder"},
       checkedAt:new Date().toISOString()};
   }
   chrome.runtime.onMessage.addListener((msg,sender,respond) => {
@@ -5036,8 +5172,8 @@
   function syncSessionState() {
     if(team.active){
       const current=P.conversationKey();
-      if(!team.chatKey && current)team.chatKey=current;
-      else if(team.chatKey && current!==team.chatKey){
+      if(!team.chatKey && current && !isLandingKey(current))team.chatKey=current;
+      else if(team.chatKey && current && !isLandingKey(current) && current!==team.chatKey){
         team.active=false;team.joined=false;A.stop=true;
         bg({type:"team_leave"}).catch(()=>{});
         ui.toast("Team delivery stopped because this tab changed conversations. Rejoin from the popup.");
@@ -5052,7 +5188,7 @@
     if (A.starting) {
       const key = P.conversationKey();
       if (A.startingKey == null) {
-        if (key && !P.chatIsEmpty()) A.startingKey = key; // pin the stable id
+        if (key && !isLandingKey(key) && !P.chatIsEmpty()) A.startingKey = key; // pin the stable id
       } else if (key !== A.startingKey) {
         A.startGen++;
         A.starting = false;
@@ -5078,7 +5214,7 @@
     if (A.running) {
       const key = P.conversationKey();
       if (A.loopKey == null) {
-        if (key && !P.chatIsEmpty()) A.loopKey = key; // pin the loop's conversation
+        if (key && !isLandingKey(key) && !P.chatIsEmpty()) A.loopKey = key; // pin the loop's conversation
       } else if (key !== A.loopKey) {
         diag("loop.abandonedNewChat", { from: A.loopKey, to: key });
         A.stop = true;       // the loop breaks at its next checkpoint; its finally
@@ -5167,7 +5303,7 @@
     // subtree observer on a long conversation still fires for every streamed
     // character. Suspending it is pure win: reconnected by the visibility
     // handler below, which already runs a sweep on return.
-    if (document.hidden) return;
+    if (typeof document === "undefined" || !document || document.hidden) return;
     preHideWholeItems();
     scheduleSweep();
   });

@@ -12,11 +12,11 @@ async function run(){
  // JSDOM has no layout engine; supply explicit fixture geometry.
  w.HTMLElement.prototype.getBoundingClientRect=function(){return {x:0,y:500,top:500,left:0,right:600,bottom:620,width:600,height:120};};
  w.HTMLElement.prototype.scrollIntoView=function(){};
- w.chrome={runtime:{id:'fixture',getManifest:()=>({version:'3.1.0'}),onMessage:{addListener(){}},sendMessage:(m,cb)=>queueMicrotask(()=>cb?.(m.type==='status'?{connected:false,tools:0,servers:[]}:{ok:false,error:'Mock bridge intentionally disconnected'}))},storage:{local:{get:(k,cb)=>queueMicrotask(()=>cb({})),set(){}}}};
+ w.chrome={runtime:{id:'fixture',getManifest:()=>({version:'4.6.0'}),onMessage:{addListener(){}},sendMessage:(m,cb)=>queueMicrotask(()=>cb?.(m.type==='status'?{connected:false,tools:0,servers:[]}:{ok:false,error:'Mock bridge intentionally disconnected'}))},storage:{local:{get:(k,cb)=>queueMicrotask(()=>cb({})),set(){}}}};
  try{
-  w.eval(read('core/config.js')+'\n'+read('core/agent_stability.js')+'\n'+read('core/transport.js')+'\n'+read('core/parser.js')+'\n'+read('providers/claude.js')+'\nwindow.adapter=ZSProvider;\n'+read('core/main.js'));
+  w.eval(read('core/safe.js')+'\n'+read('core/config.js')+'\n'+read('core/agent_stability.js')+'\n'+read('core/transport.js')+'\n'+read('core/parser.js')+'\n'+read('providers/claude-connector.js')+'\n'+read('providers/claude.js')+'\nwindow.adapter=ZSProvider;\n'+read('core/main.js'));
   const p=w.adapter;
-  assert.equal(p.allItems().length,0,'layout is not assistant output');
+  assert.equal(p.version,'4.6.0');assert.ok(p._zsClaudeConnectorAttached,'ZSClaudeConnector attached');assert.equal(p.allItems().length,0,'layout is not assistant output');
   assert.equal(p.getEditor().getAttribute('role'),'textbox');
   assert.equal(p.barMount().parent.id,'zs-claude-toolbar-slot');
   assert.equal(p.barMount().parent.nextElementSibling,w.document.querySelector('form'));

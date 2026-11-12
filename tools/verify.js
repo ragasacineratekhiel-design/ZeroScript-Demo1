@@ -783,7 +783,14 @@ function runTests(testsOnly) {
   // rather than pretending it passed or silently skipping.
   const bridgeTest = path.join(EXT, "test-bridge.py");
   if (fs.existsSync(bridgeTest)) {
-    const py = [process.env.ZS_PYTHON, "/tmp/venv/bin/python", "python3", "python"]
+    const py = [
+      process.env.ZS_PYTHON,
+      path.join(ROOT, ".venv", "bin", "python"),
+      path.join(ROOT, ".venv", "Scripts", "python.exe"),
+      "/tmp/venv/bin/python",
+      "python3",
+      "python",
+    ]
       .filter(Boolean).find((cand) => { try { return require("child_process").spawnSync(cand, ["-c", "import websockets"], { encoding: "utf8" }).status === 0; } catch { return false; } });
     if (!py) {
       warn("tests", "test-bridge.py skipped: no python with `websockets` on this machine");
@@ -801,6 +808,34 @@ function runTests(testsOnly) {
   if (!failCount) ok("tests", `${ran} test files green`);
 }
 
+
+// ── 4g. role & /truth enforcement wiring (4.6.0) ──────────────────────────
+function checkRoleAndTruthWiring() {
+  console.log("\n[4g] role & /truth enforcement");
+  const cfg = fs.readFileSync(path.join(EXT, "core/config.js"), "utf8");
+  const main = fs.readFileSync(path.join(EXT, "core/main.js"), "utf8");
+  const bg = fs.readFileSync(path.join(EXT, "background.js"), "utf8");
+  const bridgePy = fs.readFileSync(path.join(ROOT, "ZeroScript Demo/ZeroScript-Free-1.5.5/bridge.py"), "utf8");
+  const hubPy = fs.readFileSync(path.join(ROOT, "ZeroScript Demo/ZeroScript-Free-1.5.5/team_hub.py"), "utf8");
+  const checks = [
+    ["config.roleAllowsTool", /function\s+roleAllowsTool\b/.test(cfg)],
+    ["main.runTool.roleGate", /ZS\.roleAllowsTool\(role,\s*name\)/.test(main)],
+    ["main.handleWallTask.coderOnly", /handleWallTask[\s\S]{0,900}myRole\s*===\s*"coder"/.test(main)],
+    ["main.verify_fact", /name\s*===\s*"verify_fact"/.test(main) && /\[VERIFIED via /.test(main)],
+    ["background.roleCheckTool", /function\s+roleCheckTool\b/.test(bg) && /member_id/.test(bg)],
+    ["team_hub.check_mutation", /def\s+check_mutation\b/.test(hubPy) && /def\s+role_allows_tool\b/.test(hubPy)],
+    ["bridge.verify_endpoint", /\/api\/verify/.test(bridgePy) && /sha256/.test(bridgePy)],
+  ];
+  let okCount = 0;
+  for (const [label, cond] of checks) {
+    if (cond) okCount++;
+    else fail("role-truth", `missing enforcement link: ${label}`);
+  }
+  if (okCount === checks.length) {
+    ok("role-truth", `${okCount}/${checks.length} role-boundary & /truth verification links present across extension + bridge`);
+  }
+}
+
 // ── run ───────────────────────────────────────────────────────────────────
 console.log("ZeroScript verification");
 console.log("======================");
@@ -813,6 +848,7 @@ checkProviderContract();
 checkSilentFailures();
 checkPeerWiring();
 checkTimingHonesty();
+checkRoleAndTruthWiring();
 checkVersions(mf);
 if (!process.argv.includes("--checks-only")) runTests();
 

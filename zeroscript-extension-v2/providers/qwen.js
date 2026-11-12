@@ -345,9 +345,12 @@ const ZSProvider = (() => {
   // Scope to the site's composer only; skip ZeroScript's own injected textarea
   // (#zs-set-text inside #zs-root) so login pages without a site editor return
   // null and the send-hook guards stay intact.
+  let _edCache = null, _edAt = 0;
   const getEditor = () => {
+    const now = Date.now();
+    if (_edCache && _edCache.isConnected && now - _edAt < 80) return _edCache;
     for (const e of document.querySelectorAll(S.editor)) {
-      if (!e.closest("#zs-root")) return e;
+      if (!e.closest("#zs-root")) { _edCache = e; _edAt = now; return e; }
     }
     return null;
   };
@@ -884,7 +887,7 @@ const ZSProvider = (() => {
   // build onto <html data-zs-qwen-ver>; read it from the page to confirm which
   // qwen.js is actually running (the isolated-world closure can't be read直接).
   // BUMP this whenever qwen.js changes in a way worth verifying live.
-  const QWEN_VER = "2026-07_per-model-vision3";
+  const QWEN_VER = "4.6.0";
   function setVersionBeacon() {
     try { document.documentElement.setAttribute("data-zs-qwen-ver", QWEN_VER); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen.setVersionBeacon", _e); }
   }
@@ -927,6 +930,8 @@ const ZSProvider = (() => {
     ["Qwen3.6-Plus", true],
     ["Qwen3.6-27B", true],              // "supports text and multimodal tasks"
     ["Qwen3.8-Max-Preview", true],      // user-confirmed (silent description)
+    ["QVQ-Max", true],
+    ["Qwen-VL-Max", true],
     ["Qwen3.7-Max", false],             // "text-only (no vision capabilities)"
     ["Qwen3.6-Max-Preview", false],     // "vision capabilities are not yet supported"
   ]);
@@ -1016,8 +1021,23 @@ const ZSProvider = (() => {
     } catch { return null; }
   };
 
+// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
+// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
+// and editor DOM churn. Logic-only, no GUI changes.
+try {
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
+  // SPA nav guard: re-apply after pushState/replaceState
+  try {
+    const _origPush = history.pushState, _origReplace = history.replaceState;
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
+
   return {
     id: "qwen",
+    version: "4.6.0",
     displayName: "Qwen",
     // DYNAMIC per selected model (see the capability section above). A getter so
     // the core always reads the CURRENT model's capability - it can change
@@ -1065,19 +1085,4 @@ const ZSProvider = (() => {
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
   };
-
-// ── ULTRA+ footer v2.1 — super-stable Studio + never-lose-connection ─
-// Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
-// and editor DOM churn. Logic-only, no GUI changes.
-try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } };
-  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
-  // SPA nav guard: re-apply after pushState/replaceState
-  try {
-    const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); } setTimeout(_zsApply, 30); };
-  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
-} catch (_e) { globalThis.ZSSafe?.seen?.("qwen._zsApply", _e); }
-
 })();

@@ -147,6 +147,39 @@ class TeamTests(unittest.TestCase):
         self.assertTrue(all("timestamp" in e for e in self.hub.events))
 
 
+
+    def test_role_mutation_permissions_and_violation_events(self):
+        self.start()
+        self.assertFalse(self.hub.can_mutate_studio("planner"))
+        self.assertTrue(self.hub.can_mutate_studio("coder"))
+        self.assertFalse(self.hub.can_mutate_studio("checker"))
+        ev = self.hub.record_violation("planner", "execute_luau", "planner must not code")
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev["kind"], "role_violation")
+
+    def test_wait_events_wakes_immediately_on_condition_notify(self):
+        import time as _t
+        self.start()
+        cur = self.hub.event_log(0)["cursor"]
+        def delayed_send():
+            _t.sleep(0.03)
+            self.hub.send("planner", "all", "Wake console fast", "w1")
+        t = threading.Thread(target=delayed_send, daemon=True)
+        t.start()
+        t0 = _t.monotonic()
+        res = self.hub.wait_events(cur, timeout=2.0)
+        elapsed = _t.monotonic() - t0
+        self.assertTrue(any(e["kind"] == "message" for e in res["events"]))
+        self.assertLess(elapsed, 0.5)
+
+    def test_summary_reports_team_and_member_counts(self):
+        self.start()
+        sm = self.hub.summary("studio")
+        self.assertTrue(sm["ok"])
+        self.assertIn("studio", sm["teams"])
+        self.assertEqual(len(sm["teams"]["studio"]["members"]), 3)
+
+
 class BridgeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -296,6 +329,39 @@ class BridgeTests(unittest.TestCase):
                                 self.assertEqual(result["id"], 1)
                                 break
         asyncio.run(check())
+
+
+
+    def test_role_enforcement_on_call_batch_and_studio_exec_plus_verify(self):
+        for role, name in (("planner", "Claude"), ("coder", "DeepSeek"), ("checker", "Gemini")):
+            self.assertEqual(self.request("/api/team/register", {"member_id": "rg-" + role, "name": name, "role": role, "team": "rg-team"})[0], 200)
+        self.assertTrue(self.request("/api/team/start", {"team": "rg-team"})[1]["ok"])
+        for role in ("planner", "coder", "checker"):
+            self.assertTrue(self.request("/api/team/ready", {"member_id": "rg-" + role})[1]["ok"])
+        # Planner and checker are blocked from execute_luau & /api/studio/exec
+        c1, r1, _ = self.request("/api/call", {"name": "execute_luau", "arguments": {"code": "return 1"}, "member_id": "rg-planner"})
+        self.assertEqual(c1, 200)
+        self.assertFalse(r1["ok"])
+        self.assertEqual(r1["kind"], "role_violation")
+        c2, r2, _ = self.request("/api/studio/exec", {"code": "return 1", "member_id": "rg-checker"})
+        self.assertEqual(c2, 403)
+        self.assertEqual(r2["kind"], "role_violation")
+        # Virtual team_send works through /api/call!
+        c3, r3, _ = self.request("/api/call", {"name": "team_send", "arguments": {"to": "coder", "text": "Implement StageService", "message_id": "rg-m1"}, "member_id": "rg-planner"})
+        self.assertEqual(c3, 200)
+        self.assertTrue(r3["ok"])
+        # /api/team/summary shows active room (requires token auth!)
+        self.assertEqual(self.request("/api/team/summary?team=rg-team", auth=False)[0], 401)
+        cs, rs, _ = self.request("/api/team/summary?team=rg-team")
+        self.assertEqual(cs, 200)
+        self.assertTrue(rs["teams"]["rg-team"]["active"])
+        # /api/verify returns deterministic verification payload with sha256 when mocked
+        with patch.object(self.b, "safe_call", return_value={"ok": True, "text": '{"Name":"Workspace","Gravity":196.2}'}):
+            cv, rv, _ = self.request("/api/verify", {"path": "game.Workspace", "tool": "inspect_instance"})
+            self.assertEqual(cv, 200)
+            self.assertTrue(rv["verified"])
+            self.assertEqual(len(rv["sha256"]), 64)
+        self.request("/api/team/stop", {"team": "rg-team"})
 
 
 if __name__ == "__main__":
