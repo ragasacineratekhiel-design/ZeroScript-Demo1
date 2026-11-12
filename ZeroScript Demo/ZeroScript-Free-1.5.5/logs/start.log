@@ -1,0 +1,78 @@
+===== 07/10/2026 18:25:31.13  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+FATAL: bridge.py missing next to start.bat (run from inside ZIP?).
+===== 07/10/2026 20:10:23.38  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 07/10/2026 20:17:46.69  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 07/10/2026 22:11:27.20  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+bridge.py exited with code 1073807364
+===== 08/10/2026 18:59:04.41  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 08/10/2026 20:45:32.08  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+bridge.py exited with code 1073807364
+===== 10/10/2026  8:58:23.44  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 10/10/2026 11:01:52.46  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+bridge.py exited with code 1073807364
+===== 11/10/2026 17:06:03.51  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 20/10/2026 21:40:07.25  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+bridge.py exited with code 1073807364
+===== 20/10/2026 22:51:50.25  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 21/10/2026 10:51:45.00  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 21/10/2026 22:27:13.25  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 22/10/2026 17:40:46.36  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+===== 25/10/2026  8:53:30.95  start.bat launched =====
+Microsoft Windows [Version 10.0.19045.6466]
+Python found: py -3 (Python 3.14.8)
+websockets library OK
+Launching bridge.py with py -3
+bridge.py exited with code 1073807364

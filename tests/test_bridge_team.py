@@ -58,6 +58,17 @@ class TeamTests(unittest.TestCase):
             hub.stop(room)
         self.assertLessEqual(len(hub.teams),128)
 
+    def test_direct_team_hub_launch_delegates_to_real_launcher(self):
+        import importlib.util
+        from pathlib import Path
+        path=Path(__file__).parents[1]/"ZeroScript Demo/ZeroScript-Free-1.5.5/team_hub.py"
+        spec=importlib.util.spec_from_file_location("team_hub_standalone_test",path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        import subprocess
+        with patch.object(subprocess,"call",return_value=0) as run:
+            self.assertEqual(module._run_as_app(),0)
+            self.assertEqual(Path(run.call_args.args[0][1]).name,"start.py")
+
     def test_registration_is_not_communication(self):
         s = self.hub.status("planner")
         self.assertFalse(s["communication_confirmed"])

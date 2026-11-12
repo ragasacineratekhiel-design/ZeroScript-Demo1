@@ -111,6 +111,12 @@ Team events use `(Planner):[Claude]:`-style labels, with the actual sender name 
 
 The Claude toolbar now occupies its own sibling slot above the composer, not a child row inside its form. It wraps controls on narrow widths. A horizontal no-wrap host layout uses the shared floating fallback rather than changing Claude's layout. Mock DOM tests verify placement/remounting, not pixel-perfect behavior on the current live website.
 
+## Team roles and truthful communication
+- On each tab, choose its actual role in the ZeroScript popup. For the lead tab choose **Planner**; its startup prompt now explicitly identifies it as the planner. Put the other separate tabs on Coder and Checker. Do not select Agent mode in one tab and expect three websites to start; each role needs its own open chat tab.
+- `team_hub.py` is the in-memory relay module, not a GUI application. Double-clicking it previously opened Python briefly and exited. It now delegates to `start.py` and keeps the bridge process attached to that window. Recommended: run `start.py` directly and keep its console open.
+- Agents are told not to claim they are communicating unless a fresh `team_status` result confirms relay delivery for this run. A positive status means a peer message was submitted into another tab's chat and acknowledged by the extension; it still cannot prove the peer model read or understood it. Missing status means report no direct communication and troubleshoot rather than invent names/replies.
+- A role handoff timeout no longer makes the local AI impersonate the assigned peer. The loop pauses and reports which role did not reply.
+
 ## Relay and console reliability controls
 - If a required planner/coder/checker misses its heartbeat for more than the bridge lease (45 seconds), the team run stops and pending mailboxes are cleared. Remaining tabs are told why. Rejoin the missing tab and explicitly restart; stale readiness is not revived automatically. Browser throttling can cause this safety stop.
 - Large inboxes are submitted in bounded, whole-message chunks. Only messages included in the submitted chunk are acknowledged. A message too large for a provider's safe send budget pauses delivery instead of silently truncating it.

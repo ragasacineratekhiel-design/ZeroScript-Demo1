@@ -47,7 +47,7 @@ check('Claude exports the required core contract',()=>{
 check('team prompt is short, role-specific, honest and bridge-mediated',()=>{
   const config=new Function(source('core/config.js')+';return ZS')();
   const p=config.buildTeamPrompt({name:'Claude',role:'planner',status:{self:{team:'studio'}}});
-  assert.ok(p.length<5000);assert.match(p,/You are Claude, the planner/);assert.match(p,/team_send/);assert.match(p,/not proof/);
+  assert.ok(p.length<5000);assert.match(p,/Your name is Claude\. You are the planner/);assert.match(p,/team_send/);assert.match(p,/not proof/);assert.match(p,/fresh team_status result/);
   assert.match(p,/I am not directly communicating with the others try/);
   assert.ok(p.length<config.buildSystemPrompt().length/2);
 });
