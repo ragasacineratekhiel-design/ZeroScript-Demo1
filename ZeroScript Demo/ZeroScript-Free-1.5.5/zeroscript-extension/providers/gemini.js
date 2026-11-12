@@ -60,12 +60,12 @@ const ZSProvider = (() => {
   // generation (including thinking), so idle windows can be much tighter than
   // DeepSeek's. Thinking models still get generous reasoning windows.
   const timings = {
-    GEN_IDLE_MS: 1500,
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 45000,
+    GEN_IDLE_MS: 800,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 25000,
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 9000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
@@ -252,7 +252,7 @@ const ZSProvider = (() => {
     const stop = stopButton();
     if (stop && !genActive()) {
       diag("send.unwedge", {});
-      try { stop.click(); } catch {}
+      try { stop.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.unwedgeStop", _e); }
       return true;
     }
     return false;
@@ -273,7 +273,7 @@ const ZSProvider = (() => {
     while (Date.now() - t0 < totalMs) {
       if (sendButton()) return true;
       if (unwedgeStop() && await waitFor(() => !!sendButton(), 1500)) return true;
-      await sleep(250);
+      await sleep(8); // recovery poll: was 62ms (8x faster to notice the button returned)
     }
     return !!sendButton();
   }
@@ -290,6 +290,7 @@ const ZSProvider = (() => {
       if (!it) return { th: 0, rp: 0 };
       const think = it.querySelector(S.thinking);
       const md = it.querySelector(S.reply);
+
       return {
         th: think ? (think.textContent || "").trim().length : 0,
         rp: md ? (md.textContent || "").length : 0,
@@ -314,10 +315,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ───────────────────────────────────────────────────────────────
   // Gemini's composer is a Quill editor wrapped by an Angular ControlValueAccessor.
@@ -463,7 +464,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.stopGeneration", _e); }
   }
 
   // No site modes to enforce on Gemini (model picker is left to the user).
@@ -482,7 +483,7 @@ const ZSProvider = (() => {
         const t = (el.innerText || "").trim();
         if (t.length > 8 && t.length < 600 && RE.contextLimit.test(t)) return t.slice(0, 240);
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -503,7 +504,7 @@ const ZSProvider = (() => {
     if (!ed) { diag("attach.noEditor"); return false; }
     if (!images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.attachImages", _e); } });
     if (!dt.items.length) { diag("attach.noDtItems"); return false; }
     diag("attach.dispatchPaste", { items: dt.items.length });
     ed.focus();
@@ -545,8 +546,8 @@ const ZSProvider = (() => {
       const box = document.querySelector(S.inputArea);
       if (!box) return;
       box.querySelectorAll("[aria-label*='upprimer'], [aria-label*='emove'], [class*='delete'], [class*='remove']")
-        .forEach((d) => { try { d.click(); } catch {} });
-    } catch {}
+        .forEach((d) => { try { d.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.clearAttachments", _e); }
   }
 
 
@@ -654,6 +655,15 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "Gemini input not found — open a new chat";
+      if (location.pathname.includes("/gem/")) return "This is a saved Gem — ZeroScript needs a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "gemini",
     displayName: "Gemini",
@@ -703,7 +713,7 @@ const ZSProvider = (() => {
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, conversationKey,
     installSendHooks, findToolBlockSpot,
@@ -713,14 +723,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("gemini._zsApply", _e); }
 
 })();

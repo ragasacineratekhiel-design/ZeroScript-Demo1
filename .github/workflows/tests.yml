@@ -1,0 +1,24 @@
+name: Regression tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: python scripts/sync_copies.py --check
+      - run: bash -n 'ZeroScript Demo/ZeroScript-Free-1.5.5/MacOS_START.command'

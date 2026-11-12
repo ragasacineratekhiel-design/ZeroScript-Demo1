@@ -33,7 +33,7 @@
     }
     return n;
   };
-  const publish = (obj) => { try { node().textContent = JSON.stringify(obj); } catch {} };
+  const publish = (obj) => { try { node().textContent = JSON.stringify(obj); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.publish", _e); } };
 
   // Parse the SSE lines we have so far, folding `answer`-phase content into `acc`.
   // Returns the updated accumulator { rid, text, done }.
@@ -80,7 +80,7 @@
         publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
       }
       if (buf) foldLine(buf, acc);
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.consume", _e); }
     acc.done = true;
     publish({ rid: acc.rid, text: acc.text, done: acc.done, t: Date.now() });
   }
@@ -91,9 +91,14 @@
     const p = origFetch.apply(this, args);
     try {
       if (typeof url === "string" && /\/chat\/completions/i.test(url)) {
-        p.then((res) => { try { if (res && res.body) consume(res.clone()); } catch {} });
+        p.then((res) => {
+          if (res && res.body) {
+            Promise.resolve().then(() => consume(res.clone()))
+              .catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.url", e));
+          }
+        }).catch((e) => globalThis.ZSSafe?.seen?.("qwen-net.url", e));
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net.url", _e); }
     return p;
   };
 
@@ -101,14 +106,14 @@
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("qwen-net._zsApply", _e); }
 
 })();

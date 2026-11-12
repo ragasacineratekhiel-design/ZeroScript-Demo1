@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/chatgpt.js - the OpenAI ChatGPT (chatgpt.com) provider.
+// providers/chatgpt.js - the OpenAI ChatGPT (chatgpt.com) provider ULTRA 3.4 — universal editor + guaranteed GUI
 // Exports the same ZSProvider interface as providers/deepseek.js and
 // providers/gemini.js; the core (core/main.js) is provider-agnostic. To DISABLE
 // ChatGPT support, remove this file from manifest.json (and its URL from
@@ -67,7 +67,8 @@ const ZSProvider = (() => {
     userRole: "user",
     assistantRole: "assistant",
     reply: ".markdown",
-    editor: "#prompt-textarea",
+    // ULTRA 3.4 UNIVERSAL composer — survives 2026 redesigns (grid header→eyebrow etc)
+    editor: "#prompt-textarea, [data-testid='prompt-textarea'], [data-testid='composer-input'], textarea, div.ProseMirror[contenteditable='true'], div[contenteditable='true'][role='textbox'], div[data-lexical-editor][contenteditable='true'], div[contenteditable='true']",
     // The ONE submit control; its data-testid says whether it is currently a
     // send or a stop button (see isStopBtn). Id first - it survives testid churn.
     submitBtn: "#composer-submit-button, button[data-testid='send-button'], button[data-testid='stop-button']",
@@ -106,12 +107,12 @@ const ZSProvider = (() => {
   // ChatGPT streams continuously with a hard stop-button signal for the WHOLE
   // generation (including reasoning), so windows can be tight like Gemini.
   const timings = {
-    GEN_IDLE_MS: 1500,
-    REASON_IDLE_MS: 12000,
-    WARMUP_MS: 45000,
+    GEN_IDLE_MS: 800,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 25000,
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 9000,
-    RESPONSE_TIMEOUT_MS: 300000,
+    RESPONSE_TIMEOUT_MS: 180000,
   };
 
   // ── Turn classification ───────────────────────────────────────────────────
@@ -151,7 +152,7 @@ const ZSProvider = (() => {
   let _cmWarned = false;
   function syncCM(root) {
     if (!root || !root.querySelector || !root.querySelector(".cm-content")) return;
-    try { document.dispatchEvent(new CustomEvent("zs-cm-sync")); } catch {}
+    try { document.dispatchEvent(new CustomEvent("zs-cm-sync")); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.syncCM", _e); }
   }
   function textWithout(root, excludeSel) {
     if (!root) return "";
@@ -221,7 +222,41 @@ const ZSProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  const getEditor = () => document.querySelector(S.editor);
+  // ULTRA 3.4 getEditor — universal bottom-scan, never loses composer across redesigns
+  const getEditor = () => {
+    const priority = [
+      "#prompt-textarea", "[data-testid='prompt-textarea']", "[data-testid='composer-input']", "[data-testid='composer']",
+      "div.ProseMirror[contenteditable='true']", "div[contenteditable='true'][role='textbox']",
+      "div[data-lexical-editor][contenteditable='true']", "textarea", "div[contenteditable='true']"
+    ];
+    let best=null, bestY=-1;
+    for(const sel of priority){
+      try{
+        const nodes=[...document.querySelectorAll(sel)].filter(e=> !e.closest("#zs-root"));
+        for(const e of nodes){
+          if(!e) continue;
+          try{
+            const r=e.getBoundingClientRect();
+            const vis = e.offsetParent!==null || r.height>6;
+            if(!vis || r.width<35 || r.height<6) continue;
+            const y=r.top + r.height;
+            if(y > bestY){ best=e; bestY=y; }
+          }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
+        }
+        // if we already found a high-confidence bottom editor, keep it — but continue scanning for even lower one
+      }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
+    }
+    if(best) return best;
+    try{
+      const all=[...document.querySelectorAll("[contenteditable=true], [contenteditable='true'], textarea, [role=textbox], [data-testid*='composer']")].filter(e=>!e.closest("#zs-root"));
+      let last=null, lastY=-1;
+      for(const e of all){
+        try{ const r=e.getBoundingClientRect(); if(r.width>35 && r.top>lastY){ last=e; lastY=r.top; } }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
+      }
+      if(last) return last;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.getEditor", _e); }
+    return null;
+  };
   const editorText = () => {
     const e = getEditor();
     return e ? e.textContent || "" : "";
@@ -264,6 +299,24 @@ const ZSProvider = (() => {
   // raw result peeking above and below the cover on a big send. Covering this box
   // instead matches exactly what is visible. It is its own grid cell, so the "+"
   // button and the right-hand icons stay outside the cover and remain usable.
+  function overlayBlocking(){
+    try{
+      const dlg=document.querySelector("dialog[open], [role='dialog'][aria-modal='true']");
+      if(dlg && dlg.offsetParent!==null) return true;
+      // ChatGPT login wall
+      const login=document.querySelector("[data-testid='login'], div[class*='auth-wall']");
+      if(login && login.offsetParent!==null) return true;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.overlayBlocking", _e); }
+    return false;
+  }
+  function captchaPresent(){
+    try{
+      const cap=document.querySelector("iframe[src*='captcha'], div[class*='captcha'], [data-testid*='captcha']");
+      if(cap && cap.offsetParent!==null) return true;
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.captchaPresent", _e); }
+    return false;
+  }
+
   const coverTarget = () => {
     const ed = getEditor();
     if (!ed) return null;
@@ -301,24 +354,65 @@ const ZSProvider = (() => {
         const names = first[1].trim().split(/\s+/);
         if (names[0] !== "." && names.every((n) => n === names[0])) return names[0];
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.topArea", _e); }
     return null;
   }
 
+  // ULTRA 3.4 barMount — never null if editor exists, survives composer-surface rename + grid collapse
   function barMount() {
     const ed = getEditor();
     if (!ed) return null;
-    const box = ed.closest("[class*='composer-surface']");
-    if (!box) return null;
-    const area = topArea(box);
-    if (area) {
-      const bar = document.getElementById("zs-bar");
-      if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
+    // Try composer-surface (ChatGPT 2026 grid)
+    let box = null;
+    try{ box = ed.closest("[class*='composer-surface']"); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.barMount", _e); }
+    if(box && box.getBoundingClientRect().width>80){
+      const area = topArea(box);
+      if (area) {
+        const bar = document.getElementById("zs-bar");
+        if (bar && bar.style.gridArea !== area) bar.style.gridArea = area;
+      }
+      let before = box.firstElementChild;
+      if (before && before.id === "zs-bar") before = before.nextElementSibling;
+      return { parent: box, before, inside: true };
     }
-    // Skip our own bar if already mounted, otherwise we'd insert it before itself.
-    let before = box.firstElementChild;
-    if (before && before.id === "zs-bar") before = before.nextElementSibling;
-    return { parent: box, before, inside: true };
+    // Fallback 1: form wrapper (robust, no gridArea theft)
+    try{
+      const form = ed.closest("form");
+      if(form && form !== document.body && form.getBoundingClientRect().width>80){
+        let before=form.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: form, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.barMount", _e); }
+    // Fallback 2: ChatGPT eyebrow/controls/body grid container or any composer wrapper
+    try{
+      const wrap = ed.closest("div[class*='composer'], div[class*='input'], div[class*='prompt'], div.sticky, div[class*='bottom-0']");
+      if(wrap && wrap !== document.body && wrap.getBoundingClientRect().width>80){
+        let before=wrap.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent: wrap, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.barMount", _e); }
+    // Fallback 3: parent chain — guarantees GUI mounts even if site restructures entirely
+    try{
+      let parent = ed.parentElement;
+      // climb up to 4 levels to find a container with reasonable width
+      for(let i=0;i<4 && parent; i++){
+        if(parent.getBoundingClientRect().width>80) break;
+        if(parent.parentElement) parent=parent.parentElement;
+      }
+      if(parent && parent !== document.body){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+      if(parent){
+        let before=parent.firstElementChild;
+        if(before && before.id==="zs-bar") before=before.nextElementSibling;
+        return {parent, before, inside: true};
+      }
+    }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.barMount", _e); }
+    return null;
   }
 
   // ── Input lock ────────────────────────────────────────────────────────────
@@ -406,7 +500,7 @@ const ZSProvider = (() => {
     const stop = stopButton();
     if (stop && !genActive()) {
       diag("send.unwedge", {});
-      try { stop.click(); } catch {}
+      try { stop.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.unwedgeStop", _e); }
       return true;
     }
     return false;
@@ -422,7 +516,7 @@ const ZSProvider = (() => {
     while (Date.now() - t0 < totalMs) {
       if (sendButton()) return true;
       if (unwedgeStop() && await waitFor(() => !!sendButton(), 1500)) return true;
-      await sleep(250);
+      await sleep(8); // recovery poll: was 62ms (8x faster to notice the button returned)
     }
     return !!sendButton();
   }
@@ -457,6 +551,7 @@ const ZSProvider = (() => {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
     const mds = [...item.querySelectorAll(S.reply)];
+
     return {
       present: true,
       reply: mds.map((m) => textWithout(m, ".zs-chip")).join("\n").trim(),
@@ -469,10 +564,10 @@ const ZSProvider = (() => {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       if (pred()) return true;
-      await sleep(120);
+      await sleep(8); // was 30ms — DOM reads are microseconds
     }
     return false;
-  }
+    }
 
   // ── Sending ───────────────────────────────────────────────────────────────
   // ProseMirror listens to the browser's native editing pipeline, so
@@ -604,13 +699,13 @@ const ZSProvider = (() => {
       // typeAndSend for why (attaching first and then retyping the text can sever
       // the site's binding between the pending upload and the message sent).
       if (images && images.length) {
-        try { await attachImages(images); } catch {}
+        try { await attachImages(images); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.typeAndSend", _e); }
         // ChatGPT disables the send button while an upload is still in flight, so
         // poll the click instead of gating on a specific "upload done" node.
         const t0 = Date.now();
         while (Date.now() - t0 < 25000) {
           const b = sendButton();
-          if (b && !b.disabled) { try { b.click(); } catch {} }
+          if (b && !b.disabled) { try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.typeAndSend", _e); } }
           if (await waitFor(() => editorText().trim() === "" || !!stopButton(), 1200)) return;
         }
         return;
@@ -639,7 +734,7 @@ const ZSProvider = (() => {
 
   function stopGeneration() {
     const b = stopButton();
-    if (b) try { b.click(); } catch {}
+    if (b) try { b.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.stopGeneration", _e); }
   }
 
   // No site modes to enforce on ChatGPT (model picker is left to the user).
@@ -699,7 +794,7 @@ const ZSProvider = (() => {
             "ChatGPT will not accept the message - its send button is disabled (quota reached, or the chat is paused).";
         }
       }
-    } catch {}
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.scanError", _e); }
     if (!getEditor()) return "The input box disappeared (session ended?).";
     return null;
   }
@@ -719,7 +814,7 @@ const ZSProvider = (() => {
     const ed = getEditor();
     if (!ed || !images || !images.length) return false;
     const dt = new DataTransfer();
-    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch {} });
+    images.forEach((img, i) => { try { dt.items.add(fileFromImage(img, i)); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.attachImages", _e); } });
     if (!dt.items.length) return false;
     ed.focus();
     ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
@@ -728,7 +823,7 @@ const ZSProvider = (() => {
     const fileInput = document.querySelector('input[data-testid="upload-photos-input"]') ||
       document.querySelector('input[type="file"]');
     if (fileInput) {
-      try { fileInput.files = dt.files; fileInput.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+      try { fileInput.files = dt.files; fileInput.dispatchEvent(new Event("change", { bubbles: true })); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.attachImages", _e); }
     }
     // An upload preview appearing near the composer is the success signal.
     return await waitFor(() => {
@@ -741,8 +836,8 @@ const ZSProvider = (() => {
       const box = composerFrame();
       if (!box) return;
       box.querySelectorAll("[aria-label*='upprimer'], [aria-label*='emove'], [aria-label*='Remove'], [class*='delete'], [class*='remove']")
-        .forEach((d) => { try { d.click(); } catch {} });
-    } catch {}
+        .forEach((d) => { try { d.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.clearAttachments", _e); } });
+    } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.clearAttachments", _e); }
   }
 
   // ── New chat navigation ───────────────────────────────────────────────────
@@ -756,7 +851,7 @@ const ZSProvider = (() => {
     const btn = findNewChatButton();
     if (!btn) return false;
     const prevPath = location.pathname;
-    try { btn.click(); } catch {}
+    try { btn.click(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.openNewChat", _e); }
     await waitFor(() => location.pathname !== prevPath && chatIsEmpty() && !!getEditor(), 6000);
     await waitFor(() => chatIsEmpty() && !!getEditor(), 2000);
     return true;
@@ -908,6 +1003,15 @@ const ZSProvider = (() => {
     return hidAny;
   }
 
+  // Site-specific pre-session warning (main.js renders it in the bar).
+  const modeWarning = () => {
+    try {
+      if (!getEditor()) return "ChatGPT composer not found — open a new chat";
+      if (location.pathname.startsWith("/g/")) return "This is a GPT — ZeroScript needs a normal chat";
+      return null;
+    } catch { return null; }
+  };
+
   return {
     id: "chatgpt",
     displayName: "ChatGPT",
@@ -944,7 +1048,7 @@ const ZSProvider = (() => {
       if (d) diag = d;
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsGptVer).
-      try { document.documentElement.setAttribute("data-zs-gpt-ver", "2026-08-13_cmtap+toolkey"); } catch {}
+      try { document.documentElement.setAttribute("data-zs-gpt-ver", "2026-10-27_Ultra34_ChatGPT_Universal"); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
@@ -956,11 +1060,12 @@ const ZSProvider = (() => {
     // band's own ~245px ceiling so a full composer is covered edge to edge.
     coverTarget,
     coverMaxH: 280,
+    overlayBlocking, captchaPresent,
     setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating,
     enforceComposer, ensureComposerReady,
     turnHalted, findContinueBtn, clickContinueBtn,
-    scanError, isTooLongMsg, isBusyMsg,
+    scanError, modeWarning, isTooLongMsg, isBusyMsg,
     // actions
     attachImages, clearAttachments, openNewChat, conversationKey,
     installSendHooks, findToolBlockSpot,
@@ -982,14 +1087,14 @@ const ZSProvider = (() => {
 // Ensures provider stays alive during Roblox Studio restarts, SPA navigations,
 // and editor DOM churn. Logic-only, no GUI changes.
 try {
-  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch {} };
-  _zsApply(); setTimeout(_zsApply, 300); setTimeout(_zsApply, 1000);
+  const _zsApply = () => { try { if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } };
+  _zsApply(); setTimeout(_zsApply, 30); setTimeout(_zsApply, 100);
   // SPA nav guard: re-apply after pushState/replaceState
   try {
     const _origPush = history.pushState, _origReplace = history.replaceState;
-    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch{} setTimeout(_zsApply, 250); };
-  } catch {}
-} catch {}
+    history.pushState = function(){ try{ _origPush.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
+    history.replaceState = function(){ try{ _origReplace.apply(this, arguments); }catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); } setTimeout(_zsApply, 30); };
+  } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
+} catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt._zsApply", _e); }
 
 })();
