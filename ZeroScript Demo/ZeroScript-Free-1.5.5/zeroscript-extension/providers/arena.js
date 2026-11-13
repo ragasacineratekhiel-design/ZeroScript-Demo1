@@ -871,7 +871,7 @@ try {
 
   return {
     id: "arena",
-    version: "4.7.0",
+    version: "4.8.0",
     displayName: "Arena",
     // Arena's chat composer accepts image uploads (hidden `input[type=file]` in
     // the form → staged preview card → uploaded on send; see attachImages). The
@@ -901,7 +901,7 @@ try {
     // increases for every new reply - the core's watcher uses this to refuse
     // finalizing before this send's reply turn exists.
     reliableCounts: true,
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-arena-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.init", _e); } Promise.resolve().then(restoreDirectOnce).catch((e) => globalThis.ZSSafe?.seen?.("arena.restoreDirect", e)); },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-arena-ver", "4.8.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("arena.init", _e); } Promise.resolve().then(restoreDirectOnce).catch((e) => globalThis.ZSSafe?.seen?.("arena.restoreDirect", e)); },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,

@@ -116,4 +116,4 @@ const ts = ZSParse.parseToolCalls('```json\n{"command":"team_send","params":{"to
 ok("team_send command parses", ts.length === 1 && ts[0].tool === "team_send" && ts[0].arguments.to === "coder");
 ok("Bridge team inbox note is recognized as injected feedback",
    ZSParse.isInjectedFeedback("(System note: Bridge team inbox — actual messages queued for you)"));
-ok("parser version is 4.7.0", ZSParse.VERSION === "4.7.0");
+ok("parser version is 4.8.0", ZSParse.VERSION === "4.8.0");

@@ -1,4 +1,4 @@
-# Integrated release 4.7.0 — teams that actually talk (2+ agents, ordered chat, visible chat)
+# Integrated release 4.8.0 — teams that actually talk (2+ agents, ordered chat, visible chat)
 
 This branch integrates main's execution modes, slash commands, static Luau sandbox, memory wall, plan wall, peer routing and fault instrumentation with authenticated bridge-team mailboxes, concurrent team startup, timestamped console, Python launcher and shared tab controls.
 
@@ -12,21 +12,21 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ## Existing MAX features (retained from main)
 
-# ZeroScript MAX 4.7.0 × Roblox Studio Agent
+# ZeroScript MAX 4.8.0 × Roblox Studio Agent
 
 A browser extension (Chrome/Edge, MV3) that lets **any AI chat window** drive **Roblox Studio** through a
 local Python bridge. You talk to the AI; the extension reads its replies, finds the commands, runs them
 against Studio through the MCP server, and feeds the result back so the model can keep going.
 
 > **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select
-> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
+> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.8.0**.
 > If you still have an old `zeroscript-extension` card, remove it.
 
 ---
 
-## What 4.7.0 fixes (teams that actually talk: 2+ agents, ordered chat, visible chat)
+## What 4.8.0 fixes (teams that actually talk: 2+ agents, ordered chat, visible chat)
 
-| Problem | Root cause found | 4.7.0 fix |
+| Problem | Root cause found | 4.8.0 fix |
 |---|---|---|
 | **Only three agents could form a team** | `TeamHub.start()` raised `Join exactly one planner, one coder and one checker before starting`, and `background.js` refused to continue unless `results.length === 3` — a planner+coder pair could never run, and by then the bridge had already started the run | `MIN_TEAM_SIZE = 2`. The joined role set **is** the team, the introduction order is derived from it (planner → coder → checker), and the extension starts **all joined agents** (`Start all joined team tabs (2 or more)`) |
 | **The agents never started talking** | The introduction invite was queued once and nothing asked again when the invited tab stayed silent; the collaboration steps did not exist at all | The coordinator invites one role at a time, **re-asks a silent tab** after 40 s (`intro_nudge`), skips a dead turn after 90 s (`turn_skipped`) and then drives the collaboration protocol with directed control messages |
@@ -62,7 +62,7 @@ that several headline features were inert, and one bug stopped the product from 
 | Exec modes Continuous/Loop only stored a string; nothing read it | Real bounded engine: iteration budget (24 / 40 turns), progress check, planner→coder→checker rotation |
 | "10× wall" delivered nothing between tabs (BroadcastChannel never reached the executor) | Wall envelopes are re-published as runtime messages (`sendWallTask`); `plan_wall` is event-driven |
 | A 10 ms `chrome.storage` busy-poll (~360k reads/hour/tab) | Event-driven delivery; a 5 s safety poll switches itself off after the first real event |
-| Dry-run "sandbox" rejected **valid** Luau (counted `do` as an opener, ignored comments) | Real Luau tokenizer + block-balance analyser with line-numbered errors; warnings never block |
+| Dry-run "sandbox" rejected **valid** Luau (counted `do` as an opener, ignored comments) | Real recursive-descent Luau parser (statements, expressions, type annotations) with line **and column** errors; warnings never block |
 | `agent_hub.pushTemp/getTemp`, `sandbox.executeLuau` called but never defined | Implemented (`pushTemp`/`getTemp`/`loadTemp`); wall tasks now run the real `execute_luau` tool |
 | Memory Wall built, wired to nothing | Injected into the system prompt **and** every agent turn (query-trimmed, budgeted) |
 | Slash commands worked on Claude only | `wrapTypeAndSend` is installed for **every** provider by `core/main.js` |
@@ -130,7 +130,7 @@ saved.**
 manifest.json             MV3: 16 content-script blocks, 20 AI hosts, 27 host_permissions
 core/config.js            App identity, plans, system prompt, tool categories, feedback text
 core/parser.js            Command extraction + JSON salvage (the most-tested module)
-core/sandbox.js           Luau tokenizer + block-balance static analyser (no VM, by design)
+core/sandbox.js           Recursive-descent Luau parser + linter (no VM, by design)
 core/memory_wall.js       Persistent project memory (chrome.storage + DOM beacon)
 core/plan_wall.js         Event-driven inter-tab wall (BroadcastChannel + storage events)
 core/agent_hub.js         Agent temp storage (memory → BC → chrome.storage → bridge)
@@ -165,8 +165,8 @@ no module calls an export that does not exist · versions agree · all four test
 
 ## Troubleshooting
 
-- **Card says 4.7.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
-- **Bar missing?** Check the extension is 4.7.0, then look for `#zs-bar` in the inspector.
+- **Card says 4.8.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
+- **Bar missing?** Check the extension is 4.8.0, then look for `#zs-bar` in the inspector.
 - **"Extension context invalidated"** — the extension was reloaded/updated under an open tab; reload the page.
 - **Loop/Continuous not continuing?** Check the Exec selector and watch for the budget banner; press Start again to continue.
 - **Nothing executes** — popup health first: bridge offline → run `start.py`. Studio not connected → enable the MCP server in Studio.

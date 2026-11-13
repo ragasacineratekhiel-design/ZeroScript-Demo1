@@ -214,7 +214,7 @@
   const A = {
     running: false,
     stop: false,
-    // 4.7.0: every text THIS extension submitted to the chat, normalised. The
+    // 4.8.0: every text THIS extension submitted to the chat, normalised. The
     // team relay uses it to tell the USER's own message apart from the
     // extension's injections - only the user's request is relayed to the
     // other agents, never our own prompts (that would loop).
@@ -439,7 +439,7 @@
 
   async function submitAndGetBase(text, images) {
     captureSendToken();
-    // 4.7.0: remember what WE submitted so the team relay can recognise the
+    // 4.8.0: remember what WE submitted so the team relay can recognise the
     // user's own message and never relay our own injections back into it.
     try {
       const norm = String(text || "").replace(/\s+/g, " ").trim();
@@ -1230,7 +1230,7 @@
     if(r.ok && r.self)team.status=r;
     return (r.ok?`Output of '${call.tool}':\n`:"ERROR: ")+JSON.stringify(r);
   }
-  // 4.7.0: relay the USER's own request to the rest of the team. The task
+  // 4.8.0: relay the USER's own request to the rest of the team. The task
   // only exists in the tab the user typed it in; without this the other agents
   // sit idle waiting for a task nobody sent them. The relay carries the
   // user's own words, labelled as a request - it is never an invented agent
@@ -1322,7 +1322,7 @@
     try {
       const r=await bg({type:"team_status"});if(!r.ok)return;
       team.status=r;
-      // 4.7.0: share the user's own request with the other agents BEFORE the
+      // 4.8.0: share the user's own request with the other agents BEFORE the
       // mailbox is drained, so a task typed in one tab reaches the whole team.
       if(team.active)await relayUserRequest();
       if(!r.active){if(team.active){if(A.running)stopLoop();if(r.stop_reason)ui.toast(r.stop_reason);}team.active=false;window.__zsTeamActive=false;return;}
@@ -1565,14 +1565,24 @@
     // ── STATIC LUAU PRE-CHECK — reject unparseable code BEFORE the bridge round trip ──
     // NOTE (audit #13): this is static analysis, never execution. Only hard syntax
     // failures block; warnings are surfaced to the model, not enforced.
+    // 4.8.0: sandboxNotes carries the parser's NON-blocking warnings through to
+    // the tool result. Before this they were computed and thrown away, so the
+    // model never learned that print() is invisible to execute_luau or that a
+    // DataStore call needs pcall.
+    let sandboxNotes = "";
     if (bareName === "execute_luau" && typeof window.ZSSandbox !== "undefined" && window.ZSSandbox.dryRunLuau) {
       try{
         const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
         if(!dry.ok && dry.kind==="syntax"){
-          diag("sandbox.block", { name, error: dry.error });
-          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
+          diag("sandbox.block", { name, error: dry.error, line: dry.line, col: dry.col });
+          const where = dry.line ? ` at line ${dry.line}${dry.col ? ", column " + dry.col : ""}` : "";
+          return `ERROR in execute_luau${where}: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by the static Luau parse gate BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
         }
-        // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
+        // Only hard syntax failures block. Warnings ride along instead.
+        if (dry.ok && dry.warnings && dry.warnings.length) {
+          sandboxNotes = "[static Luau check — parsed OK. Non-blocking notes: " +
+            dry.warnings.slice(0, 4).join(" | ") + "]";
+        }
       }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
     }
     // The player-input tools only run against the Client datamodel (play mode) and
@@ -1654,7 +1664,8 @@
           : `${r.images.length} image(s) captured.`;
         return `Output of '${name}':\n${caption}\n(The image is attached to THIS message - you can see it directly. Analyse it and continue.)`;
       }
-      const text = r.text && r.text.length ? r.text : "(tool returned an empty result)";
+      const text = (r.text && r.text.length ? r.text : "(tool returned an empty result)") +
+        (sandboxNotes ? "\n" + sandboxNotes : "");
       if (A.truthPending && isReadTool(name)) {
         A.truthReads++;
         return `Output of '${name}':\n${text}\n[VERIFIED via ${bareName} digest:${truthDigest(text)}]`;
@@ -2752,9 +2763,15 @@
                 const staticCheck = window.ZSSandbox && window.ZSSandbox.analyseLuau
                   ? window.ZSSandbox.analyseLuau(task.code) : { ok: true };
                 if(!staticCheck.ok){
+                  // 4.8.0: the planner/coder agents only see this string, so it
+                  // has to say WHERE the code is broken, not just that it is.
+                  const where = staticCheck.line
+                    ? ` (line ${staticCheck.line}${staticCheck.col ? ", column " + staticCheck.col : ""})` : "";
+                  const hintText = staticCheck.hint ? " — " + staticCheck.hint : "";
                   console.warn('[ZeroScript] wall task rejected by static check', staticCheck.error);
                   try{ window.ZSPlanWall && window.ZSPlanWall.send("executor", task.from || "planner",
-                    { type: "wall_result", ok: false, output: "static check: " + staticCheck.error, ts: Date.now() }, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
+                    { type: "wall_result", ok: false,
+                      output: "static Luau check: " + staticCheck.error + where + hintText, ts: Date.now() }, "wall"); }catch (_e) { globalThis.ZSSafe?.seen?.("main.myRole", _e); }
                   return;
                 }
                 const res = await bg({ type: "call_tool", name: "execute_luau",

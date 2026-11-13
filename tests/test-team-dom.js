@@ -31,7 +31,7 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
   };
   const items = () => [...w.document.querySelectorAll("[data-role]")];
   w.fakeProvider = {
-    id: "claude", displayName: "Claude", version: "4.7.0",
+    id: "claude", displayName: "Claude", version: "4.8.0",
     timings: { RESPONSE_TIMEOUT_MS: 10000, STABLE_MS: 200, WARMUP_MS: 200, REASON_NOREPLY_MS: 500 },
     init() {}, snapshot: () => ({}), getEditor: () => editor, editorText: () => editor.value,
     chatIsEmpty: () => items().length === 0, isFreshChat: () => items().length === 0,

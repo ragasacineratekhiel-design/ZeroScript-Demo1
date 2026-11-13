@@ -3,7 +3,7 @@
 
 4.6.0: --status bridge/team health summary, port + config validation in
 --check, console launched after bridge health (no false "waiting" noise).
-4.7.0: the launcher is now a VISIBLE team surface. It prints who joined which
+4.8.0: the launcher is now a VISIBLE team surface. It prints who joined which
 team and the BARE chat the agents really sent (sender, recipient, timestamp,
 message text) while the bridge runs, and --status shows the same snapshot.
 Nothing here invents a message: every line comes from the bridge event log.
@@ -23,7 +23,7 @@ import signal
 import traceback
 from datetime import datetime, timezone
 
-VERSION = "4.7.0"
+VERSION = "4.8.0"
 ROOT = Path(__file__).resolve().parent
 
 # Handoff tags mirror team_console.py so both surfaces read the same way.
@@ -292,7 +292,7 @@ def main(argv=None):
                 if bridge_health(timeout=0.2):
                     break
                 time.sleep(0.05)
-        # 4.7.0: the launcher itself shows team activity - who joined and the
+        # 4.8.0: the launcher itself shows team activity - who joined and the
         # bare chat the agents really sent - so the team is visible in THIS
         # window without a second terminal.
         watcher = threading.Thread(target=watch_team, args=(stop_watch,), name='zs-team-watch', daemon=True)

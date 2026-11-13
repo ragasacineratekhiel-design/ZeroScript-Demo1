@@ -740,6 +740,82 @@ function checkTimingHonesty() {
   else ok("timing", "no gratuitous sub-50ms interval polling in hot paths");
 }
 
+// ── 4g. capability-claim honesty ─────────────────────────────────────────
+// The tree shipped four fabricated numbers ("~35-40% closer to Pro", "~30%
+// Pro-like", "syntax -28%", "Pro proximity +40-50% … we log real metrics") that
+// no code, harness or log supported. Removing them once is not enough — the same
+// claim can be typed back in tomorrow. This gate fails the build on any
+// unmeasurable quality/proximity claim in the shipped prompt surfaces, so the
+// only way to state a number is to measure it first.
+// Claims inside explanatory comments that QUOTE the removed text are allowed —
+// those are the record of why it was deleted, and they are prefixed "old text"/"Earlier text".
+function checkClaimHonesty() {
+  console.log("\n[4g] capability-claim honesty");
+  const SURFACES = [
+    "core/config.js",
+    "core/prompt_enhancer.js",
+    "core/main.js",
+    "core/memory_wall.js",
+    "popup.js",
+    "background.js",
+  ];
+  // Each pattern is a claim that nothing in this repo can measure.
+  const FORBIDDEN = [
+    [/closer to pro/i, "acts N% closer to Pro"],
+    [/pro[- ]like quality/i, "N% Pro-like quality"],
+    [/pro proximity/i, "Pro proximity percentage"],
+    [/prompt[- ]only ~?\d+%\s+fewer/i, "unmeasured hallucination reduction"],
+    [/helps?\s+\w+\s+act\s+~?\d+/i, "unmeasured model-uplift percentage"],
+    [/measured v\d/i, "fabricated 'Measured vX' benchmark"],
+    [/we log real metrics/i, "claim to log metrics that are not logged"],
+  ];
+  const hits = [];
+  for (const rel of SURFACES) {
+    const p = path.join(EXT, rel);
+    if (!fs.existsSync(p)) continue;
+    const lines = fs.readFileSync(p, "utf8").split("\n");
+    // A claim that is DENIED is the honest text we want to keep
+    // ("No 'Pro proximity' percentage is quoted anywhere" / "we do NOT measure").
+    // Only text that ASSERTS the claim is a failure.
+    //
+    // The negation must be judged in a WINDOW around the match, not across the
+    // whole line: a long template line can assert a fake number and still
+    // contain the word "not" somewhere else, which is exactly how the first
+    // version of this gate was fooled during testing.
+    const NEGATED = /\b(not|no|never|without|removed|gone|fabricated|false|earlier|old text|was claimed|cannot|don't|do not)\b/i;
+    lines.forEach((line, i) => {
+      const stripped = line.trim();
+      // comments document the change; they are not shipped prompt text
+      if (/^(\/\/|\*|#)/.test(stripped)) return;
+      for (const [re, label] of FORBIDDEN) {
+        const m = re.exec(line);
+        if (!m) continue;
+        const from = Math.max(0, m.index - 90);
+        const to = Math.min(line.length, m.index + m[0].length + 50);
+        if (NEGATED.test(line.slice(from, to))) continue;
+        hits.push(`${rel}:${i + 1} — ${label}`);
+      }
+    });
+  }
+  if (hits.length) fail("claims", `unmeasurable capability claim(s) shipped to users: ${hits.slice(0, 6).join(" | ")}`);
+  else ok("claims", "no unmeasured quality/proximity claim in any user-facing prompt surface");
+
+  // Positive control: the honest TRUTH note must survive. Silence is not
+  // honesty — the model must still be told what cannot be done.
+  const cfg = fs.readFileSync(path.join(EXT, "core/config.js"), "utf8");
+  if (!/CANNOT turn Gemini Flash weights into Gemini 3\.1 Pro weights/.test(cfg))
+    fail("claims", "the 'you cannot change model weights' TRUTH note was removed — it must stay");
+  else ok("claims", "the 'scaffolding cannot change model weights' note is still present");
+
+  // A claim about the parser must match what the parser advertises it does.
+  const sb = require(path.join(EXT, "core/sandbox.js"));
+  if (sb.capabilities.luau !== "static-only" || sb.capabilities.runtimeExecution !== false)
+    fail("claims", "sandbox.js no longer declares itself static-only");
+  else if (!sb.capabilities.delimiterTracking)
+    fail("claims", "sandbox.js does not declare delimiter tracking, but config.js now claims it");
+  else ok("claims", "sandbox.js capabilities match the documented pre-check");
+}
+
 // ── 6. version agreement// ── 6. version agreement ──────────────────────────────────────────────────
 function checkVersions(mf) {
   console.log("\n[5] version agreement");
@@ -761,7 +837,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-enhancer.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);
@@ -848,6 +924,7 @@ checkProviderContract();
 checkSilentFailures();
 checkPeerWiring();
 checkTimingHonesty();
+checkClaimHonesty();
 checkRoleAndTruthWiring();
 checkVersions(mf);
 if (!process.argv.includes("--checks-only")) runTests();

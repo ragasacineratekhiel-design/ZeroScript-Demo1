@@ -38,7 +38,7 @@
   if (window.__zsChatgptCm) return;
   window.__zsChatgptCm = true;
 
-  const VERSION = "4.7.0";
+  const VERSION = "4.8.0";
   const ATTR = "data-zs-cm";
   const LEN = "data-zs-cm-len";
   try { document.documentElement.setAttribute("data-zs-cm-ver", VERSION); } catch (_e) { globalThis.ZSSafe?.seen?.("chatgpt-cm.ver", _e); }

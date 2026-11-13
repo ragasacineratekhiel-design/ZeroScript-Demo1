@@ -1,4 +1,4 @@
-# ZeroScript MAX 4.7.0 — bridge-mediated teams of two or more
+# ZeroScript MAX 4.8.0 — bridge-mediated teams of two or more
 
 A Chrome/Edge extension connects open AI chat tabs to a local Python bridge and Roblox Studio's MCP server. **Team messages travel through bridge mailboxes, not through Roblox scripts or a shared website.** The bridge does not contain AI models and does not call model APIs.
 
@@ -41,7 +41,7 @@ Console event meanings:
 | `stopped` / `left` | Relay paused, or a tab left/navigated to a different conversation. Already-running Studio operations are not undone. |
 | `role_violation` | A `planner` or `checker` tab attempted a Studio mutation (`execute_luau`, `multi_edit`, etc.) and was blocked (`[ROLE-BLOCKED]`). Only `coder` may mutate Studio. |
 
-### Ordered collaboration (4.7.0)
+### Ordered collaboration (4.8.0)
 
 The bridge coordinates the order, the models do the work:
 
@@ -53,7 +53,7 @@ The bridge coordinates the order, the models do the work:
 
 The steps that need a missing role are skipped, so a two-agent planner+coder team runs *plan → implement* and a coder+checker team runs *build → review → fix*. Only real `team_send` messages move the team along; the coordinator never writes an agent's message for it.
 
-### Enforced role boundaries (4.6.0, unchanged in 4.7.0)
+### Enforced role boundaries (4.6.0, unchanged in 4.8.0)
 
 Unlike prompt-only instructions, the role permissions are enforced in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.7.0",
+  "version": "4.8.0",
   "description": "ZeroScript 4.6.0 \u2014 enforced planner/coder/checker roles, real-time WS bridge teams, verified /truth ground-truth reads, and fast Roblox Studio MCP automation.",
   "permissions": [
     "storage",

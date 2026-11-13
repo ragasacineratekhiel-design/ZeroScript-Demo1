@@ -1,7 +1,7 @@
-# ZeroScript MAX 4.7.0 — extension (load THIS folder)
+# ZeroScript MAX 4.8.0 — extension (load THIS folder)
 
 `chrome://extensions` → Developer mode → **Load unpacked** → select this folder
-(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
+(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.8.0**.
 Remove any older `zeroscript-extension` card.
 
 ## What it is
@@ -11,7 +11,7 @@ A content script that drops a small control bar above the composer on 20 AI chat
 extracts the ZeroScript command, executes it through `background.js` → `bridge.py` → Roblox Studio MCP,
 and types the result back so the model can continue.
 
-## Verified behaviour in 4.7.0
+## Verified behaviour in 4.8.0
 
 | Area | Reality |
 |---|---|
@@ -19,7 +19,7 @@ and types the result back so the model can continue.
 | **Composer stays yours** | The extension never locks, covers or masks the chat box. The old "Agent is working…" panel and its transparent-text mask are deleted, not disabled. If you are typing when the agent wants to send, it waits for you (up to 20 s) and shows "Holding your draft" rather than overwriting your message. |
 | Exec modes | **Single** (1 turn) · **Continuous** (≤24 turns) · **Loop** (≤40 turns, planner→coder→checker rotation). All bounded; a budget banner stops a runaway model. |
 | Command protocol | **One command per reply.** `execute_luau` uses `###LUA### … ###END_LUA###`; everything else is one JSON object. `core/parser.js` salvages truncated JSON. |
-| Static Luau check | `core/sandbox.js` tokenises Luau and checks block balance before the call leaves the browser. It rejects only unparseable code, with a line number. It does **not** execute Luau. |
+| Static Luau check | `core/sandbox.js` parses Luau with a real recursive-descent parser (statements, expressions, type annotations) before the call leaves the browser. It rejects unbalanced `()[]{}`, missing `then`/`end`/`until`, trailing commas, malformed `local`, `break`/`continue` outside a loop, `goto` without a label and dangling operators — each with a line **and column**. It does **not** execute Luau. |
 | Memory wall | `core/memory_wall.js` persists project memory and is injected into the system prompt **and** every agent turn (query-trimmed to ~700 chars). |
 | **Cross-AI peer channel** | `core/peer_wall.js`. One AI's message is delivered into another AI's **context window** — not just into a log. Distinctness is enforced at delivery: a message addressed to the same provider is refused. |
 | Wall / orchestration | Event-driven (`BroadcastChannel` + background routing by provider). Tasks are re-published as runtime messages so the executor tab receives them. |
@@ -41,7 +41,7 @@ manifest.json             MV3 — 16 content-script blocks, 20 hosts, 27 host_pe
 core/config.js            identity, plans, system prompt, feedback, tool categories
 core/safe.js              safe-error core: counts swallowed failures (35 assertions)
 core/parser.js            command extraction + JSON salvage (37 assertions)
-core/sandbox.js           Luau tokenizer + block balance (36 assertions)
+core/sandbox.js           Recursive-descent Luau parser + linter (80 assertions)
 core/memory_wall.js       persistent project memory
 core/plan_wall.js         event-driven inter-tab wall (18 assertions)
 core/peer_wall.js         cross-AI peer channel (60 assertions)

@@ -125,5 +125,5 @@ const withChip = P.textWithout(
 ok("excluded subtree is skipped", withChip.includes("real reply") && !withChip.includes("execute_luau"));
 
 // ── 4.6.0 version + virtualization-safe turn identity ──────────────────────
-ok("chatgpt provider version is 4.7.0", P.version === "4.7.0");
+ok("chatgpt provider version is 4.8.0", P.version === "4.8.0");
 ok("itemKey extracts data-message-id UUID", P.itemKey(el("div", { attrs: { "data-message-id": "uuid-42" } }, [])) === "uuid-42");

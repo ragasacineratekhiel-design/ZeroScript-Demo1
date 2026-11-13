@@ -113,5 +113,32 @@ check("cached buildTrimmedContext returns identical text", tr1 === tr2);
 W.remember("gotcha", "Cache invalidates on mutation", "test");
 check("remember() invalidates trimmed context cache", W.stats().ctxCached === false);
 
+// ── 4.8.0 trimming quality ────────────────────────────────────────────────
+// Trimming is the mechanism behind the "DYNAMIC TREE-TRIMMING" claim, so it
+// has to actually discriminate. Before 4.8.0 every word longer than two
+// characters scored, so "add leaderstats for the player" counted "add", "for"
+// and "the" as content: unrelated sections earned unearned score (5 vs 2) and
+// the ranking flattened. Stopwords are now dropped before scoring.
+const toks = W._tokenizeQuery("add leaderstats for the player");
+check("4.8.0: stopwords are dropped from query tokens",
+  !toks.includes("the") && !toks.includes("for") && !toks.includes("add"), JSON.stringify(toks));
+check("4.8.0: real terms survive stopword filtering",
+  toks.includes("leaderstats") && toks.includes("player"), JSON.stringify(toks));
+
+const relSec = "## Key systems\n- leaderstats to Coins/Gems/Rebirths";
+const irrSec = "## Open questions\n- what should we do for the next milestone";
+const oldToks = ["add", "leaderstats", "for", "the", "player"]; // pre-4.8.0 behaviour
+check("4.8.0: an unrelated section no longer earns score from stopwords",
+  W._scoreRelevance(irrSec, toks) === 0,
+  "scored " + W._scoreRelevance(irrSec, toks) + " (was " + W._scoreRelevance(irrSec, oldToks) + ")");
+check("4.8.0: the margin over an unrelated section widens",
+  W._scoreRelevance(relSec, toks) - W._scoreRelevance(irrSec, toks) >
+  W._scoreRelevance(relSec, oldToks) - W._scoreRelevance(irrSec, oldToks));
+
+// The old return was `out.slice(0, budget+400)`, so a "trimmed to 600 chars"
+// wall could hand back 1000 — the budget is now honoured.
+const tb = W.trimContextFor("shop", 200);
+check("4.8.0: trimContextFor never exceeds its budget", tb.length <= 200, tb.length + " chars");
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

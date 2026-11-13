@@ -69,7 +69,7 @@ class TeamTests(unittest.TestCase):
         with self.assertRaises(TeamError):
             hub.start("studio")
 
-    # ── 4.7.0: two or more agents form a team and chat in a fixed order ─────
+    # ── 4.8.0: two or more agents form a team and chat in a fixed order ─────
     def test_one_agent_is_not_a_team(self):
         hub = TeamHub()
         hub.register("a", "Claude", "planner")

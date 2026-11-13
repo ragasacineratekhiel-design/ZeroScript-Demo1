@@ -16,7 +16,7 @@ const ZSProvider = (() => {
   Object.defineProperty(P, "id", { get: () => META.id });
   Object.defineProperty(P, "displayName", { get: () => META.displayName });
   P.promptExtra = "- POE: You run inside Poe — use ZeroScript commands exactly as specified for Roblox Studio control. In Bridge Team mode, strictly obey your assigned planner/coder/checker role and hand off via team_send.";
-  P.version = "4.7.0";
+  P.version = "4.8.0";
   // Re-apply the stability patch as the composer mounts (the alias files are
   // loaded before the site has finished painting its first frame).
   try{ const _a = () => { try{ if (typeof ZSAgentStability !== "undefined" && ZSAgentStability.tryPatch) ZSAgentStability.tryPatch(); }catch (_e) { globalThis.ZSSafe?.seen?.("poe._a", _e); } }; _a(); if (typeof requestAnimationFrame === "function") requestAnimationFrame(_a); setTimeout(_a, 50); setTimeout(_a, 250); }catch (_e) { globalThis.ZSSafe?.seen?.("poe._a", _e); }

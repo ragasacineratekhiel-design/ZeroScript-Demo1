@@ -89,7 +89,7 @@ class LauncherTests(unittest.TestCase):
             call.assert_called_once()
 
     def test_launcher_version_is_4_7_0(self):
-        self.assertEqual(launcher.VERSION, '4.7.0')
+        self.assertEqual(launcher.VERSION, '4.8.0')
 
     def test_format_chat_shows_the_bare_message(self):
         line = launcher.format_chat({

@@ -6,9 +6,9 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.7.0";
+  const ENHANCER_VERSION = "4.8.0";
 
-  // 4.7.0: the orchestration text is DERIVED from the roles that are actually
+  // 4.8.0: the orchestration text is DERIVED from the roles that are actually
   // in the plan. It used to hardcode "three roles" and "planner first", so a
   // two-agent plan was described with the wrong handoff chain.
   function orchestrationText(roleList){
@@ -47,34 +47,51 @@
     }catch{ return ""; }
   }
 
-  // ── FACT-CHECKED INTELLIGENCE AMPLIFIER — v4 adds RUNTIME ──
-  // TRUTH: No prompt can turn Flash weights into Pro weights. What WORKS (tested):
-  // INTERNAL: decompose into checklist + inject concrete file-tree + spec contract upstream (TEST_CONTRACT).
-  // EXTERNAL: agentic loop verifies via tools, retries with precise fix, grounds via trimmed memory_wall.
-  // STATIC: a Luau tokenizer rejects hard syntax errors before they cost a Studio round trip.
-  //         It does NOT execute anything — there is no Luau VM here, so runtime TypeErrors
-  //         are caught in Studio, not by this extension. (Earlier text here claimed otherwise.)
+  // ── PROMPT SCAFFOLDING — what this extension adds, and what it cannot do ──
+  // TRUTH: No prompt can turn Flash weights into Pro weights. What this file does
+  // is mechanical, and each piece corresponds to real code:
+  // INTERNAL: expand a vague request into a checklist with a concrete file tree,
+  //           and inject a TEST_CONTRACT when the workspace has tests/specs.
+  // EXTERNAL: the agentic loop verifies via tools, retries with a precise fix and
+  //           grounds itself in the trimmed memory_wall.
+  // STATIC:   a recursive-descent Luau PARSER rejects hard syntax errors before
+  //           they cost a Studio round trip. It does NOT execute anything —
+  //           there is no Luau VM here, so runtime TypeErrors are caught in
+  //           Studio, not by this extension. (Earlier text here claimed otherwise.)
   // No benchmark exists for this. Earlier text here quoted "~20-35% quality gain" and
   // "~40-50% Pro proximity" as measured results; there is no eval harness, dataset or
   // recorded run in this repo to support either number, so they are gone. What the
   // mechanism does is concrete (checklists, trimmed context, static syntax gate) and
   // that is what the prompt now claims.
-  const PRO_BOOST_LIGHT = `\n\n[INTELLIGENCE AMPLIFIER v4 (internal+external+runtime, FACT-CHECKED): Decompose into phases (Discovery→Foundation→Core→Polish→Verify), inject TEST_CONTRACT if found, verify statically (Luau syntax pre-check; runtime still needs Studio) + inspect before mutate. Uses trimmed wallCtx to stay lean. Helps Flash act ~35-40% closer to Pro via scaffolding, not weights.]`;
+  // HONEST: no percentage. The old text claimed "helps Flash act ~35-40% closer
+  // to Pro" — no harness here measures model quality, so nothing like that can
+  // be asserted. What follows describes only mechanisms that exist in code.
+  const PRO_BOOST_LIGHT = `\n\n[ZEROSCRIPT SCAFFOLDING — structure, not new weights: decompose into phases (Discovery→Foundation→Core→Polish→Verify); inspect before you mutate; every Luau block you emit is PARSED before it reaches Studio, so unbalanced brackets / missing 'end' are rejected with a line and column. Memory below is trimmed to what matches this task.]`;
 
-  const PRO_REASONING_FULL = `━━━ FACT-CHECKED INTELLIGENCE PROTOCOL v4 — INTERNAL+EXTERNAL+RUNTIME — HOW WE HELP FLASH/Sonnet/Mini ━━━
-TRUTH: Prompt alone does NOT make Gemini Flash = Gemini 3.1 Pro (or Sonnet=Opus, Mini=Astra). Weights fixed. Tested: prompt-only ~10-15% fewer hallucinations, not Pro reasoning.
-WHAT ACTUALLY WORKS (v4 telemetry, model-agnostic, tested):
-1. INTERNAL PLANNER (JS, upstream): before your call, extension decomposed task into 5-7 phases with concrete paths + upstreamed TEST_CONTRACT (hidden) — follow it.
-2. DYNAMIC TREE-TRIMMING: wallCtx is now trimmed by importance-weighting (relevant sections only) — keeps context lean, avoids hallucination from clutter.
-3. STATIC LUAU ANALYSIS (not execution): after you output Luau, a real tokenizer checks block balance, unterminated strings/comments and obvious shape errors, and rejects only hard syntax failures before they cost a Studio round trip. There is NO Luau VM in the extension, so runtime TypeErrors cannot be caught here — they surface in Studio. Do not rely on this for behavioural correctness.
-4. DECOMPOSE: break ANY request into 5-7 ordered phases (Discovery→Foundation→Core→Polish→Verify) before writing code.
-5. PLAN FIRST: write 3-line plan in mind (what to build, where, verification) — then execute, never code blind.
-6. REASON STEP-BY-STEP: chain-of-thought internally (consider edge cases, anti-exploit, mobile, save, performance) — don't jump to answer.
-7. VERIFY EVERYTHING: inspect_instance / script_read BEFORE mutate, script_read + return AFTER. Never hallucinate path/API.
-8. MAX DEPTH: every Script complete, commented, pcall+retry, exploiter-safe, Tween + Sound + Particles. No TODO.
-9. SELF-CRITIQUE: before final answer, re-read your code mentally — missing 'end'? wrong service? type mismatch Vector3? Fix then send.
-This scaffolding gives you a checklist, trimmer context and a syntax gate before Studio. We have no benchmark proving how much closer it puts a small model to a large one, so we do not quote a number; expect fewer avoidable mistakes, not different weights.
-━━━ END FACT-CHECKED PROTOCOL ━━━`;
+  // HONEST REWRITE (4.8.0). Two claims in this block were false:
+  //   • item 1 advertised an "INTERNAL PLANNER (JS, upstream)" that decomposes
+  //     EVERY task into 5-7 phases "before your call". No such per-task code
+  //     runs; buildSpec() fires only for short/vague prompts. It now says what
+  //     really happens, including "if no contract is printed, none was made".
+  //   • the header quoted "prompt-only ~10-15% fewer hallucinations". Nothing
+  //     in this repo measured that, so the number is gone.
+  // Every item below names the function that implements it, so the model can
+  // trust that the mechanism exists.
+  const PRO_REASONING_FULL = `━━━ ZEROSCRIPT SCAFFOLDING — WHAT THIS EXTENSION ACTUALLY DOES FOR YOU ━━━
+TRUTH FIRST: prompt scaffolding does NOT change your weights. It cannot make Flash behave like Pro, Sonnet like Opus, or Mini like Astra. No "Pro proximity" percentage is quoted anywhere, because nothing here measures it. What follows is mechanical tooling that removes avoidable mistakes.
+WHAT IS REAL — each item names the code that does it:
+1. SPEC CONTRACT (prompt_enhancer.buildSpec) — ONLY when a request is short or vague does the extension expand it into a concrete spec: ordered phases, Roblox service paths, verify steps. If a contract is printed below, satisfy it. If NO contract block appears, none was generated — derive the requirements yourself and never assume one exists.
+2. DYNAMIC TREE-TRIMMING (memory_wall.buildTrimmedContext) — memory is importance-scored against your current task and trimmed to the most relevant sections, so unrelated branches do not crowd the context or tempt you into inventing paths that were never there.
+3. STATIC LUAU PARSE GATE (sandbox.analyseLuau) — every Luau block you emit is parsed by a real recursive-descent Luau parser BEFORE it is sent to Studio. It rejects: unbalanced ( ) [ ] { }, a missing 'then' / 'end' / 'until', trailing commas in calls and parameter lists, malformed 'local' declarations, 'break'/'continue' outside a loop, a 'goto' with no matching '::label::', and dangling operators — each reported with a line AND column. There is NO Luau VM in this extension: it parses, it does not run. Nil dereferences, wrong argument types and nonexistent properties are NOT caught here; they surface from Studio as an ordinary tool error.
+4. TEST CONTRACT (sandbox.inferTestContract) — when the workspace holds tests or specs, their expectations are injected below as a contract to satisfy.
+WHAT YOU DO — instructions to you, not claims about tooling:
+5. DECOMPOSE: break any request into 5-7 ordered phases (Discovery→Foundation→Core→Polish→Verify) before writing code.
+6. PLAN FIRST: 3-line plan (what to build, where, how verified) — then execute; never code blind.
+7. REASON STEP-BY-STEP: consider edge cases, exploit safety, mobile input, saving and performance before answering.
+8. VERIFY EVERYTHING: inspect_instance / script_read BEFORE mutating, script_read + return AFTER. Never state a path or API you did not read.
+9. MAX DEPTH: every Script complete, commented, pcall+retry around DataStore, exploiter-safe. No TODO placeholders.
+10. SELF-CRITIQUE: re-read your code before sending — unbalanced brackets, missing 'end', wrong service, Vector3 vs string. The parser catches the syntax; only you can catch the logic.
+━━━ END SCAFFOLDING ━━━`;
 
   // ── v4 HELPERS: trimmed wallCtx + spec contract upstream ───────────────
   function getWallCtx(query){
@@ -172,20 +189,20 @@ FORCE EXECUTE NOW — use ALL powers, no excuses, deliver best result forcefully
 ━━━ END /force ━━━`
     },
     smart: {
-      name: "SMART AMPLIFIER",
-      desc: "Fact-checked smart boost — internal planner + external verifier, helps Flash/Sonnet/Mini ~30% (not magic Pro)",
-      template: (raw, theme, wallCtx, placeInfo) => `━━━ /smart — FACT-CHECKED SMART AMPLIFIER — TESTED INTERNAL+EXTERNAL ━━━
+      name: "SMART SCAFFOLD",
+      desc: "Structural boost — spec contract + trimmed memory + Luau parse gate. Adds process, not weights; no quality number is claimed",
+      template: (raw, theme, wallCtx, placeInfo) => `━━━ /smart — STRUCTURAL BOOST (spec + trimmed memory + parse gate) ━━━
 User smart request: "${raw.slice(0,400)}"
 ${PRO_REASONING_FULL}
 SMART RULES (honest, 1 prompt = 1 response):
-- This is AMPLIFIER, not weight upgrade: use internal checklist (planner gave phases) + external verification to reach ~30% Pro-like quality on Flash/Sonnet/Mini.
+- This is PROCESS SUPPORT, not a weight upgrade: follow the checklist above, use the trimmed memory below, and satisfy the spec contract if one is printed. No quality percentage is claimed — expect fewer avoidable mistakes, not a different model.
 - For vague "make sim", infer full spec (leaderstats, save, UI, pets, economy, polish) — decide and ship, don't ask.
 - For bug fixes: read error → script_read → diagnose root → minimal fix → verify via return → mock play test. Never guess.
 - Use tokens wisely: reasoning + bulk builds + verification proofs. Thorough > lazy one-liner.
-- Output: commented, modular, exploiter-safe, Tween/Sound polish, mobile-ready — best Flash CAN do, honestly not full Pro.
+- Output: commented, modular, exploiter-safe, Tween/Sound polish, mobile-ready.
 Theme: ${theme.name} — Systems: ${theme.systems.join(", ")}
 ${wallCtx ? `MemoryWall:\n${wallCtx}\n` : ""}${placeInfo?`Place:\n${placeInfo}\n`:""}
-APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smarter, honestly tested.
+APPLY NOW — spec contract (if printed) + trimmed memory + parse gate on your output.
 ━━━ END /smart ━━━`
     }
   };
@@ -271,6 +288,89 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     return weak.some(w=> t.includes(w)) || isBadPrompt(s);
   }
 
+  // ── COMPACT SCAFFOLD (4.8.0) ───────────────────────────────────────────
+  // The 3KB PRO_REASONING_FULL block was appended verbatim to EVERY prompt,
+  // whatever the task. Generic self-help ("REASON STEP-BY-STEP", "MAX DEPTH",
+  // "SELF-CRITIQUE") does not change model behaviour — it only burns tokens and
+  // buries the few facts that DO matter. This is the short version, carrying
+  // only what is true and actionable; the task-specific constraints come from
+  // buildAcceptanceChecklist() below, derived from the user's own words.
+  const SCAFFOLD_BRIEF = `[ZeroScript scaffolding — structure, not new weights:
+• Every Luau block you emit is PARSED before it reaches Studio: unbalanced () [] {}, missing 'then'/'end'/'until', trailing commas, malformed 'local' and dangling operators are rejected with a line and column. Parsing is NOT execution — nil derefs, wrong argument types and nonexistent properties still return from Studio as errors.
+• The memory below is trimmed to what matches this task.
+• No quality percentage is claimed. This is process support, not a different model.]`;
+
+  // ── ACCEPTANCE CHECKLIST (4.8.0) ────────────────────────────────────────
+  // Turns the user's own request into concrete, checkable requirements. This is
+  // the part that actually changes output: instead of "be thorough", the model
+  // gets "you said 3 pets — return the count". Only triggered rules are emitted,
+  // so a simple request stays short. Nothing here is invented: every line is
+  // derived from text the user typed.
+  const RULE_TRIGGERS = [
+    [/\b(leaderstats|datastore|save|saving|persist|persistence|profile)\b/i,
+      "persistence is requested → every DataStore call must be wrapped in pcall with a retry, and you must `return` the save result as proof"],
+    [/\b(mobile|phone|tablet|touch)\b/i,
+      "mobile is requested → size UI with UDim2.fromScale (never pixel offsets) and use a touch-friendly hit area"],
+    [/\b(gamepad|controller|xbox|playstation|console)\b/i,
+      "gamepad is requested → bind through ContextActionService and cover the A/Thumbstick path"],
+    [/\b(sound|audio|sfx|music)\b/i,
+      "audio is requested → create the Sound under SoundService with a real asset id and verify it with `return`"],
+    [/\b(tween|animat|easing|smooth)\b/i,
+      "animation is requested → use TweenService with an explicit EasingStyle/Direction, not a manual lerp loop"],
+    [/\b(particle|vfx|effect|trail|sparkle)\b/i,
+      "effects are requested → ParticleEmitter with explicit Lifetime/Rate, parented under the right part"],
+    [/\b(ui|hud|gui|screen|menu|button|shop\s*ui)\b/i,
+      "UI is requested → ScreenGui with ResetOnSpawn=false, and every text element must have a real value"],
+    [/\b(anti[- ]?cheat|exploit|hacker|security|sanitiz|validat)/i,
+      "security is requested → validate on the SERVER and never trust a client-supplied number"],
+    [/\b(rebirth|prestige|ascend)\b/i,
+      "rebirth is requested → leaderstats must survive the rebirth; reset only what the user said to reset"],
+    [/\b(shop|buy|purchase|price|cost|economy|currency|coins?)\b/i,
+      "an economy is requested → prices and balances are server-authoritative; check funds before deducting"],
+    [/\b(pet|egg|hatch|rarity|legendary)\b/i,
+      "pets/eggs are requested → a weighted rarity table with an explicit chance value per entry"],
+    [/\b(performance|lag|fps|optimi[sz]e|60\s*fps)\b/i,
+      "performance is requested → no work in RenderStepped that can be done once; use task.wait() not wait()"],
+    [/\b(team|party|squad|multiplayer|co-?op)\b/i,
+      "multiplayer is requested → state lives on the server; replicate through RemoteEvents, never locals"],
+  ];
+
+  function buildAcceptanceChecklist(raw) {
+    const text = String(raw || "");
+    const rules = [];
+    for (const [re, rule] of RULE_TRIGGERS) if (re.test(text)) rules.push(rule);
+
+    // explicit counts the user asked for ("3 pets", "two zones", "5 rounds")
+    const counts = [];
+    const WORD_NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1 };
+    const reCount = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:different\s+|unique\s+|distinct\s+)?([a-z][a-z-]{2,20})\b/gi;
+    let m;
+    while ((m = reCount.exec(text)) !== null && counts.length < 4) {
+      const n = /^\d+$/.test(m[1]) ? parseInt(m[1], 10) : WORD_NUM[m[1].toLowerCase()];
+      const noun = m[2].toLowerCase();
+      if (!n || n > 200) continue;
+      // "every 5 seconds" is an interval, not a count of things to build —
+      // measurement and filler words are not countable deliverables.
+      if (/^(and|or|the|x|px|ms|s|sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days|tick|ticks|frame|frames|fps|stud|studs|percent|times?|more|less|other)$/.test(noun)) continue;
+      counts.push(`you asked for ${n} ${noun} → build exactly ${n} and \`return\` the count as proof`);
+    }
+
+    // things the user explicitly does NOT want
+    const negations = [];
+    const reNeg = /\b(?:no|without|don'?t|do not|never|avoid|skip|exclude)\s+([a-z][a-z\s]{2,22}?)(?:[.,;!?]|$|\s+(?:and|or|but|just|only|please)\b)/gi;
+    while ((m = reNeg.exec(text)) !== null && negations.length < 3) {
+      const what = m[1].trim().replace(/\s+/g, " ");
+      if (what.length < 3) continue;
+      negations.push(`you said NO "${what}" → do not implement it`);
+    }
+
+    const all = [...counts, ...rules, ...negations];
+    if (!all.length) return "";
+    return "━━━ ACCEPTANCE CHECKLIST (derived from your own request — satisfy every line) ━━━\n" +
+      all.slice(0, 8).map((r) => "• " + r).join("\n") +
+      "\n━━━ END CHECKLIST ━━━";
+  }
+
   function enhance(userPrompt, opts={}){
     const raw = String(userPrompt||"").trim();
     if(!raw) return { enhanced: raw, changed:false, theme: THEMES.generic, spec:"", mode:"none" };
@@ -306,15 +406,22 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     if(detailed && !opts.force){
       const wallCtx = getWallCtx(raw);
       const contract = getTestContract(raw, wallCtx, theme);
-      const footer = `\n\n${PRO_REASONING_FULL}\n${contract?"\n"+contract:""}\n${wallCtx?`\nTrimmedMemory:\n${wallCtx.slice(0,500)}` : ""}\n\n[ZeroScript MAX v4 — a Luau syntax pre-check runs on your output before it reaches Studio (syntax only; runtime needs Play) + trimmed context + TEST_CONTRACT upstream. 1 prompt = 1 response.]`;
+      const checklist = buildAcceptanceChecklist(raw);
+      // 4.8.0: task-specific requirements instead of 3KB of generic coaching.
+      const footer = `\n\n${SCAFFOLD_BRIEF}\n${checklist?"\n"+checklist:""}\n${contract?"\n"+contract:""}\n${wallCtx?`\nTrimmedMemory:\n${wallCtx.slice(0,500)}` : ""}\n\n[1 prompt = 1 response.]`;
       if(raw.includes("MAX") || raw.includes("publish")) return { enhanced: raw + PRO_BOOST_LIGHT, changed:true, theme, spec: PRO_BOOST_LIGHT, mode:"pro-polished" };
       return { enhanced: raw + footer, changed:true, theme, spec:"polished+pro", mode:"polished" };
     }
     if(bad || vague){
+      const checklistVague = buildAcceptanceChecklist(raw);
       const spec = buildSpec(raw, theme, opts);
       const wallCtx = getWallCtx(raw);
       const contract = getTestContract(raw, wallCtx, theme);
-      const proSpec = `${PRO_REASONING_FULL}${contract?"\n\n"+contract:""}\n\n${spec}`;
+      // 4.8.0: the checklist rides along here too. Without it the auto-spec
+      // prescribes the theme's default systems even when the user excluded one
+      // ("…but no trading" still produced a Trading system) and drops any count
+      // they asked for.
+      const proSpec = `${PRO_REASONING_FULL}${contract?"\n\n"+contract:""}\n\n${spec}${checklistVague?"\n\n"+checklistVague:""}`;
       const enhanced = `${raw}\n\n${proSpec}`;
       try{ (window.__zsPromptStats||(window.__zsPromptStats={})).enhanced=(window.__zsPromptStats.enhanced||0)+1; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.enhance", _e); }
       return { enhanced, changed:true, theme, spec: proSpec, mode:"vague+pro" };
@@ -322,7 +429,10 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     // Normal prompt — trimmed + contract + runtime-aware boost
     const wallCtx2 = getWallCtx(raw);
     const contract2 = getTestContract(raw, wallCtx2, theme);
-    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[Luau syntax pre-check runs before your output reaches Studio (syntax only); trimmed context keeps you lean; Switch Plan wall active]";
+    const checklist2 = buildAcceptanceChecklist(raw);
+    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (checklist2?"\n"+checklist2:"") +
+      (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") +
+      "\n[Every Luau block is parsed before it reaches Studio (syntax only — parsing is not execution); trimmed context keeps you lean; Switch Plan wall active]";
     return { enhanced: raw + lightPlus, changed:true, theme, spec: lightPlus, mode:"pro-boost-v4" };
   }
 
@@ -397,6 +507,8 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
     slashHelp: ()=> Object.entries(SLASH_DEFS).map(([k,v])=> `/${k} — ${v.desc}`).join("\n"),
     PRO_BOOST_LIGHT,
     PRO_REASONING_FULL,
+    SCAFFOLD_BRIEF,
+    buildAcceptanceChecklist,
     wrapTypeAndSend: (provider)=>{
       if(!provider || !provider.typeAndSend || provider._zsPromptWrapped) return provider;
       const orig = provider.typeAndSend.bind(provider);

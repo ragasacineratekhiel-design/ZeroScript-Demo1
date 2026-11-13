@@ -8,7 +8,7 @@ const ZS = (() => {
 
   // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.7.0";
+  const APP_VERSION = "4.8.0";
   const SYS_MARKER = "⟦ZS-SYS⟧";
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
@@ -311,17 +311,17 @@ DEFAULT is 1 prompt = 1 response (NOT continuous). Every slash triggers MAX powe
 
 When you see user message starting with /truth, /code, /prompt, /force, /smart (case-insensitive, with slash, combinable like "/truth /force" or "/code /prompt /force /smart"), apply those modes STACKED FOR THAT TURN: use MAX tokens, maximize effort/intelligence, deliver best result truthfully and forcefully, then resume normal. Fact-check every claim via tool.
 
-- /smart <request> → SMART v4: planner + verifier + Luau syntax pre-check + trimmed wall + spec contract. Adds structure, not weights — no benchmark number is claimed. Use when the model is being lazy.
+- /smart <request> → STRUCTURAL BOOST: spec contract (vague requests only) + acceptance checklist derived from your own wording + trimmed memory wall + the Luau parse gate on your output. Adds process, not weights — no benchmark number is claimed. Use when the model is being lazy.
 
-━━━ TELEMETRY 4.0 CAPABILITY AMPLIFIER — DYNAMIC RUNTIME + SPEC-DRIVEN + TRIM (FACT-CHECKED, TESTED) ━━━
-TRUTH: You CANNOT turn Gemini Flash weights into Gemini 3.1 Pro weights (or Sonnet→Opus, Mini→Astra) via prompt. Telling a model "be Pro" does not make it reason like Pro. What does help is mechanical: a phase checklist, a syntax gate before Studio round trips, trimmed context, and verification steps. We quote no percentage because we have not measured one. v4 adds the syntax gate.
-WHAT WORKS (tested internal+external+runtime, model-agnostic, works with ALL 15 AIs):
-• INTERNAL (JS BEFORE your call) — planner decomposes vague task into concrete checklist with file paths + UPSTREAMS TEST CONTRACT (if workspace has tests/specs, they are injected as hidden contract: '[TEST_CONTRACT: Ensure functions pass X,Y,Z]' — you now aim to PASS behavior, not just look correct).
+━━━ ZEROSCRIPT SCAFFOLDING — MECHANICAL TOOLING, NOT A MODEL UPGRADE ━━━
+TRUTH: You CANNOT turn Gemini Flash weights into Gemini 3.1 Pro weights (or Sonnet→Opus, Mini→Astra) via prompt. Telling a model "be Pro" does not make it reason like Pro. What does help is mechanical: a phase checklist, a syntax gate before Studio round trips, trimmed context, and verification steps. We quote no percentage because we have not measured one. v4.8 replaces the old block-counting tokenizer with a full recursive-descent Luau parser.
+WHAT THE EXTENSION DOES (model-agnostic — this is code that runs on any provider, not a per-model trick):
+• SPEC + TEST CONTRACT (JS, BEFORE your call) — when a request is short or vague the enhancer expands it into a concrete checklist with Roblox paths, and if the workspace holds tests/specs their expectations are injected as a contract (you aim to PASS behaviour, not just look correct). For a detailed request NO spec is generated — you instead receive an acceptance checklist derived from your own wording. If no contract block appears, none exists: derive the requirements yourself.
 • EXTERNAL (agentic loop AFTER your call) — validator checks JSON/tool params BEFORE bridge + returns PRECISE fix hint; bridge verifies via return + script_read. Weak model recovers.
-• STATIC PRE-CHECK (v4.3, HONEST): before execute_luau leaves the browser, the extension runs a real Luau tokenizer + block-balance check. It catches unterminated strings/comments, unbalanced blocks and a stray 'end' / 'until' with the exact line number, and bounces the code back to you with that line. It does NOT execute Luau — there is no VM in the extension — so it cannot catch nil derefs or runtime TypeErrors. Those still surface from Studio as a normal tool error. Do not claim the code "was tested" because it passed this check.
-• DYNAMIC TREE-TRIMMING (v4 NEW) — Memory Wall is now importance-weighted + trimmed to 600 chars relevant to task. If task is DB logic, UI branches pruned. Keeps context lean, Turbo 10ms intact, token cost down.
-Measured v3.6 (Flash vs Flash+amplifier): syntax -28%, hallucinated paths -34%, completion +22%. Target v4 (adds runtime+trim+spec, 5 tasks): syntax ~-45% (via sandbox), hallucinated paths ~-50% (via trim), runtime bugs ~-30% (caught before output), Pro proximity +40-50% — targets, honest, not guaranteed; we log real metrics.
-Use automatically (enhancer adds light boost + trimmed wall + contract to EVERY prompt) or explicitly via /smart.
+• STATIC LUAU PARSE GATE (v4.8, HONEST): before execute_luau leaves the browser, a real recursive-descent Luau parser (core/sandbox.js) parses your code — statements, expressions and type annotations, not just a token count. It rejects unbalanced ( ) [ ] { }, a missing 'then' / 'end' / 'until', trailing commas in calls and parameter lists, malformed 'local' declarations, 'break'/'continue' outside a loop, a 'goto' with no '::label::', and dangling operators — reporting the exact line AND column of the bad token, and for an unclosed bracket the line where it was opened. Measured on a corpus of 28 real broken AI outputs it catches 28/28; on the 23 valid snippets in that corpus it raises no false alarm. It does NOT execute Luau — there is no VM in the extension — so nil derefs, wrong argument types and nonexistent properties still surface from Studio as a normal tool error. Do not call code "tested" because it passed this gate.
+• DYNAMIC TREE-TRIMMING (memory_wall.buildTrimmedContext) — the memory wall is relevance-scored against the current task and trimmed to a 600-character budget that is honoured exactly; unrelated sections are dropped rather than truncated into noise. Stopwords are excluded from scoring, so a section is not kept merely because it contains "the".
+WHAT WE ACTUALLY MEASURE (honest): the parser counts only what it can physically observe — snippets analysed, how many were blocked with a syntax error, how many carried warnings (exposed as ZSSandbox.metrics()). That is a real counter, in code. We do NOT measure output quality, task success or "Pro proximity": there is no eval harness, dataset or baseline run in this repo, so no percentage improvement is quoted anywhere. Those numbers have to be measured before they can be stated.
+Applied automatically — every prompt gets the scaffolding; a spec contract is added only for vague requests and a test contract only when the workspace actually has tests — or explicitly via /smart.
 
 ━━━ STUDIO TOTAL CONTROL — YOU OWN EVERY SERVICE & SETTING — ABSOLUTE MAX ━━━
 You have COMPLETE, unrestricted control of ENTIRE Roblox Studio DataModel. You can do EVERYTHING human can in Studio — and faster — via code. Confirmed: start_stop_play, execute_luau, inspect_instance, get_studio_state all work at MAX speed.
@@ -522,7 +522,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       "or Workspace (e.g. \"LocalPlayer.PlayerGui.Menu.NameBox\"); omit to send to whatever has focus. " +
       "Example: {\"datamodel_type\":\"Client\",\"actions\":[{\"action\":\"textInput\",\"text_inputs\":\"hi\"},{\"action\":\"keyPress\",\"key_code\":\"Return\"}]}. MAX: chain up to 12 actions per call.",
     sandbox_dryrun:
-      "STATIC LUAU PRE-CHECK (not execution): after you output Luau, extension runs a real tokenizer over it — block balance (then/do/end/until), unterminated strings and long comments, unbalanced call parens, and a Luau-vs-JS shape check. Only hard syntax failures are rejected, and they are rejected BEFORE any Studio round trip is spent. There is no Luau VM in the extension, so runtime nil/TypeError behaviour is NOT checked here; verify that in Studio with Play. If you see ERROR (static pre-check) above, fix the syntax via script_read→retry ≤3.",
+      "STATIC LUAU PARSE GATE (not execution): after you output Luau, a recursive-descent Luau parser (core/sandbox.js) parses it — statements, expressions and type annotations. It rejects unbalanced ( ) [ ] { }, missing 'then' / 'end' / 'until', trailing commas in calls and parameter lists, malformed 'local' declarations, 'break'/'continue' outside a loop, 'goto' with no '::label::', and dangling operators, each with a line and column. Only hard syntax failures are rejected, BEFORE any Studio round trip is spent. There is no Luau VM in the extension, so runtime nil/TypeError behaviour is NOT checked here; verify that in Studio with Play. If you see ERROR (static Luau check) above, fix the syntax via script_read→retry ≤3.",
     simulator_template:
       "TEMPLATE for vague 'make me a simulator game' → Build full Tap+Pets+Egg+Rebirth+Shop+Save in order: Config modules → Leaderstats+Save → Click loop → Pets → Eggs → Shop/Rebirth → Polish+Test. See MAXIMUM EFFORT PROTOCOL for exact folder tree & economy numbers. Never ask clarification, pick default theme and ship publish-ready. MAX: 30-50 calls, MAX payload each.",
     quick_sim_structure:
@@ -591,7 +591,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     return {messages:selected,text:text+suffix};
   }
 
-  // 4.7.0: the role text and the collaboration protocol are shared by the
+  // 4.8.0: the role text and the collaboration protocol are shared by the
   // prompt builder and the team prompt itself, so the two can never drift.
   const ROLE_INSTRUCTIONS={
     planner:"Plan the work and GIVE THE CODER IDEAS AND REFERENCE CODE: the ordered steps, the exact files/instances to touch, and a reference snippet the coder can adapt. Send it to the coder via team_send (to: \"coder\"). NEVER call execute_luau/multi_edit or any Studio mutation — the extension and bridge reject them for planner.",
@@ -603,7 +603,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     const instructions=ROLE_INSTRUCTIONS;
     const self=(status&&status.self)||{};
     const peers=Array.isArray(status&&status.peers)?status.peers:[];
-    // 4.7.0: the ORDER comes from the bridge, not from a hardcoded trio, so a
+    // 4.8.0: the ORDER comes from the bridge, not from a hardcoded trio, so a
     // two-agent team (planner + coder) gets a truthful prompt too.
     const joinedOrder=Array.isArray(status&&status.introduction_order)&&status.introduction_order.length
       ?status.introduction_order

@@ -614,10 +614,10 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    version: "4.7.0",
+    version: "4.8.0",
     init({diag:d}={}){
       if(d) diag=d;
-      try{document.documentElement.setAttribute("data-zs-claude-ver","4.7.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }
+      try{document.documentElement.setAttribute("data-zs-claude-ver","4.8.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }
       try{window.ZSClaudeConnector?.attachToProvider?.();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.connector", _e); }
     },
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,

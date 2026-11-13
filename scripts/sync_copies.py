@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import time
 
-VERSION = "4.7.0"
+VERSION = "4.8.0"
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "ZeroScript Demo" / "ZeroScript-Free-1.5.5"
 EXTENSION = ROOT / "zeroscript-extension-v2"

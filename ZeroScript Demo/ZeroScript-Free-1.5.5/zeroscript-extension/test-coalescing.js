@@ -125,7 +125,7 @@ function check(name, cond, detail) {
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(path.join(__dirname, "core/transport.js"), "utf8"), ctx);
     const T = ctx.ZS_Transport;
-    check("ZS_Transport 4.7.0 loads", T && T.VERSION === "4.7.0");
+    check("ZS_Transport 4.8.0 loads", T && T.VERSION === "4.8.0");
     wireSends = 0;
     await Promise.all([T.status(), T.status(), T.status()]);
     check("ZS_Transport coalesces concurrent status() reads", wireSends === 1, wireSends + " sends");

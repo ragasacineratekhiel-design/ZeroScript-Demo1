@@ -786,7 +786,7 @@ try {
 
   return {
     id: "kimi",
-    version: "4.7.0",
+    version: "4.8.0",
     displayName: "Kimi",
     // Confirmed live: Kimi (K2.6) reads attached images - it correctly described
     // a test screenshot's content. So screen_capture is exposed here (see main.js
@@ -822,7 +822,7 @@ try {
     unstableWarning:
       "Kimi sometimes uses its own native tools instead of the Roblox commands (model behavior, not the extension). " +
       "If it stops acting in Roblox Studio and answers in plain text or runs its own tools, remind it to use the ZeroScript commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-kimi-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-kimi-ver", "4.8.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,

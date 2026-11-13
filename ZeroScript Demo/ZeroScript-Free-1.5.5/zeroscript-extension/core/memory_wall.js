@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.7.0";
+  const WALL_VERSION = "4.8.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
@@ -226,7 +226,18 @@ _One-line what this place is_
       if(/ui|hud|shop|button|screen/i.test(text) && queryTokens.some(x=>/ui|shop|hud|button/i.test(x))) s+=2;
       return s;
     },
-    _tokenizeQuery(q){ return String(q||"").toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>2).slice(0,16); },
+    // 4.8.0: stopwords are dropped before scoring. Previously any word longer
+    // than two characters counted, so "build me a shop for the game" scored
+    // "for" and "the" as content. Those appear in almost every memory section,
+    // handing every section a baseline score and flattening the ranking until
+    // "relevance-aware" trimming was effectively arbitrary.
+    _STOPWORDS: new Set(("the and for you your with that this from have has are was were will can not but all any make made making want need into out " +
+      "how what when where why who get got set use using used add adding build building create creating please some more most other than then them they " +
+      "their there here been being which while would could should about over under just like also only very much many our ours its it's don doesn isn").split(" ")),
+    _tokenizeQuery(q){
+      return String(q||"").toLowerCase().split(/[^a-z0-9]+/)
+        .filter(w=>w.length>2 && !this._STOPWORDS.has(w)).slice(0,16);
+    },
     trimContextFor(query, budget=600){
       const full = ensureWall().wall || "";
       if(full.length <= budget) return full;
@@ -240,8 +251,10 @@ _One-line what this place is_
       scored.sort((a,b)=> b.score - a.score || a.len - b.len);
       let out = head?head.text:"";
       let rem = budget - out.length;
-      for(const s of scored){ if(rem<=0) break; if(s.text.length <= rem+200){ out += "\n" + s.text; rem -= s.text.length; } else if(s.score>0){ out += "\n" + s.text.slice(0, rem); break; } }
-      return out.slice(0, budget+400);
+      for(const s of scored){ if(rem<=0) break; if(s.text.length <= rem){ out += "\n" + s.text; rem -= s.text.length; } else if(s.score>0){ out += "\n" + s.text.slice(0, rem); break; } }
+      // 4.8.0: the old return was `budget+400`, so a "trimmed to 600 chars"
+      // wall could hand back 1000. The budget is now honoured exactly.
+      return out.slice(0, budget);
     },
     buildTrimmedContext(query, budget=600){
       if(!query || !String(query).trim()) return this.buildContext();

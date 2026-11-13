@@ -116,7 +116,7 @@ async function main(){
   c.chrome.tabs.sendMessage=async()=>{active++;maxActive=Math.max(maxActive,active);await new Promise(r=>setTimeout(r,20));active--;return {ok:true};};
   const started=await c.api.handle({type:'team_start',team:'studio'},{id:'extension-id'});
   check('three team startup submissions run concurrently',()=>{assert.equal(started.ok,true);assert.equal(maxActive,3);assert.equal(started.started,3);});
-  // 4.7.0: two joined agents are a team - "start all joined agents".
+  // 4.8.0: two joined agents are a team - "start all joined agents".
   await c.api.handle({type:'team_register',session_id:'duo',role:'planner',team:'duo'},{id:'extension-id',tab:{id:31,url:'https://claude.ai/'}});
   await c.api.handle({type:'team_register',session_id:'duo',role:'coder',team:'duo'},{id:'extension-id',tab:{id:32,url:'https://chat.deepseek.com/'}});
   active=0;maxActive=0;

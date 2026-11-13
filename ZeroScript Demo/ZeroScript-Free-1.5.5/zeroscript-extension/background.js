@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One service worker already serves every tab. Mutations are sent ONCE: never
 // hedge/replay them across transports after an ambiguous timeout.
-const VERSION = '4.7.0';
+const VERSION = '4.8.0';
 const WS_URL = 'ws://127.0.0.1:17613';
 const HTTP_BASE = 'http://127.0.0.1:17614';
 const RECONNECT_MIN = 250;
@@ -195,7 +195,7 @@ async function teamRequest(msg,sender){
       try{return {tab:Number(id),...await chrome.tabs.sendMessage(Number(id),{type:'zs-team-start'})};}
       catch(e){return {tab:Number(id),ok:false,error:String(e)};}
     }));
-    // 4.7.0: START ALL JOINED AGENTS. The team is whatever joined (two or
+    // 4.8.0: START ALL JOINED AGENTS. The team is whatever joined (two or
     // more); the old "exactly three" rule refused every smaller team and the
     // bridge had already started it by then.
     const need=r.members.length;
@@ -221,7 +221,7 @@ async function teamRequest(msg,sender){
   if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();broadcastStatus().catch(()=>{});return http('/api/team/leave',{member_id:binding.member_id});}
   const action={team_status:'status',team_inbox:'inbox',team_ack:'ack',team_send:'send',team_ready:'ready'}[msg.type];
   if(!action)return {ok:false,error:'Unknown team action'};
-  // 4.7.0: `kind` lets the extension relay the USER'S own request into the
+  // 4.8.0: `kind` lets the extension relay the USER'S own request into the
   // team ("request") without pretending an agent spoke. The AI-facing
   // team_send tool never sets one, so an agent cannot skip the intro order.
   const body={member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id,...(msg.kind?{kind:msg.kind}:{})}:{}),...(action==='ack'?{ids:msg.ids}:{})};

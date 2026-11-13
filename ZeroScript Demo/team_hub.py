@@ -4,7 +4,7 @@ All callers must be authenticated by bridge.py. A member represents one chat tab
 not a model API connection. Delivery means the extension acknowledged submission;
 it does not prove that the model read or understood the message.
 
-4.7.0 upgrades (brutal-honest, speed + features):
+4.8.0 upgrades (brutal-honest, speed + features):
 - TWO OR MORE agents form a team. The joined role set IS the team: a planner +
   coder pair is a valid team, and the introduction order is DERIVED from the
   roles that actually joined (planner -> coder -> checker) instead of a

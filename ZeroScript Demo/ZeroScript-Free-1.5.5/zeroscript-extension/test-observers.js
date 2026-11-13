@@ -92,7 +92,7 @@ const sandbox = {
   performance: { now: () => Date.now() },
   chrome: {
     runtime: {
-      id: "test", getManifest: () => ({ version: "4.7.0" }),
+      id: "test", getManifest: () => ({ version: "4.8.0" }),
       sendMessage: () => {}, onMessage: { addListener() {} },
     },
     storage: { local: { get: (k, cb) => cb && cb({}), set: (v, cb) => cb && cb() } },
@@ -129,7 +129,7 @@ if (!loaded) { console.log(`\n${pass} passed, ${failed} failed`); process.exit(1
 // `const ZSProvider = (() => …)()` is a LEXICAL binding — it is not a property
 // of the global object, so it must be read by evaluating in the same realm.
 const P = vm.runInContext("typeof ZSProvider !== 'undefined' ? ZSProvider : null", sandbox);
-check("exports a provider with init() v4.7.0", !!(P && typeof P.init === "function" && P.version === "4.7.0"));
+check("exports a provider with init() v4.8.0", !!(P && typeof P.init === "function" && P.version === "4.8.0"));
 
 // ── init installs both observers ────────────────────────────────────────────
 P.init({});
