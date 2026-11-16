@@ -249,13 +249,25 @@ for (const { file, src } of allFiles) {
   const observeCalls = src.match(/\.observe\(/g) || [];
   if (observeCalls.length > 0) {
     const hasWholeDoc = /\{[^}]*subtree\s*:\s*true/.test(src);
-    const hasCoalesce = /(clearTimeout|setTimeout\(\s*\(\)\s*=>)/.test(src);
+    // A coalescer is any single-slot batching primitive: a timer, a microtask,
+    // or an explicit "already scheduled" flag. 4.7.0 only recognised setTimeout,
+    // so a CORRECT observer that batched through queueMicrotask (core/dom_watch.js
+    // does exactly that) was reported as an observer storm — a false positive that
+    // teaches people to ignore the audit.
+    const hasCoalesce = /(clearTimeout|setTimeout\(\s*\(\)\s*=>|queueMicrotask|requestAnimationFrame|_scheduled|scheduled\s*=\s*true)/.test(src);
     const observerCb = /new\s+MutationObserver\(\s*\(?[\w,\s]*\)?\s*=>/.test(src);
     if (hasWholeDoc && observerCb && !hasCoalesce) {
       add("observer-storm", "P2", file, 0,
         "subtree observer calls its scan directly from the callback with no coalescing — " +
         "a streamed reply turns every DOM mutation into a full-document scan",
         "batch through a 0ms timer and skip while document.hidden");
+    }
+    // A whole-document observer that never checks visibility keeps scanning a
+    // page nobody is looking at: background tabs are throttled, not stopped.
+    if (hasWholeDoc && observerCb && !/document\.hidden/.test(src)) {
+      add("observer-hidden", "P3", file, 0,
+        "whole-document observer never checks document.hidden — it keeps working in a background tab",
+        "return early while the document is hidden");
     }
   }
 }

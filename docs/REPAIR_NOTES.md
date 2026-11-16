@@ -1,4 +1,4 @@
-# 4.6.0 repair and validation notes (cumulative from 3.1–4.6)
+# 4.7.0 repair and validation notes (cumulative from 3.1–4.6)
 
 This implements repairs to the verified findings in the earlier partial audit. It is **not** a certification that every repository file is bug-free. Provider websites, Windows shell behavior and Roblox integration require real-machine testing beyond the isolated tests.
 

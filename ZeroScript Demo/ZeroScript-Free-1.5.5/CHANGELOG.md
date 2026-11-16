@@ -1,4 +1,64 @@
-> **ARCHIVED (historical — superseded by ZeroScript MAX 4.6.0).** This file records pre-4.3.0 history and
+# Changelog
+
+## 4.7.0
+
+Performance and correctness. No new product surface. Every claim here has a test
+or a command that reproduces it; see `docs/UPGRADE_AUDIT_4.7.0.md`.
+
+### Fixed
+- `TeamHub.leave()` stopped the entire team whenever **one** member left, including
+  a plain tab reload (which fires `tabs.onUpdated` with `status: "loading"`). It now
+  stops the team only when the last live member goes, and otherwise records which
+  role is missing so the run can be resumed.
+- `TeamHub.event_log(since)` reported `truncated: false` for exactly the case it
+  existed to report. A caller whose cursor sat one event behind the retained
+  buffer (`since == oldest - 1`) was told nothing was lost while that event had
+  been evicted. The boundary is now `since < oldest`, and `oldest` is returned.
+- `TeamHub.summary()` counted expired members, so a finished run left an empty
+  ghost team in the console forever.
+- `plan_wall.setPlan()` gave every unassigned role `AI_PROVIDERS[0]`; a fresh
+  3-role plan was three copies of the same model, which `peer_wall.auditPlan()`
+  rejects (so Start refused to run). Defaults are distinct, caller pins are
+  reserved before any pick, and a second pass heals unrequested duplicates.
+  Verified exhaustively: 140 multi-role states → 0 rejected.
+- `memory_wall.saveWall()` wrote the same object under two storage keys on every
+  save, doubling write traffic for a legacy fallback. It is mirrored once per
+  document now.
+- `probe_studio_cached()` never cached a *negative* answer: the guard tested
+  `val is not None`, and a down Studio returns `{"app": None}` — a non-`None`
+  dict. Every status burst re-ran the two-tool probe.
+- `_port_owner()` returned `None` on every non-Windows platform, although
+  `MacOS_START.command` ships a macOS launcher. Added a POSIX path
+  (`lsof` → `ss` → `ps`).
+- `audit-deep.js` reported a *correct* coalesced observer as an observer storm,
+  because it only recognised `setTimeout`. Microtask/flag coalescing counts now.
+- `background.flushStatus()` was `async` with no `await` of its own (the awaits
+  lived in a nested IIFE); flattened so the `finally` clears the flag on the
+  promise callers hold.
+- `config.json` was pinned to 4.6.0 and carried no port configuration, even
+  though the ports must match `core/config.js`.
+
+### Performance
+- `studio_full_tree`: 27 serial `inspect_instance` calls (4 s timeout each, 108 s
+  worst case) → 8-worker fan-out with a 12 s deadline. Measured in
+  `test-bridge.py`: 0.20 s vs 1.35 s serial at 0.05 s/call.
+- `probe_studio_cached`: single-flight. 8 concurrent callers → 1 upstream probe.
+- `_agent_temp_set`: was `min()` over the whole dict per insert (O(n)); now O(1)
+  FIFO eviction with a bounded 24-entry store.
+- `sync-bridge.sh` is now a thin wrapper over `scripts/sync_copies.py` (the old
+  version was a second implementation that silently destroyed hand-edited mirrors).
+
+### Tooling
+- `tools/verify.js` checks `version: "x.y.z"` object literals as well as
+  `VERSION = "x.y.z"`, and asserts `ZSDomWatch` is part of the boot contract.
+- `scripts/validate.py` names the failing step and shows per-step timings.
+- CI runs the full `npm run verify` and imports every Python module (an `ast.parse`
+  pass alone would not have caught a `VERSION` constant placed above
+  `from __future__`).
+
+---
+
+> **ARCHIVED (historical — superseded by ZeroScript MAX 4.7.0).** This file records pre-4.3.0 history and
 > contains legacy claims audited in `/ZeroScript-Audit.md` (§1–§12). Kept for historical reference only —
 > see `/README.md` and `/docs/TEAM_SETUP.md` for current 4.6.0 verified behavior.
 

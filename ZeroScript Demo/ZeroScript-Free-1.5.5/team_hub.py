@@ -463,8 +463,14 @@ class TeamHub:
             # Only LIVE members contribute team names: a dead member from a
             # finished run used to keep an empty ghost team in the summary
             # forever, which made team_console print phantom rows.
-            all_names = set(self.teams.keys()) | {m["team"] for m in self.members.values()
-                                                  if self.clock() - m["seen"] <= self.ttl}
+            # A stopped team with no live members is finished: keeping its name
+            # here made team_console print a phantom row for every run that had
+            # ever ended, because `self.teams` itself is never pruned. The run
+            # record stays available via status() until it expires; it just stops
+            # masquerading as a team.
+            all_names = {t for t, st in self.teams.items() if st.get("active")}
+            all_names |= {m["team"] for m in self.members.values()
+                          if self.clock() - m["seen"] <= self.ttl}
             if team:
                 all_names = {n for n in all_names if n == team}
             for tname in sorted(all_names):

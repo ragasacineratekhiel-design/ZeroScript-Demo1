@@ -1,7 +1,7 @@
-# ZeroScript MAX 4.6.0 — extension (load THIS folder)
+# ZeroScript MAX 4.7.0 — extension (load THIS folder)
 
 `chrome://extensions` → Developer mode → **Load unpacked** → select this folder
-(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.6.0**.
+(`zeroscript-extension-v2/`). The card must read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
 Remove any older `zeroscript-extension` card.
 
 ## What it is
@@ -11,7 +11,7 @@ A content script that drops a small control bar above the composer on 20 AI chat
 extracts the ZeroScript command, executes it through `background.js` → `bridge.py` → Roblox Studio MCP,
 and types the result back so the model can continue.
 
-## Verified behaviour in 4.6.0
+## Verified behaviour in 4.7.0
 
 | Area | Reality |
 |---|---|
@@ -64,7 +64,7 @@ another tab, and the one cross-tab action that *did* run (`execute_luau`) execut
 **tab index**, ignoring your role→AI mapping, and nothing stopped two roles landing on the **same**
 model, which makes the "review" step a model grading itself.
 
-4.6.0 adds `core/peer_wall.js`:
+4.7.0 adds `core/peer_wall.js`:
 
 | Property | How it is guaranteed |
 |---|---|

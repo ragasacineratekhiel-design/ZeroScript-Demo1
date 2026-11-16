@@ -1,4 +1,4 @@
-# ZeroScript bridge 4.6.0 (local MCP + Team Hub)
+# ZeroScript bridge 4.7.0 (local MCP + Team Hub)
 
 `bridge.py` connects the `zeroscript-extension-v2` browser extension to Roblox Studio's MCP server and hosts the authenticated multi-AI `TeamHub`. Launch it with `python start.py` (Windows/cross-platform) or `./MacOS_START.command` (macOS/Linux); both bind **only** to `127.0.0.1`:
 
@@ -11,7 +11,7 @@
 | `http://127.0.0.1:17614/api/team/*` | Team mailboxes (`register`, `start`, `ready`, `send`, `inbox`, `ack`, `stop`, `leave`, `summary`, `events?wait=1`) |
 | `http://127.0.0.1:17614/api/agent_temp` | Bounded TTL agent-hub scratch storage |
 | `http://127.0.0.1:17614/api/events` | Server-Sent Events stream (`status` + `team_event`) |
-| `http://127.0.0.1:17614/health` | Unauthenticated liveness + version (`4.6.0`) |
+| `http://127.0.0.1:17614/health` | Unauthenticated liveness + version (`4.7.0`) |
 
 ## Authentication & Role Safety
 

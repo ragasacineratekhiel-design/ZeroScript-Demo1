@@ -1,4 +1,4 @@
-# Integrated release 4.6.0 — existing MAX features + bridge teams
+# Integrated release 4.7.0 — existing MAX features + bridge teams
 
 This branch integrates main's execution modes, slash commands, static Luau sandbox, memory wall, plan wall, peer routing and fault instrumentation with authenticated bridge-team mailboxes, concurrent team startup, timestamped console, Python launcher and shared tab controls.
 
@@ -12,21 +12,46 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ## Existing MAX features (retained from main)
 
-# ZeroScript MAX 4.6.0 × Roblox Studio Agent
+# ZeroScript MAX 4.7.0 × Roblox Studio Agent
 
 A browser extension (Chrome/Edge, MV3) that lets **any AI chat window** drive **Roblox Studio** through a
 local Python bridge. You talk to the AI; the extension reads its replies, finds the commands, runs them
 against Studio through the MCP server, and feeds the result back so the model can keep going.
 
 > **Install — ONE extension only:** `chrome://extensions` → Developer mode → **Load unpacked** → select
-> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.6.0**.
+> **`zeroscript-extension-v2/`**. The card should read **ZeroScript MAX × Roblox Studio Agent 4.7.0**.
 > If you still have an old `zeroscript-extension` card, remove it.
 
 ---
 
-## What 4.6.0 fixes (Bridge Teams, Strict Role Boundaries & `/truth` Verification)
+## What 4.7.0 changes (speed, correctness, and one honest correction)
 
-| Problem | Root cause found | 4.6.0 fix |
+4.7.0 is a performance and correctness release. It adds no new product surface; it
+makes the existing surface cheap and removes bugs that only appeared under load or
+on a second tab. Every number below is reproducible with the command named next to
+it. None of them are estimates.
+
+| Problem in 4.6.0 | Root cause | 4.7.0 fix | How it was verified |
+|---|---|---|---|
+| Opening the Studio agent listed services one at a time | `studio_full_tree` issued 27 serial `inspect_instance` calls, each with a 4 s timeout — a 108 s worst case on a laggy Studio | Bounded 8-worker fan-out with a 12 s wall-clock deadline; `elapsed_ms` reported in the payload | `test-bridge.py` measures 0.20 s vs 1.35 s serial at 0.05 s/call, and asserts peak concurrency > 1 |
+| The popup re-probed Studio on every status burst | `probe_studio_cached` guarded on `val is not None`, but a *down* Studio returns `{"app": None}` — a non-`None` dict, so the guard never fired | Cache keyed on the timestamp, not the value; single-flight so 8 concurrent callers share one probe; a negative answer lives TTL/4 | `test-bridge.py`: 8 concurrent callers → 1 probe call; a negative answer is served from cache |
+| One tab navigating away killed the whole team run | `TeamHub.leave()` called `stop(team)` on **any** departure — and a tab *reload* also fires `tabs.onUpdated` | The team stops only when the last live member leaves; otherwise it records which role is missing | `tests/test_bridge_team.py` + `test-bridge.py` |
+| A `package.json`-style version went stale without the verifier noticing | `checkVersions` only matched `VERSION = "x.y.z"`, not `version: "x.y.z"` | Both forms are checked | `npm run verify` |
+| A plan could not be started from defaults | `setPlan` assigned `AI_PROVIDERS[0]` to every unassigned role, so a fresh 3-role plan was "all DeepSeek" — which `peer_wall.auditPlan()` correctly rejects | Distinct defaults, caller pins reserved before any pick, and a pass-2 healer for unrequested duplicates | Exhaustive sweep: 140 multi-role plan states × every pin × every provider → 0 rejected by the real auditor |
+| `memory_wall` wrote twice per save | The legacy `zsMemoryWall` mirror was rewritten on every `saveWall()` | Written once per document | `test-memory-wall.js` |
+
+**Correction on the 4.6.0 notes:** an earlier draft of this section claimed a
+26-assertion `test-bridge.py` and listed bridge changes that were not in the tree.
+They had been reverted by `scripts/sync_copies.py --write` (which, correctly,
+copies canonical → bundle) after being made in the wrong directory. They are now
+present and verified; the full account is in
+[`docs/UPGRADE_AUDIT_4.7.0.md`](docs/UPGRADE_AUDIT_4.7.0.md) §2.4.
+
+---
+
+## What 4.6.0 fixed (Bridge Teams, Strict Role Boundaries & `/truth` Verification)
+
+| Problem | Root cause found | 4.7.0 fix |
 |---|---|---|
 | **Bridge team tabs could not communicate** | (1) `PromptEnhancer.wrapTypeAndSend` and `MemoryWall.buildTrimmedContext` mutated prompts *after* `submitAndGetBase` computed `expectedPrefix`, failing `landed()` on `buildTeamPrompt` and `Bridge team inbox`; (2) `claude-connector.js` wrapped `Claude.typeAndSend` behind `main.js`'s back; (3) `P.conversationKey()` prefixed `location.hostname` (`"claude.ai/new"`), so landing-URL redirects to `/chat/<uuid>` triggered `team_leave` and `loop.abandonedNewChat`; (4) `pollTeam` dropped WS wakeups arriving mid-generation | Pre-compute enhancement/wall context before `expectedPrefix` and bypass both on team/internal turns; strip hostname in `isLandingKey()`; queue `pendingWake` and drain on `loop.end`; WS-first `team_*` + 0 ms `Condition` long-poll (`?wait=1`) + instant WS/SSE `team_event` push |
 | **Planner and Checker wrote/executed Luau instead of Coder** | Role boundaries were prompt-only suggestions; `handleWallTask` matched `/coder\|checker\|executor/` so Checker Tabs ran `execute_luau` directly | Enforced in **3 layers**: `core/config.js` + `core/main.js` (`runTool` & coder-only `handleWallTask`), `background.js` (`roleCheckTool` + `member_id` forwarding), and `bridge.py`/`team_hub.py` (`check_mutation` + `[ROLE-BLOCKED]` console events). Only `coder` mutates Studio; solo single-AI sessions remain unrestricted |
@@ -149,8 +174,8 @@ no module calls an export that does not exist · versions agree · all four test
 
 ## Troubleshooting
 
-- **Card says 4.6.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
-- **Bar missing?** Check the extension is 4.6.0, then look for `#zs-bar` in the inspector.
+- **Card says 4.7.0?** If not: remove the old card → Load unpacked → reload the AI page (F5).
+- **Bar missing?** Check the extension is 4.7.0, then look for `#zs-bar` in the inspector.
 - **"Extension context invalidated"** — the extension was reloaded/updated under an open tab; reload the page.
 - **Loop/Continuous not continuing?** Check the Exec selector and watch for the budget banner; press Start again to continue.
 - **Nothing executes** — popup health first: bridge offline → run `start.py`. Studio not connected → enable the MCP server in Studio.

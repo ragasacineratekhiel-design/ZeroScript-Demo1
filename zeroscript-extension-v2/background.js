@@ -123,8 +123,13 @@ async function flushStatus(){
   if (!statusDirty) return;
   statusDirty = false;
   statusSeq++;
-  statusInFlight = (async () => {
-    const s = { ...statusObj(), seq: statusSeq, sentAt: Date.now() };
+  // 4.7.0: this used to assign `statusInFlight` from a nested async IIFE, so the
+  // outer function was `async` with no `await` of its own — it returned the inner
+  // promise and `finally` had to clear the flag on the INNER promise. One flat
+  // function does the same job with one less promise, and the `finally` now
+  // clears the flag on the object callers actually receive.
+  statusInFlight = (async (seq) => {
+    const s = { ...statusObj(), seq, sentAt: Date.now() };
     // Extension pages (popup) first: they are the ones a user is watching.
     try { await chrome.runtime.sendMessage(s); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus.runtime", _e); }
     let tabs = [];
@@ -134,8 +139,9 @@ async function flushStatus(){
     // normal and used to produce one unhandled rejection per tab.
     for (const t of tabs) { chrome.tabs.sendMessage(t.id, s).catch(() => {}); }
     lastStatusSentAt = Date.now();
-  })().finally(() => { statusInFlight = null; if (statusDirty) scheduleStatus(); });
-  return statusInFlight;
+  })(statusSeq);
+  try { await statusInFlight; }
+  finally { statusInFlight = null; if (statusDirty) scheduleStatus(); }
 }
 function fetchToken(){
   if(tokenPromise) return tokenPromise;

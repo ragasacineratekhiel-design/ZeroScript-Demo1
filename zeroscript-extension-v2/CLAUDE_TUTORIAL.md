@@ -1,4 +1,4 @@
-# ZeroScript MAX 4.6.0 — Claude & Multi-AI Setup Guide
+# ZeroScript MAX 4.7.0 — Claude & Multi-AI Setup Guide
 
 This guide covers connecting **Claude (`claude.ai`)** — either solo or as part of a 3-AI **Planner / Coder / Checker** bridge team — to Roblox Studio.
 
@@ -9,7 +9,7 @@ This guide covers connecting **Claude (`claude.ai`)** — either solo or as part
    - **Windows:** `py -3 start.py` (opens the bridge + `ZeroScript Team Console`)
    - **macOS / Linux:** `./MacOS_START.command` (and optional `python3 team_console.py` in a second terminal)
 3. In **Roblox Studio**: open a place → **Assistant → Manage MCP Servers → Enable Studio as MCP Server**.
-4. In **Chrome / Edge**: open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2/` (card must read **4.6.0**).
+4. In **Chrome / Edge**: open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `zeroscript-extension-v2/` (card must read **4.7.0**).
 
 ## 2. Solo Agent Mode on Claude
 
@@ -18,7 +18,7 @@ This guide covers connecting **Claude (`claude.ai`)** — either solo or as part
    ● Standby. Start the agent, or just chat.  [▶ Start Roblox agent]
    ```
 2. Click **`▶ Start Roblox agent`** on a fresh chat. `ZSClaudeConnector` verifies both the bridge and Studio in parallel (`Promise.all` with short TTL cache) and boots the session.
-3. Even when Claude redirects from `/new` to `/chat/<uuid>` on the first turn, 4.6.0's hostname-aware `isLandingKey()` keeps the running loop and session pinned cleanly without dropping the first command.
+3. Even when Claude redirects from `/new` to `/chat/<uuid>` on the first turn, 4.7.0's hostname-aware `isLandingKey()` keeps the running loop and session pinned cleanly without dropping the first command.
 
 ## 3. Bridge Team Mode (Planner → Coder → Checker)
 
