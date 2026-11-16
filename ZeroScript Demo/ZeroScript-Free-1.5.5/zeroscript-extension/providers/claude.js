@@ -38,13 +38,13 @@ const ZSProvider = (() => {
     paused: /limit|quota|rate.?limit/i,
   };
 
-  // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
+  // ULTRA 4.6.0 timings for Claude — tighter, never drops, self-heal aware.
   const timings = {
-    GEN_IDLE_MS: 1100, // was 1200 ULTRA
+    GEN_IDLE_MS: 500, // was 1100 — faster idle detection ⇒ quicker tool dispatch
     REASON_IDLE_MS: 6000, // was 15000
-    WARMUP_MS: 32000, // was 35000
+    WARMUP_MS: 18000, // was 32000 — first token sooner
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 7000,
+    STABLE_MS: 6000, // was 7000 — frozen-text ⇒ done sooner
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -526,7 +526,7 @@ const ZSProvider = (() => {
     },true);
   }
 
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*\"|###\s*lua|###mcp_tool###/i;
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*\"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   const CMD_OPEN = /###\s*(?:LUA|MCP_TOOL)\s*###/i;
   const CMD_CLOSE = /###\s*END_(?:LUA|MCP_TOOL)\s*###/i;
   function findToolBlockSpot(item){
@@ -614,7 +614,7 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    version: "4.6.0",
+    version: "4.6.1",
     init({diag:d}={}){
       if(d) diag=d;
       try{document.documentElement.setAttribute("data-zs-claude-ver","4.6.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }

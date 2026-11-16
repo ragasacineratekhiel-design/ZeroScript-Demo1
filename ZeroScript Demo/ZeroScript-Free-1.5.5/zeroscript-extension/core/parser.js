@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript MAX v4.6.0 super-fast, fact-checked
+// core/parser.js - ZeroScript MAX v4.6.1 super-fast, fact-checked
 // Speed: LRU cache + fast-path early exits + precompiled regex + streaming-aware — 10ms TTL
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here
@@ -16,7 +16,7 @@ const ZSParse = (() => {
   function _cacheGet(k){ const e=_cache.get(k); if(!e) return null; if(Date.now()-e.ts>CACHE_TTL){ _cache.delete(k); return null;} return e.v; }
   function _cacheSet(k,v){ if(_cache.size>=CACHE_MAX){ const first=_cache.keys().next().value; _cache.delete(first);} _cache.set(k,{v,ts:Date.now()}); }
 
-  const VERSION = "4.6.0";
+  const VERSION = "4.6.1";
   const START_M = "###MCP_TOOL###";
   const END_M = "###END_MCP_TOOL###";
   const LUA_START_RE = /###\s*lua(?:\s*[:\-_ ]\s*(edit|client|server))?\s*(?:###|---)/i;
@@ -173,7 +173,7 @@ const ZSParse = (() => {
     const v=hasOpenToolBlock(r); _cacheSet(k,v); return v;
   }
   function parseToolCalls(r) {
-    // 4.6.0 fast path: most streamed turns contain no command at all.
+    // 4.6.1 fast path: most streamed turns contain no command at all.
     if (!r || (r.indexOf("command") < 0 && r.indexOf('"tool"') < 0 && r.indexOf('"name"') < 0 && r.indexOf("###") < 0 && r.indexOf("MCP_TOOL") < 0)) return [];
     const rLow = r.toLowerCase();
     const findEndM = (from) => {

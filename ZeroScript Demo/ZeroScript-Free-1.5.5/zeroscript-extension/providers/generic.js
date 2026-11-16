@@ -20,11 +20,11 @@ const ZSGenericProvider = (() => {
   function makeMeta(id, displayName) { return Object.freeze({ id: String(id), displayName: String(displayName) }); }
   function setMeta(id, displayName) { _id = id; _displayName = displayName; }
 
-  // ULTRA timings — slightly tighter for instant response
+  // ULTRA 4.6.0 timings — tighter for instant response on Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 1600, // was 2000
+    GEN_IDLE_MS: 500, // was 1600 — faster idle detection
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 20000, // was 40000
+    WARMUP_MS: 18000, // was 20000
     REASON_NOREPLY_MS: 90000,
     STABLE_MS: 3000, // was 7000
     RESPONSE_TIMEOUT_MS: 180000,

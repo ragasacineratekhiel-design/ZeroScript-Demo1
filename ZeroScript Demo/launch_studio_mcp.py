@@ -129,7 +129,7 @@ _FIND_TTL_MISS = 2.0   # re-check quickly if Studio is still installing/opening
 
 
 def find_studio_mcp() -> Optional[Path]:
-    # 4.6.0 speed: avoid repeating a full Versions/ directory walk on every
+    # 4.6.1 speed: avoid repeating a full Versions/ directory walk on every
     # watch tick, while invalidating immediately if ZS_STUDIO_MCP_PATH changes.
     now = time.monotonic()
     cur_override = os.environ.get(ENV_OVERRIDE)

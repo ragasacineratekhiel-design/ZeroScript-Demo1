@@ -85,12 +85,13 @@ const ZSProvider = (() => {
 
   // Completion-detection windows, calibrated on DeepSeek's DeepThink behaviour.
   // Exposed so the core's response watcher uses the provider's tuning.
+  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 800,        // answer phase: text unchanged this long ⇒ idle
-    REASON_IDLE_MS: 6000,   // reasoning stalls of several seconds are NORMAL
-    WARMUP_MS: 25000,        // empty turn container may precede the first token
-    REASON_NOREPLY_MS: 90000, // reasoning written but no answer yet: keep waiting
-    STABLE_MS: 9000,         // generating-flag stuck ON but text frozen → done
+    GEN_IDLE_MS: 500,        // was 800 — faster idle detection ⇒ quicker tool dispatch
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 18000,        // was 25000 — first token sooner
+    REASON_NOREPLY_MS: 90000,
+    STABLE_MS: 6000,         // was 9000 — frozen-text ⇒ done sooner
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -901,8 +902,12 @@ const ZSProvider = (() => {
   // insert the chip: {parent, ref} - or null if no tool block was found.
   function findToolBlockSpot(item, chip) {
     const P = ZSParse;
-    const hasStart = (t) => P.LUA_START_RE.test(t) || t.includes("###mcp_tool###");
-    const hasEnd = (t) => P.LUA_END_RE.test(t) || t.includes("###end_mcp_tool###") || t.includes("###end-mcp_tool###");
+    // Catch every command shape: ###LUA###/###END_LUA### (tolerant dashes/spaces),
+    // ###MCP_TOOL###/###END_MCP_TOOL###, JSON {"command":"..."} / {"tool":"..."},
+    // and DeepSeek DSML markup.
+    const CMD_RE = /###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?|"(?:command|tool)"\s*:\s*"/i;
+    const hasStart = (t) => P.LUA_START_RE.test(t) || CMD_RE.test(t);
+    const hasEnd = (t) => P.LUA_END_RE.test(t) || t.includes("###end_mcp_tool###") || t.includes("###end-mcp_tool###") || CMD_RE.test(t);
     const isJson = (t) => /\{\s*"(?:command|tool)"\s*:/.test(t);
     // DeepSeek's own DSML tool-call markup (see ZSParse.DSML_RE). It is NOT a
     // fenced block and NOT JSON - it renders as ordinary prose paragraphs - so
@@ -981,7 +986,7 @@ try {
 
   return {
     id: "deepseek",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "DeepSeek",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see

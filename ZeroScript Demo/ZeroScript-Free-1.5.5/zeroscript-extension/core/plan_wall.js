@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.6.1";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
@@ -134,7 +134,7 @@
   }
   // Public: send a task straight to another tab's executor (deterministic path,
   // does not rely on BC listeners existing on the far side).
-  // 4.6.0: only the coder executes wall tasks. Planner/checker tasks are
+  // 4.6.1: only the coder executes wall tasks. Planner/checker tasks are
   // recorded as context but never run Luau (checker used to execute too).
   function canMutate(role) { return role === "coder"; }
   function sendWallTask(from, to, task){

@@ -24,7 +24,7 @@
 //     runtime nil-derefs. No claim is made that it can.
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.6.1";
 
   // ── Tokenizer ────────────────────────────────────────────────────────────
   // Returns { tokens:[{type,value,line}], error } — never throws on bad input,
@@ -152,7 +152,7 @@
   // ── Block balance on tokens ──────────────────────────────────────────────
   const LOOP_HEADS = new Set(["for", "while"]);
 
-  // 4.6.0 speed: identical Luau blocks are analysed once (bounded cache).
+  // 4.6.1 speed: identical Luau blocks are analysed once (bounded cache).
   const _analyseCache = new Map();
   function analyseLuau(code) {
     const src = String(code || "");

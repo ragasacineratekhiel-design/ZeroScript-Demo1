@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/transport.js — ZeroScript MAX transport abstraction v4.6.0
+// core/transport.js — ZeroScript MAX transport abstraction v4.6.1
 // Content-script thin client to background.js (service worker) with read-only
 // cache/coalescing, explicit cache invalidation, WS-first team mailboxes, and
 // non-replayed tool/batch/verifyFact calls.
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.6.1";
   const ZS_Transport = (() => {
     const CACHE_MS = 600;
     const _cache = new Map();

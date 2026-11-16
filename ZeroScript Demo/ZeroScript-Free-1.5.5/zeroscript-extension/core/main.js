@@ -1840,6 +1840,12 @@
         }
         truncCount = 0;
 
+        // ── EXEC MODES — computed once per turn so both the text and tool
+        // branches can honor Single mode. (Problem 3 fix: previously `mode`
+        // only existed inside the `text` branch, so tool results in Single mode
+        // were fed back and the loop ran on = continuous behavior.)
+        const mode = execMode();
+
         if (res.kind === "parse_error") {
           // The command turn ended in a parse error - it NEVER ran. Paint its chip
           // as an error (owned, so the sweep won't repaint it the green ✓ "done" it
@@ -1885,7 +1891,8 @@
           // `continue` that relied on the model saying "I'm done". They now have
           // (a) an explicit iteration budget, (b) a progress watchdog, and (c) a
           // real planner→coder→checker handoff through the wall + agent hub.
-          const mode = execMode();
+          // `mode` was hoisted above this branch (see above) so tool results also
+          // honor Single mode.
           if (mode === "single") break;
           const txt = (res.text || "").toLowerCase();
           const saidDone = txt.length > 20
@@ -2107,6 +2114,13 @@
           const images = A.pendingImages;
           A.pendingImages = null;
           diag("images.consumed", { count: images ? images.length : 0 });
+          // ── Single mode: ONE tool execution only ────────────────────────
+          // Show/snapshot the result, then STOP. Do NOT feed it back into the
+          // model for another turn — that made Single behave like Continuous.
+          if (mode === "single") {
+            diag("exec.single.toolDone", { name: call.tool });
+            break;
+          }
           base = await submitAndGetBase(toSend, images);
         }
       }

@@ -88,12 +88,13 @@ const ZSProvider = (() => {
 
   // Kimi streams with a hard stop-class signal for the WHOLE generation, so
   // completion windows can be tight like Gemini.
+  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,        // was 800
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,        // was 25000
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,         // was 9000
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -723,7 +724,7 @@ const ZSProvider = (() => {
   // a command shape AND mark the assistant turn (.segment-assistant, which keeps
   // its identity) with .zs-cmd-mask so the overlay.css rule re-hides recreated
   // wrappers with zero flash. Also catch a stray bare inline command paragraph.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   // A block whose text STARTS with a command (optionally behind a ```json fence).
   // Used to hide a command Kimi rendered as a nested <div class="paragraph"> at
   // ANY length - the length-capped direct-children pass misses those on two
@@ -786,7 +787,7 @@ try {
 
   return {
     id: "kimi",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "Kimi",
     // Confirmed live: Kimi (K2.6) reads attached images - it correctly described
     // a test screenshot's content. So screen_capture is exposed here (see main.js

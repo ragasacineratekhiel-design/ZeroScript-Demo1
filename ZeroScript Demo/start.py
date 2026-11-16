@@ -18,7 +18,7 @@ import signal
 import traceback
 from datetime import datetime, timezone
 
-VERSION = "4.6.0"
+VERSION = "4.6.1"
 ROOT = Path(__file__).resolve().parent
 
 
