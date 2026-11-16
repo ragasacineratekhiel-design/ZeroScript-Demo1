@@ -222,7 +222,10 @@ Legend: **F** = feature added/changed · **S** = speed · **B** = bug fixed · *
 | `.gitignore` (×2) | | | ✔ | | `.ruff_cache/`, `.mypy_cache/`, `.venv*/`, `venv/`, `*.egg-info/`, `build/`, `dist/`, editor swap files |
 | `requirements-dev.txt` | | | | ✔ | version claim |
 | `tools/fixtures/*.js` | | | | ✔ | intentional-failure fixtures; verified the self-test still catches both shapes (a fixture nobody checks protects nothing) |
-| `test-{composer,safe,two-tabs,memory-wall}.js` | | | | ✔ | read and verified; they already assert the real contracts (14/36/17/23). No change was warranted — inventing assertions to inflate a diff is the churn this document argues against |
+| `test-{composer,safe,two-tabs}.js` | | | | ✔ | read and verified (14/36/17 assertions); they already assert the real contracts, so no change was warranted — inventing assertions to inflate a diff is the churn this document argues against |
+| `test-memory-wall.js` | ✔ | | ✔ | | 23 → **24**: the `_legacyMirrored` fix had no test that could see it (the existing check only asked whether the key existed). New check counts mirror writes across 5 saves; verified it fails at 5 against 4.6.0 behaviour and passes at ≤1 against the fix |
+| `.gitattributes` | | | | ✔ | read; already pins LF for `*.command`/`*.sh`/`*.py` — the CRLF failure mode it prevents is real. No change warranted |
+| `LICENSE` | | | | | GPL-3.0 text, unchanged by design |
 | `README.md`, `CHANGELOG.md`, `docs/*` | | | | ✔ | 4.7.0 sections with every number tied to its reproducing command; five historical statements corrected back to 4.6.0 after I wrongly bumped them (see §3.1) |
 | `ZeroScript Demo/**` (copies) | | | | | regenerated from canonical |
 
@@ -265,7 +268,7 @@ estimate and none is a projection.
 | `test-safe.js` | 36 |
 | `test-plan-wall.js` | 28 |
 | `test-bridge.py` | 26 (18 before this branch's repair — see §2.4) |
-| `test-memory-wall.js` | 23 |
+| `test-memory-wall.js` | 24 |
 | `test-two-tabs.js` | 17 |
 | `test-dom-watch.js` | 16 |
 | `test-composer.js` | 14 |
