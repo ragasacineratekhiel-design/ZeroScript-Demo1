@@ -36,7 +36,7 @@
 // reporter that can throw is worse than no reporter at all.
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
 
   const MAX_FAULTS = 40;        // ring size; bounded on purpose
   const MAX_SITES = 512;        // distinct expected() sites we track (392 call sites today)
@@ -68,15 +68,44 @@
       else {
         try { msg = String(e); } catch { msg = "unprintable error"; }
       }
-      return String(msg)
-        .replace(/[A-Za-z0-9_-]{32,}/g, "<redacted>")  // tokens / ids
-        .replace(/([?&](?:token|key|auth|sig)=)[^&\s]*/gi, "$1<redacted>")
-        .replace(/\s+/g, " ")
-        .slice(0, 240);
+      return redact(msg);
     } catch {
       return "unrepresentable error";
     }
   };
+
+  // ── redaction: ONE pass, and only when there is something to redact ──────
+  // 4.6.0 ran three global replace()es per recorded fault, each rebuilding the
+  // string even when the message was a plain "Cannot read properties of null".
+  // The scan below decides in a single forward walk whether any suspicious run
+  // exists at all (a 32+ char token-ish blob or a ?token= param) and returns
+  // the input untouched otherwise, which is the common case.
+  function redact(input) {
+    const str = typeof input === "string" ? input : String(input);
+    let needsWork = false;
+    let run = 0;
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      const wordish = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 45;
+      if (wordish) {
+        if (++run >= 32) { needsWork = true; break; }
+      } else {
+        run = 0;
+        if (c === 63 || c === 38) { // '?' or '&' — possible query secret
+          if (/([?&](?:token|key|auth|sig)=)/i.test(str.slice(i, i + 12))) { needsWork = true; break; }
+        }
+      }
+    }
+    if (!needsWork) {
+      // collapse whitespace only if there is any
+      return /\s{2,}|[\n\t]/.test(str) ? str.replace(/\s+/g, " ").slice(0, 240) : str.slice(0, 240);
+    }
+    return str
+      .replace(/[A-Za-z0-9_-]{32,}/g, "<redacted>")
+      .replace(/([?&](?:token|key|auth|sig)=)[^&\s]*/gi, "$1<redacted>")
+      .replace(/\s+/g, " ")
+      .slice(0, 240);
+  }
 
   // ── the real fault recorder ─────────────────────────────────────────────
   const record = (site, e, level) => {
@@ -265,13 +294,95 @@
     try { faults.length = 0; expectedSites.clear(); } catch { /* ignore */ }
   };
 
+  // ── compact(): the ≤120-byte view the popup and status broadcast need ────
+  // background.js sends `safe` in EVERY status broadcast; sending the full
+  // stats() object (with `worst[]` and `recent[]`) for a healthy page was pure
+  // bandwidth. compact() keeps only the counters that answer "is it broken?".
+  const compact = () => {
+    try {
+      return { v: VERSION, f: faults.length, r: reportCount, s: expectedSites.size };
+    } catch {
+      return { v: VERSION, f: 0, r: 0, s: 0 };
+    }
+  };
+
+  // ── mutation clock: ONE document observer for the whole extension ────────
+  // Providers need to know "has the DOM changed since my last read?" so they can
+  // reuse a DOM-derived value instead of re-walking the tree on every watcher
+  // tick. 4.7.0 first shipped one MutationObserver PER PROVIDER for this, which
+  // test-observers.js correctly flagged as a leak: nothing released them on
+  // pagehide. They now share a single observer owned here, with an explicit
+  // release() that every teardown path (and the test) can call.
+  //
+  // Consumers call safe.gen() for a cheap integer that only changes when the
+  // document mutated. If the clock is unavailable (no window, or after
+  // release), gen() returns a value that never equals a previous call, so a
+  // caller's cache always misses and behaviour falls back to "always re-read".
+  let _gen = 1;
+  let _genObs = null;
+  let _genDead = false;
+  let _genPending = false;
+
+  function installMutationClock() {
+    if (_genObs || _genDead || typeof MutationObserver === "undefined") return _genObs;
+    try {
+      const target = (typeof document !== "undefined" && (document.documentElement || document.body)) || null;
+      if (!target) return null;
+      // Coalesced on purpose (audit: "observer-storm"): a streaming reply emits
+      // hundreds of mutation records per second. Bumping the generation on every
+      // record invalidated every consumer cache per token; batching on a 0 ms
+      // timer collapses a burst into ONE new generation while a hidden tab is
+      // skipped entirely (nothing can change visually there).
+      _genObs = new MutationObserver(() => {
+        if (_genPending) return;
+        if (typeof document !== "undefined" && document && document.hidden) return;
+        _genPending = true;
+        setTimeout(() => { _genPending = false; _gen = (_gen + 1) | 0; }, 0);
+      });
+      _genObs.observe(target, { childList: true, subtree: true, characterData: true });
+      try {
+        if (typeof window !== "undefined" && window.addEventListener) {
+          window.addEventListener("pagehide", releaseMutationClock, { once: true });
+        }
+      } catch { /* no window: nothing to release for */ }
+    } catch (e) {
+      seenFail("safe.mutationClock", null, e);
+      _genObs = null;
+    }
+    return _genObs;
+  }
+
+  function releaseMutationClock() {
+    try { if (_genObs) _genObs.disconnect(); } catch { /* already disconnected */ }
+    _genObs = null;
+    _genDead = true;
+  }
+
+  // A released clock must never look "unchanged" to a consumer.
+  const gen = () => (_genObs ? _gen : (_gen = (_gen + 1) | 0));
+  const onMutation = (fn) => {
+    installMutationClock();
+    if (typeof fn !== "function") return () => {};
+    let last = gen();
+    const iv = setInterval(() => {
+      const g = gen();
+      if (g !== last) { last = g; try { fn(g); } catch (e) { seenFail("safe.onMutation", null, e); } }
+    }, 16);
+    return () => clearInterval(iv);
+  };
+
   const safe = {
     version: VERSION,
+    gen, onMutation, installMutationClock, releaseMutationClock,
     expected, wrap, wrapAsync, guard, seen, retry,
-    record, describe, report, stats, clear,
+    record, describe, report, stats, clear, compact, redact,
     // A probe that must never change behaviour: run it, ignore the outcome.
     probe: (site, fn) => { expected(site, fn); },
   };
+
+  // Install lazily-safe: on a page with no document (Node tests) this is a no-op
+  // and gen() degrades to "always different", which is the safe direction.
+  installMutationClock();
 
   // ── attach everywhere this script can run ──────────────────────────────
   try { if (typeof window !== "undefined") window.ZSSafe = safe; } catch { /* no window */ }

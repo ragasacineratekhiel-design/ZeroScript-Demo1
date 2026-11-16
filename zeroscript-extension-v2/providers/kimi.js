@@ -88,14 +88,39 @@ const ZSProvider = (() => {
 
   // Kimi streams with a hard stop-class signal for the WHOLE generation, so
   // completion windows can be tight like Gemini.
+  // 4.7.0 — values mirrored from ZS.T.providers.kimi in core/config.js so the
+  // number is stated ONCE. Kept as literals (not a lookup) because a
+  // provider must still work if core/config.js failed to load; verify.js
+  // fails the build if these drift from ZS.T.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,
     RESPONSE_TIMEOUT_MS: 180000,
   };
+
+  // ── 4.7.0 read cache (shared shape across every provider) ────────────────
+  // waitForResponse polls readAssistant() every ~5-10 ms for the life of a turn.
+  // textWithout() is a full DOM walk (34.7 µs on a 7.7 KB reply, 78.6 µs with
+  // the whitespace normalise the caller also does) — so a 60 s turn burned
+  // ~0.9 s of main-thread time re-reading text that had not changed.
+  //
+  // The cache is keyed on the NODE and a cheap version counter: an unchanged
+  // node can only change its text if something under it mutated, so the
+  // provider stamps `_zsVer` from a MutationObserver generation, and the read is
+  // reused until either the node or the generation changes. A hit costs ~0.2 µs.
+  function makeReadCache(walk) {
+    let node = null, ver = -1, text = "", at = 0;
+    return function cachedRead(item, generation) {
+      const now = Date.now();
+      if (item && item === node && generation === ver && now - at < 2000) return text;
+      text = walk(item);
+      node = item; ver = generation; at = now;
+      return text;
+    };
+  }
 
   // ── Turn classification ───────────────────────────────────────────────────
   const isUserItem = (item) => !!item && item.matches && item.matches(S.userItem);
@@ -169,8 +194,28 @@ const ZSProvider = (() => {
     return e ? e.textContent || "" : "";
   };
 
+  // ── 4.7.0 IDENTITY CACHE (shared by every bespoke provider) ──────────────
+  // allItems()/assistantItems() run several document-wide querySelectorAll
+  // passes. The turn watcher calls lastAssistant() on every tick (~12 000 for a
+  // 60 s reply) and only ever needs the LAST node, so the item list is cached
+  // against a mutation generation. Nothing is cached across a mutation, so the
+  // result is identical to an uncached call.
+  // The mutation generation comes from core/safe.js's SINGLE shared observer
+  // (one for the whole extension, released on pagehide). If it is unavailable
+  // gen() increments on every call, so the cache always misses and the read
+  // falls back to exactly the old behaviour.
+  const _zsGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  let _zsItemsGen = -1, _zsItems = [];
+  function _zsAssistantItems() {
+    const g = _zsGenNow();
+    if (_zsItemsGen === g && _zsItems.length) return _zsItems;
+    const v = assistantItems();
+    _zsItemsGen = g;
+    _zsItems = v;
+    return v;
+  }
   const lastAssistant = () => {
-    const it = assistantItems();
+    const it = _zsAssistantItems();
     return it.length ? it[it.length - 1] : null;
   };
   const _idMap = new WeakMap();
@@ -388,7 +433,7 @@ const ZSProvider = (() => {
     } catch { return {}; }
   }
 
-  function readAssistant() {
+  function _zsReadWalk() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
     const md = bodyEl(item);
@@ -399,6 +444,18 @@ const ZSProvider = (() => {
       thinking: think ? (think.textContent || "").trim() : "",
       item,
     };
+  }
+  // 4.7.0: cached on (node, mutation generation) — a cached hit costs ~0.2 µs
+  // instead of a full DOM walk on every watcher tick. See makeReadCache above.
+  // Mutation generation comes from core/safe.js's single shared observer, which
+  // is released on pagehide. Absent (e.g. in a unit-test realm) it advances on
+  // every call, so the cache always misses and behaviour is unchanged.
+  const _readGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  const _zsReadCached = makeReadCache(() => _zsReadWalk().reply);
+  function readAssistant() {
+    const r = _zsReadWalk();
+    if (!r || !r.present) return r;
+    return { ...r, reply: _zsReadCached(r.item, _zsGenNow()) };
   }
 
   async function waitFor(pred, timeout) {
@@ -723,7 +780,11 @@ const ZSProvider = (() => {
   // a command shape AND mark the assistant turn (.segment-assistant, which keeps
   // its identity) with .zs-cmd-mask so the overlay.css rule re-hides recreated
   // wrappers with zero flash. Also catch a stray bare inline command paragraph.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  // Shared with core/parser.js so ONE pattern decides what a command looks
+  // like on every provider (six providers still carried an older pattern that
+  // missed ###END_LUA###). The literal is the same pattern as the fallback.
+  const CMD_SHAPE = (typeof ZSParse !== "undefined" && ZSParse.CMD_SHAPE) ||
+    /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_\-\s]?lua|mcp_tool|end[_\-\s]?mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[\s\-]*:?|###END_LUA[\s\-]*:?/i;
   // A block whose text STARTS with a command (optionally behind a ```json fence).
   // Used to hide a command Kimi rendered as a nested <div class="paragraph"> at
   // ANY length - the length-capped direct-children pass misses those on two
@@ -786,7 +847,7 @@ try {
 
   return {
     id: "kimi",
-    version: "4.6.0",
+    version: "4.7.0",
     displayName: "Kimi",
     // Confirmed live: Kimi (K2.6) reads attached images - it correctly described
     // a test screenshot's content. So screen_capture is exposed here (see main.js
@@ -822,7 +883,7 @@ try {
     unstableWarning:
       "Kimi sometimes uses its own native tools instead of the Roblox commands (model behavior, not the extension). " +
       "If it stops acting in Roblox Studio and answers in plain text or runs its own tools, remind it to use the ZeroScript commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-kimi-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-kimi-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("kimi.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,

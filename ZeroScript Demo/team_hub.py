@@ -17,7 +17,6 @@ it does not prove that the model read or understood the message.
   every call — faster under heartbeat load.
 - inbox() reports total pending so callers know when more is queued.
 """
-__version__ = "4.6.1"
 import collections
 import datetime
 import secrets

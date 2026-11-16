@@ -120,6 +120,7 @@ function checkManifest() {
     "core/config.js": ["ZS"],
     "core/parser.js": ["ZSParse"],
     "core/sandbox.js": ["ZSSandbox"],
+    "core/dom_watch.js": ["ZSDomWatch"],
     "core/memory_wall.js": ["ZSMemoryWall"],
     "core/plan_wall.js": ["ZSPlanWall"],
     "core/agent_hub.js": ["ZSAgentHub"],
@@ -361,6 +362,7 @@ function checkApiMembers() {
   console.log("\n[4] cross-module API contract");
   const mods = {
     ZSSandbox: { rel: "core/sandbox.js", exports: ["ZSSandbox"] },
+    ZSDomWatch: { rel: "core/dom_watch.js", exports: ["ZSDomWatch"] },
     ZSAgentHub: { rel: "core/agent_hub.js", exports: ["API"] },
     ZSPlanWall: { rel: "core/plan_wall.js", exports: ["API"] },
     ZSMemoryWall: { rel: "core/memory_wall.js", exports: ["MemoryWall"] },
@@ -761,7 +763,7 @@ function checkVersions(mf) {
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js", "test-dom-watch.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);

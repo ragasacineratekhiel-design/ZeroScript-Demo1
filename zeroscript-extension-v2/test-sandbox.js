@@ -96,8 +96,67 @@ check("js: valid parses", S.checkJS("const a = 1;").ok);
 check("js: invalid rejected", !S.checkJS("const a = ;").ok);
 
 
+// ── 4.7.0 grammar gaps (each one was a FALSE POSITIVE in 4.7.0-dev) ────────
+// Every case below was rejected by the analyser before this batch, and main.js
+// blocks execute_luau on a rejection — i.e. each one silently threw away
+// correct AI-written code before it ever reached Studio.
+const GRAMMAR_4_7 = {
+  "multi-name local with a value list (`local a, b, c = 1, 2, 3`)":
+    "local a, b, c = 1, 2, 3\nprint(a, b, c)",
+  "multiple assignment statement (`a, b = b, a`)":
+    "local a, b = 1, 2\na, b = b, a\nreturn a, b",
+  "multiple assignment to fields (`t.x, t.y = 1, 2`)":
+    "local t = {}\nt.x, t.y = 1, 2\nreturn t",
+  "optional type suffix (`local x: number? = nil`)":
+    "local x: number? = nil\nreturn x",
+  "optional return type (`function f(): T?`)":
+    "local function f(): number?\n  return nil\nend\nreturn f",
+  "generic function (`local function f<T>(l: {T}): T?`)":
+    "local function first<T>(list: {T}): T?\n  return list[1]\nend\nreturn first",
+  "dictionary type (`{[string]: number}`)":
+    "local t: {[string]: number} = {}\nreturn t",
+  "MIXED dictionary + field type (`{[K]: V, name: T}`)":
+    "local t: {[string]: number, count: number} = {}\nreturn t",
+  "array type (`{number}`) and empty (`{}`)":
+    "local a: {number} = {}\nlocal b: {} = {}\nreturn a, b",
+  "floor-divide assignment (`n //= 4`)":
+    "local n = 8\nn //= 4\nreturn n",
+  "concat assignment (`s ..= 'b'`)":
+    "local s = 'a'\ns ..= 'b'\nreturn s",
+  "compound assignments on one variable":
+    "local n = 1\nn += 1\nn -= 2\nn *= 3\nn %= 5\nn ^= 2\nreturn n",
+  "varargs pass-through (`print(...)`)":
+    "local function f(...)\n  print(...)\nend\nf(1, 2)",
+  "type assertion (`x :: number`)":
+    "local x: number = 5\nreturn (x :: number) + 1",
+  "if-expression with elseif":
+    "local n = 0\nlocal s = if n > 0 then 'pos' elseif n < 0 then 'neg' else 'zero'\nreturn s",
+  "keyword as a table key (`{ end1 = 4 }` plus `[expr]` keys)":
+    "local d = {[1] = 'a', ['k v'] = true, end1 = 4}\nreturn d",
+};
+for (const [label, src] of Object.entries(GRAMMAR_4_7)) {
+  const r = S.analyseLuau(src);
+  check("4.7.0 accepts " + label, r.ok, r.error ? r.error + " @" + r.line : "");
+}
+
+// The reject direction must not have loosened: these are still broken.
+const STILL_INVALID_4_7 = {
+  "unclosed function": "local function f()\n  print(1)\n",
+  "missing then": "if true\n  print(1)\nend",
+  "unclosed string": 'local s = "abc\nprint(s)',
+  "unclosed table": "local t = {\n  a = 1,\n",
+  "unclosed paren": "local a = (1 + 2\nprint(a)",
+  "stray end": "print(1)\nend\nprint(2)",
+  "bad numeric for": "for i = 1 do print(i) end",
+  "bad do block": "do\n  print(1)\nprint(2)",
+};
+for (const [label, src] of Object.entries(STILL_INVALID_4_7)) {
+  const r = S.analyseLuau(src);
+  check("4.7.0 still rejects " + label, !r.ok);
+}
+
 // ── 4.6.0 version + memoized static analysis immutability ──────────────────
-check("sandbox version is 4.6.0", S.version === "4.6.0", S.version);
+check("sandbox version is 4.7.0", S.version === "4.7.0", S.version);
 const c1 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
 c1.warnings.push("mutated-by-caller");
 const c2 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");

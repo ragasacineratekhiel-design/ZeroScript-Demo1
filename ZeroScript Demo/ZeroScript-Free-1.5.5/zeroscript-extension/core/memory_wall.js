@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.6.1";
+  const WALL_VERSION = "4.7.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
@@ -245,7 +245,7 @@ _One-line what this place is_
     },
     buildTrimmedContext(query, budget=600){
       if(!query || !String(query).trim()) return this.buildContext();
-      // 4.6.1 speed: identical query+budget within 2s reuses the last result.
+      // 4.6.0 speed: identical query+budget within 2s reuses the last result.
       const _qk = String(query).slice(0, 200) + "|" + budget;
       if (_ctxCache && _ctxQuery === _qk && Date.now() - _ctxAt < 2000) return _ctxCache;
       const trimmedWall = this.trimContextFor(query, budget);

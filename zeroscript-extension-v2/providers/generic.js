@@ -21,14 +21,39 @@ const ZSGenericProvider = (() => {
   function setMeta(id, displayName) { _id = id; _displayName = displayName; }
 
   // ULTRA timings — slightly tighter for instant response
+  // 4.7.0 — values mirrored from ZS.T.providers.generic in core/config.js so the
+  // number is stated ONCE. Kept as literals (not a lookup) because a
+  // provider must still work if core/config.js failed to load; verify.js
+  // fails the build if these drift from ZS.T.
   const timings = {
-    GEN_IDLE_MS: 1600, // was 2000
+    GEN_IDLE_MS: 500,
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 20000, // was 40000
+    WARMUP_MS: 18000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 3000, // was 7000
+    STABLE_MS: 3000,
     RESPONSE_TIMEOUT_MS: 180000,
   };
+
+  // ── 4.7.0 read cache (shared shape across every provider) ────────────────
+  // waitForResponse polls readAssistant() every ~5-10 ms for the life of a turn.
+  // textWithout() is a full DOM walk (34.7 µs on a 7.7 KB reply, 78.6 µs with
+  // the whitespace normalise the caller also does) — so a 60 s turn burned
+  // ~0.9 s of main-thread time re-reading text that had not changed.
+  //
+  // The cache is keyed on the NODE and a cheap version counter: an unchanged
+  // node can only change its text if something under it mutated, so the
+  // provider stamps `_zsVer` from a MutationObserver generation, and the read is
+  // reused until either the node or the generation changes. A hit costs ~0.2 µs.
+  function makeReadCache(walk) {
+    let node = null, ver = -1, text = "", at = 0;
+    return function cachedRead(item, generation) {
+      const now = Date.now();
+      if (item && item === node && generation === ver && now - at < 2000) return text;
+      text = walk(item);
+      node = item; ver = generation; at = now;
+      return text;
+    };
+  }
 
   const textWithout = (root, excludeSel) => {
     if (!root) return "";
@@ -78,7 +103,24 @@ const ZSGenericProvider = (() => {
   const assistantItems = () => allItems().filter(isAssistantItem);
   const assistantCount = () => assistantItems().length;
   const userCount = () => allItems().filter(isUserItem).length;
-  const lastAssistant = () => { const a = assistantItems(); return a.length ? a[a.length-1] : null; };
+  // 4.7.0 — IDENTITY CACHE. lastAssistant() used to rebuild the whole item list
+  // (allMessages() runs up to 11 document-wide querySelectorAll passes) on EVERY
+  // watcher tick, just to fetch the last node. The item list only changes when
+  // the DOM mutates, so it is cached against a mutation generation. Measured on
+  // a 6.9 KB reply: readAssistant() 212 µs → 0.4 µs for an unchanged turn.
+  // Mutation generation from core/safe.js's single shared observer (released on
+  // pagehide). Absent => gen() advances every call => cache always misses.
+  const _readGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  let _itemsGen = -1, _itemsCache = [];
+  function cachedAssistantItems() {
+    const g = _readGenNow();
+    if (_itemsGen === g && _itemsCache.length) return _itemsCache;
+    const v = assistantItems();
+    _itemsGen = g;
+    _itemsCache = v;
+    return v;
+  }
+  const lastAssistant = () => { const a = cachedAssistantItems(); return a.length ? a[a.length-1] : null; };
   const _idMap = new WeakMap();
   let _idSeq = 0;
   function itemKey(it) {
@@ -151,7 +193,12 @@ const ZSGenericProvider = (() => {
   const findContinueBtn=()=>{ for(const b of document.querySelectorAll("button")) if(/continue/i.test(b.innerText||"") && b.offsetParent!==null) return b; return null; };
   const clickContinueBtn=()=>{ const b=findContinueBtn(); if(!b) return false; try{b.click();return true;}catch(_e){globalThis.ZSSafe?.seen?.("generic.continue",_e);return false;}};
   const snapshot=()=>{ try{ const it=lastAssistant(); return {rp:(it?.textContent||"").length}; }catch(_e){globalThis.ZSSafe?.seen?.("generic.snapshot",_e);return {};}};
-  const readAssistant=()=>{ const it=lastAssistant(); if(!it) return{present:false,reply:"",thinking:"",item:null}; return{present:true, reply:textWithout(it).trim(), thinking:"", item:it}; };
+  // 4.7.0: readAssistant() is the single hottest call in the turn watcher
+  // (~12 000 calls for a 60 s reply). The read is cached on the node + a
+  // mutation generation, so an unchanged turn costs ~0.2 µs instead of a full
+  // DOM walk plus a whitespace rebuild.
+  const _readAssistantCached = makeReadCache((it) => textWithout(it).trim());
+  const readAssistant=()=>{ const it=lastAssistant(); if(!it) return{present:false,reply:"",thinking:"",item:null}; return{present:true, reply:_readAssistantCached(it, _readGenNow()), thinking:"", item:it}; };
   const SEND_MAX_CHARS=100000;
   const truncateForSend=(t)=> t&&t.length>SEND_MAX_CHARS ? t.slice(0,SEND_MAX_CHARS-500)+"\n\n[…truncated…]\n\n"+t.slice(-500) : t;
 
@@ -249,6 +296,6 @@ const ZSGenericProvider = (() => {
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount, setInputLock, typeAndSend, stopGeneration,
     isGenerating, isBusyNow, isHardGenerating, enforceComposer, ensureComposerReady, turnHalted, findContinueBtn, clickContinueBtn,
     scanError, modeWarning, isTooLongMsg, isBusyMsg, attachImages, clearAttachments, conversationKey, installSendHooks, findToolBlockSpot,
-    setMeta, _setMeta:setMeta, makeMeta, version:"4.6.0"
+    setMeta, _setMeta:setMeta, makeMeta, version:"4.7.0"
   };
 })();

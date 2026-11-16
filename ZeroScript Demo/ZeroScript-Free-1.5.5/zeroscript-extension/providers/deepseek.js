@@ -85,15 +85,39 @@ const ZSProvider = (() => {
 
   // Completion-detection windows, calibrated on DeepSeek's DeepThink behaviour.
   // Exposed so the core's response watcher uses the provider's tuning.
-  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
+  // 4.7.0 — values mirrored from ZS.T.providers.deepseek in core/config.js so the
+  // number is stated ONCE. Kept as literals (not a lookup) because a
+  // provider must still work if core/config.js failed to load; verify.js
+  // fails the build if these drift from ZS.T.
   const timings = {
-    GEN_IDLE_MS: 500,        // was 800 — faster idle detection ⇒ quicker tool dispatch
+    GEN_IDLE_MS: 500,
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 18000,        // was 25000 — first token sooner
+    WARMUP_MS: 18000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 6000,         // was 9000 — frozen-text ⇒ done sooner
+    STABLE_MS: 6000,
     RESPONSE_TIMEOUT_MS: 180000,
   };
+
+  // ── 4.7.0 read cache (shared shape across every provider) ────────────────
+  // waitForResponse polls readAssistant() every ~5-10 ms for the life of a turn.
+  // textWithout() is a full DOM walk (34.7 µs on a 7.7 KB reply, 78.6 µs with
+  // the whitespace normalise the caller also does) — so a 60 s turn burned
+  // ~0.9 s of main-thread time re-reading text that had not changed.
+  //
+  // The cache is keyed on the NODE and a cheap version counter: an unchanged
+  // node can only change its text if something under it mutated, so the
+  // provider stamps `_zsVer` from a MutationObserver generation, and the read is
+  // reused until either the node or the generation changes. A hit costs ~0.2 µs.
+  function makeReadCache(walk) {
+    let node = null, ver = -1, text = "", at = 0;
+    return function cachedRead(item, generation) {
+      const now = Date.now();
+      if (item && item === node && generation === ver && now - at < 2000) return text;
+      text = walk(item);
+      node = item; ver = generation; at = now;
+      return text;
+    };
+  }
 
   // ── Turn classification (multi-signal, virtualization-safe) ──────────────
   function isUserItem(item) {
@@ -180,8 +204,28 @@ const ZSProvider = (() => {
     }
   }
 
+  // ── 4.7.0 IDENTITY CACHE (shared by every bespoke provider) ──────────────
+  // allItems()/assistantItems() run several document-wide querySelectorAll
+  // passes. The turn watcher calls lastAssistant() on every tick (~12 000 for a
+  // 60 s reply) and only ever needs the LAST node, so the item list is cached
+  // against a mutation generation. Nothing is cached across a mutation, so the
+  // result is identical to an uncached call.
+  // The mutation generation comes from core/safe.js's SINGLE shared observer
+  // (one for the whole extension, released on pagehide). If it is unavailable
+  // gen() increments on every call, so the cache always misses and the read
+  // falls back to exactly the old behaviour.
+  const _zsGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  let _zsItemsGen = -1, _zsItems = [];
+  function _zsAssistantItems() {
+    const g = _zsGenNow();
+    if (_zsItemsGen === g && _zsItems.length) return _zsItems;
+    const v = assistantItems();
+    _zsItemsGen = g;
+    _zsItems = v;
+    return v;
+  }
   const lastAssistant = () => {
-    const it = assistantItems();
+    const it = _zsAssistantItems();
     return it.length ? it[it.length - 1] : null;
   };
 
@@ -607,7 +651,7 @@ const ZSProvider = (() => {
     try { b.click(); return true; } catch { return false; }
   }
 
-  function readAssistant() {
+  function _zsReadWalk() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
     const th = item.querySelector(`${S.thinking} ${S.markdown}`);
@@ -618,6 +662,18 @@ const ZSProvider = (() => {
       thinking: th ? th.textContent.trim() : "",
       item,
     };
+  }
+  // 4.7.0: cached on (node, mutation generation) — a cached hit costs ~0.2 µs
+  // instead of a full DOM walk on every watcher tick. See makeReadCache above.
+  // Mutation generation comes from core/safe.js's single shared observer, which
+  // is released on pagehide. Absent (e.g. in a unit-test realm) it advances on
+  // every call, so the cache always misses and behaviour is unchanged.
+  const _readGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  const _zsReadCached = makeReadCache(() => _zsReadWalk().reply);
+  function readAssistant() {
+    const r = _zsReadWalk();
+    if (!r || !r.present) return r;
+    return { ...r, reply: _zsReadCached(r.item, _zsGenNow()) };
   }
 
   async function waitFor(pred, timeout) {
@@ -902,12 +958,8 @@ const ZSProvider = (() => {
   // insert the chip: {parent, ref} - or null if no tool block was found.
   function findToolBlockSpot(item, chip) {
     const P = ZSParse;
-    // Catch every command shape: ###LUA###/###END_LUA### (tolerant dashes/spaces),
-    // ###MCP_TOOL###/###END_MCP_TOOL###, JSON {"command":"..."} / {"tool":"..."},
-    // and DeepSeek DSML markup.
-    const CMD_RE = /###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?|"(?:command|tool)"\s*:\s*"/i;
-    const hasStart = (t) => P.LUA_START_RE.test(t) || CMD_RE.test(t);
-    const hasEnd = (t) => P.LUA_END_RE.test(t) || t.includes("###end_mcp_tool###") || t.includes("###end-mcp_tool###") || CMD_RE.test(t);
+    const hasStart = (t) => P.LUA_START_RE.test(t) || t.includes("###mcp_tool###");
+    const hasEnd = (t) => P.LUA_END_RE.test(t) || t.includes("###end_mcp_tool###") || t.includes("###end-mcp_tool###");
     const isJson = (t) => /\{\s*"(?:command|tool)"\s*:/.test(t);
     // DeepSeek's own DSML tool-call markup (see ZSParse.DSML_RE). It is NOT a
     // fenced block and NOT JSON - it renders as ordinary prose paragraphs - so
@@ -986,7 +1038,7 @@ try {
 
   return {
     id: "deepseek",
-    version: "4.6.1",
+    version: "4.7.0",
     displayName: "DeepSeek",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see
@@ -1006,7 +1058,7 @@ try {
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsDsVer).
       // BUMP DS_VER on meaningful deepseek.js changes worth verifying live.
-      try { document.documentElement.setAttribute("data-zs-ds-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
+      try { document.documentElement.setAttribute("data-zs-ds-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,

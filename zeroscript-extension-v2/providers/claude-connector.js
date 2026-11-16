@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// providers/claude-connector.js — Claude-specific handshake + wall/enhancer bootstrap v4.6.0
+// providers/claude-connector.js — Claude-specific handshake + wall/enhancer bootstrap v4.7.0
 // Loaded BEFORE providers/claude.js on claude.ai via manifest content_scripts.
 // Parallelizes bridge status + tool prefetch with a 1.5s warm handshake cache,
 // and preserves raw system/feedback/Bridge-team messages untouched so landed()
@@ -7,7 +7,7 @@
 const ZSClaudeConnector = (() => {
   "use strict";
 
-  const CONNECTOR_VERSION = "4.6.0";
+  const CONNECTOR_VERSION = "4.7.0";
   const CONNECTOR_ID = "claude-custom-connector";
   const HANDSHAKE_TTL_MS = 1500;
 

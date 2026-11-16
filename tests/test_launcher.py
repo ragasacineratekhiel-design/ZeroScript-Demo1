@@ -89,4 +89,4 @@ class LauncherTests(unittest.TestCase):
             call.assert_called_once()
 
     def test_launcher_version_is_4_6_0(self):
-        self.assertEqual(launcher.VERSION, '4.6.0')
+        self.assertEqual(launcher.VERSION, '4.7.0')

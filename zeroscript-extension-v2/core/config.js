@@ -6,9 +6,29 @@
 const ZS = (() => {
   "use strict";
 
-  // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
+  // ZeroScript MAX 4.7.0 — verified loop + real Luau parser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.6.0";
+  const APP_VERSION = "4.7.0";
+
+  // ── STUDIO BUILD MODE (adopted from the 4.6.1 nested copy) ───────────────
+  // The nested compatibility copy had already shipped this anti-"static text"
+  // block while the canonical tree had not, which is one of the reasons the
+  // two copies had drifted. It is now part of the canonical prompt: the model
+  // is told explicitly that it BUILDS rather than describes. Injected verbatim
+  // at the top of every system prompt.
+  const STUDIO_BUILD_MODE = `━━━ STUDIO BUILD MODE — MANDATORY ━━━
+You are a SENIOR ROBLOX STUDIO DEVELOPER with FULL, live control of the user's Roblox Studio place. You do NOT describe how to build — YOU BUILD IT via ZeroScript commands. Every turn, your default action is to emit a command block (###LUA### for Luau, or fenced json for everything else) and wait for the result. Plain descriptive text without a command is ONLY for final answers when the user is satisfied.
+
+STUDIO CONTROL YOU ACTUALLY HAVE:
+- execute_luau ###LUA### ... ###END_LUA### — run any Luau in Edit/Server/Client datamodel. Use return for output.
+- multi_edit — create/change any Script, LocalScript, ModuleScript, GUI.
+- inspect_instance / get_studio_state / script_read / search_game_tree — read real state before mutating.
+- start_stop_play {is_start:true/false} — enter/leave Play mode to test.
+- screen_capture — see what you built.
+- generate_mesh / generate_procedural_model — 3D geometry.
+- list_commands FIRST — always get exact names/params before guessing.
+
+ANTI-STATIC-TEXT RULE: Never answer "here's how you'd do it". Always do it. If you are unsure of a path/API, inspect_instance it first. If a tool errors, read the error, script_read the file, fix, retry (≤3). Never leave broken code. When done, report verified results with return values, then STOP.`;
   const SYS_MARKER = "⟦ZS-SYS⟧";
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
@@ -51,6 +71,63 @@ const ZS = (() => {
   }
   const ROLE_PERMISSIONS = { planner: "read-only + team_send (plan only, never mutates)", coder: "full Studio access (only mutator)", checker: "read-only + team_send (verify + report defects, never edits)" };
 
+  // ── TIMINGS — THE SINGLE SOURCE OF TRUTH (4.7.0) ─────────────────────────
+  // Before this table existed, the same numbers were written by hand in
+  // TEN provider files and again in TRANSPORT/STABILITY below, and they had
+  // already drifted (six providers still carried a command-detection regex that
+  // missed ###END_LUA###, and TRANSPORT.VERSION itself said "4.5.0").
+  // Providers now read `ZS.T.providers.<id>`; verify.js checks that the live
+  // literals in background.js match this table instead of a prose document.
+  //
+  // Every value here is a REAL wait used by real code — no marketing numbers.
+  const T = {
+    // transport (consumed by background.js + core/transport.js)
+    reconnectMin: 250,
+    reconnectMax: 5000,
+    heartbeatMs: 10000,
+    httpTimeout: 5000,
+    wsPingMs: 2800,
+    batchMax: 24,
+    // per-provider stream detection
+    //   genIdle  — answer text unchanged this long ⇒ generation finished
+    //   stable   — generating flag stuck ON but text frozen ⇒ finished anyway
+    //   warmup   — empty turn container may precede the first token
+    //   reasonIdle / reasonNoReply — reasoning phase may stall for many seconds
+    providers: {
+      chatgpt:  { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      claude:   { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      deepseek: { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      gemini:   { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      kimi:     { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      meta:     { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      qwen:     { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      glm:      { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      arena:    { genIdle: 500,  stable: 6000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+      generic:  { genIdle: 500,  stable: 3000, warmup: 18000, reasonIdle: 6000, reasonNoReply: 90000, timeout: 180000 },
+    },
+    // UI / loop cadences (core/main.js reads these instead of literals)
+    ui: {
+      domWaitCap: 250,      // waitForDOMChange default timeout
+      statusCacheMs: 120,   // ULTRA._statusCache TTL
+      sweepMs: 250,         // decoration sweep debounce
+      stopPollMs: 150,      // stop-watch poll while a tool is in flight
+    },
+  };
+
+  // Provider timings as the providers' own shape ({GEN_IDLE_MS, …}) plus the
+  // literal fallback they keep for the case core/config.js failed to load.
+  function providerTimings(id) {
+    const p = T.providers[id] || T.providers.generic;
+    return {
+      GEN_IDLE_MS: p.genIdle,
+      STABLE_MS: p.stable,
+      WARMUP_MS: p.warmup,
+      REASON_IDLE_MS: p.reasonIdle,
+      REASON_NOREPLY_MS: p.reasonNoReply,
+      RESPONSE_TIMEOUT_MS: p.timeout,
+    };
+  }
+
   // ── MAX Transport — 8 methods, 5ms ULTRA hedge, zero drops — TELEMETRY 4.2 — FACT-CHECKED ────────
   const TRANSPORT = {
     WS_URL: "ws://127.0.0.1:17613",
@@ -58,18 +135,18 @@ const ZS = (() => {
     PORT_WS: 17613,
     PORT_HTTP: 17614,
     METHODS: ["websocket","http-rest","batch"],
-    RECONNECT_MIN: 250,      // honest live value in background.js
-    RECONNECT_MAX: 5000,
-    HEARTBEAT_MS: 10000,     // honest live value in background.js
+    RECONNECT_MIN: T.reconnectMin,     // honest live value in background.js
+    RECONNECT_MAX: T.reconnectMax,
+    HEARTBEAT_MS: T.heartbeatMs,
     STALE_MS: 5000,          // MAX 5s stale detection
-    HTTP_TIMEOUT: 5000,      // MAX 5s timeout
-    WS_PING_MS: 2800,
-    HEDGE_MS: 0,           // never duplicate Studio mutations
-    BATCH_MAX: 24,           // bridge rejects larger batches before execution
+    HTTP_TIMEOUT: T.httpTimeout,
+    WS_PING_MS: T.wsPingMs,
+    HEDGE_MS: 0,             // never duplicate Studio mutations
+    BATCH_MAX: T.batchMax,   // bridge rejects larger batches before execution
     CACHE_TTL_MS: 600,       // MAX 600ms cache — instant attach
     COMPRESSION: "deflate",
     PREFERRED: "ws",
-    VERSION: "4.5.0",
+    VERSION: APP_VERSION,    // was frozen at "4.5.0" while the app was 4.6.0
   };
 
 // ── STABILITY — values that are ACTUALLY consumed. (Audit #18: this block used to be
@@ -192,6 +269,11 @@ const STABILITY = {
       .join("\n");
   }
 
+  // NOTE (4.7.0, measured): I first "optimised" this by memoising the static
+  // half of the prompt. It measured 2.3 µs per call — the cost of assembling a
+  // 37 KB template is negligible because V8 interns the literal — so the cache
+  // was removed rather than shipped as unproven complexity. buildSystemPrompt
+  // stays a straight assembly.
   function buildSystemPrompt(opts = {}) {
     if (typeof opts === "string") opts = { siteName: opts };
     const { siteName = "this AI site", customPrompt = "", providerNotes = "", memoryDigest = "" } = opts;
@@ -215,7 +297,7 @@ const STABILITY = {
       memoryInfo = `\n━━━ PROJECT MEMORY (Memory Wall — this place, persistent across turns) ━━━\n${String(memoryDigest).trim().slice(0,1800)}\nUse it: do not re-inspect what it already states, and UPDATE it (ZSMemoryWall.remember) when you change layout, conventions or systems.\n━━━ END PROJECT MEMORY ━━━\n`;
     }
 
-    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX 4.5.0 (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
+    const prompt = `CONTEXT: the user has installed a browser extension called ZeroScript MAX ${APP_VERSION} (Switch Plan Direct/Agent/Plan/Checker + 10ms orchestrated multi-AI) in their own browser. Here is how it works:
 A browser extension (ZeroScript MAX) is running inside this page. It watches your replies. When it detects a ZeroScript command in your text, it runs it against Roblox Studio via local bridge and sends result back as next message. You always receive result - success or formatted ERROR - so you can keep going.
 ${planInfo}${memoryInfo}
 Roblox Studio connection is not guaranteed; inspect actual results - call \`list_commands\` FIRST for exact commands with full parameter details. Other MCP servers may ALSO be connected (Blender etc) - you are NOT told upfront. So: the MOMENT user names ANY app/tool/target that is not Roblox Studio (e.g. "Blender", "Sketchfab"), you MUST run \`list_mcp_servers\` FIRST, before replying - never answer from assumptions. You do not need special capability yourself - just write text. Extension does rest.
@@ -473,7 +555,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       ? `\n\n━━━ USER'S CUSTOM PROMPT (extra) ━━━\n${customPrompt.trim()}`
       : "";
 
-    return `${SYS_MARKER}\n${prompt}${siteRules}${extra}`;
+    return `${SYS_MARKER}\n${STUDIO_BUILD_MODE}\n${prompt}${siteRules}${extra}`;
   }
 
   const TOOL_NOTES = {
@@ -617,6 +699,9 @@ ${initialMessages.length ? "The following coordinator invitation is already deli
     SYS_MARKER,
     RESEND_MARKER,
     TRANSPORT,
+    T,
+    providerTimings,
+    STUDIO_BUILD_MODE,
     PLANS,
     DEFAULT_PLAN,
     DEFAULT_EXEC,

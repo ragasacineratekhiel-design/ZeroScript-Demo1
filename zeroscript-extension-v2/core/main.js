@@ -153,22 +153,26 @@
     // micro-cache for bg status (avoid hammering bridge)
     _statusCache:null, _statusAt:0,
   };
-  // Fast MutationObserver helper — wakes waitForResponse instantly on DOM change
-  let _mo=null, _moWaiters=[];
-  function ensureMO(){
-    if(_mo) return;
-    try{
-      _mo=new MutationObserver(()=>{ if (typeof document === "undefined" || !document || document.hidden) return; const w=_moWaiters.slice(); _moWaiters=[]; for(const fn of w) try{fn();}catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); } });
-      _mo.observe(document.documentElement||document.body,{childList:true, subtree:true, characterData:true});
-    }catch (_e) { globalThis.ZSSafe?.seen?.("main.ensureMO", _e); }
+  // ── DOM-change wakeups ──────────────────────────────────────────────────
+  // Owned by core/dom_watch.js since 4.7.0 (see that file for the batching /
+  // region-filter rationale — it was untestable and un-shareable in here).
+  // These thin wrappers keep every existing call site working unchanged, and
+  // fall back to a local timer if the module failed to load.
+  const _domWatch = () => (typeof window !== "undefined" && window.ZSDomWatch) || null;
+  function waitForDOMChange(timeout = 250, scope) {
+    const dw = _domWatch();
+    if (dw) return dw.waitForDOMChange(timeout, scope);
+    return new Promise((r) => setTimeout(() => r(false), timeout));
   }
-  function waitForDOMChange(timeout=250){
-    ensureMO();
-    return new Promise(res=>{
-      const t=setTimeout(()=>{ const i=_moWaiters.indexOf(done); if(i!==-1) _moWaiters.splice(i,1); res(false); }, timeout);
-      const done=()=>{ clearTimeout(t); res(true); };
-      _moWaiters.push(done);
-    });
+  async function waitFor(pred, timeout) {
+    const dw = _domWatch();
+    if (dw) return dw.waitFor(pred, timeout);
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try { if (pred()) return true; } catch (_e) { globalThis.ZSSafe?.seen?.("main.waitFor", _e); }
+      await sleep(50);
+    }
+    try { return !!pred(); } catch (_e) { return false; }
   }
 
   // Ko-fi tip link.
@@ -292,13 +296,23 @@
     hadProgressSinceStart: false,
   };
 
+  // Wait for a predicate, waking on DOM change instead of on a clock.
+  // The 4.6.0 version slept 5 ms in a loop: a 20 s wait burned ~4 000 timer
+  // wakeups (each interrupting the response watcher). This races the predicate
+  // against the shared observer, with a 50 ms floor so a predicate that depends
+  // on something OTHER than the DOM (a network flag, a timer) still gets polled.
   async function waitFor(pred, timeout) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeout) {
-      if (pred()) return true;
-      await sleep(5); // MAX 5ms
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try { if (pred()) return true; } catch (_e) { globalThis.ZSSafe?.seen?.("main.waitFor", _e); }
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      await Promise.race([
+        waitForDOMChange(Math.min(50, left)),
+        sleep(Math.min(50, left)),
+      ]);
     }
-    return false;
+    try { return !!pred(); } catch (_e) { return false; }
   }
 
   // Park until the AI tab is the FOREGROUND tab of its window again (or the user
@@ -1511,22 +1525,19 @@
     if ((bareName === "user_keyboard_input" || bareName === "user_mouse_input") && !args.datamodel_type)
       args.datamodel_type = "Client";
     const timeout = bareName === "execute_luau" ? 20000 : 120000;
-    // Hard watchdog: even if the background worker never answers, the loop
-    // gets a definitive result and continues.
-    let hardTimer;
-    const hardCap = new Promise((res) =>
-      hardTimer = setTimeout(() => res({ ok: false, kind: "timeout", error: "no response from the extension worker" }), timeout + 30000));
-    // Stop watcher: a blocking tool (e.g. wait_job_finished) would otherwise keep
-    // the loop awaiting the bridge for up to minutes, leaving the input locked and
-    // the Stop button stuck. When the user halts (A.stop), abandon the wait within
-    // ~150ms so the loop breaks and its finally unlocks everything. The in-flight
-    // bridge call may still finish in the background; its result is just ignored.
-    let stopTimer;
-    const stopWatch = new Promise((res) => {
-      stopTimer = setInterval(() => { if (A.stop) res({ ok: false, kind: "stopped" }); }, 150);
-    });
-    let r = await Promise.race([bg({ type: "call_tool", name, arguments: args, timeout }), hardCap, stopWatch]);
-    clearInterval(stopTimer); clearTimeout(hardTimer);
+    // ── one guarded wait, three guards (4.7.0) ───────────────────────────────
+    // 4.6.0 built a watchdog timer AND a 150 ms setInterval per tool call, then
+    // raced three promises — and on a Stop click only the interval was cleared,
+    // leaving the watchdog alive for up to `timeout + 30 s`. Every one of those
+    // timers lived on the page's main thread, competing with the response
+    // watcher. stopSignal() is the same guard shape used everywhere now: one
+    // abort listener (or the shared Stop tick when AbortSignal is unavailable),
+    // and a finally that always releases it.
+    let r = await withStop(
+      bg({ type: "call_tool", name, arguments: args, timeout }),
+      timeout + 30000,
+      { ok: false, kind: "timeout", error: "no response from the extension worker" }
+    );
     if (r && r.kind === "stopped") return "(stopped by user)";
     if (!r) return ZS.FEEDBACK.bridgeOffline;
     // The MCP server answers SUCCESSFULLY (ok:true) when no Studio is attached
@@ -1718,6 +1729,59 @@
     try { return JSON.stringify(a, null, 2); } catch { return String(a); }
   }
 
+  // ── Stop/abort plumbing shared by every long await (4.7.0) ───────────────
+  // One AbortController per stop-callback fan-out instead of a 150 ms interval
+  // per wait. `A.stop` remains the single source of truth; this only OBSERVES it.
+  const _stopFans = new Set();
+
+  function onStop(fn) {
+    if (typeof fn !== "function") return () => {};
+    _stopFans.add(fn);
+    return () => _stopFans.delete(fn);
+  }
+
+  function fireStop() {
+    for (const fn of [..._stopFans]) {
+      try { fn(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.fireStop", _e); }
+    }
+    _stopFans.clear();
+  }
+
+  // Race `promise` against the user pressing Stop and against a hard deadline,
+  // with every timer released on every path.
+  function withStop(promise, hardMs, hardValue) {
+    let timer = 0;
+    let off = () => {};
+    const stopper = new Promise((resolve) => {
+      if (A.stop) return resolve({ ok: false, kind: "stopped" });
+      off = onStop(() => resolve({ ok: false, kind: "stopped" }));
+    });
+    const hard = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(hardValue), Math.max(1000, hardMs));
+    });
+    return Promise.race([promise, stopper, hard]).finally(() => {
+      clearTimeout(timer);
+      off();
+    });
+  }
+
+  // Waiting loop that wakes on Stop instead of polling. `gapMs` is the cadence
+  // between predicate checks; 0 means "only wake on stop/DOM change".
+  async function waitUntil(pred, timeoutMs, gapMs = 20) {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (Date.now() < deadline) {
+      if (A.stop) return false;
+      try { if (pred()) return true; } catch (_e) { globalThis.ZSSafe?.seen?.("main.waitUntil", _e); }
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      await Promise.race([
+        new Promise((r) => { const off = onStop(r); setTimeout(() => { off(); r(); }, Math.min(left, gapMs)); }),
+        waitForDOMChange(Math.min(left, gapMs || 50)),
+      ]);
+    }
+    try { return !A.stop && !!pred(); } catch (_e) { return false; }
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   //  AGENTIC LOOP
   // ════════════════════════════════════════════════════════════════════════
@@ -1737,6 +1801,11 @@
     // Exec-mode budget (HONEST: bounded, so a stuck model can never spin forever).
     const EXEC_MAX_TURNS = { single: 1, continuous: 24, loop: 40 };
     let execTurns = 0;
+    // 4.7.0 — Single mode was only honoured in the TEXT branch, so a tool result
+    // was always fed back to the model and Single behaved exactly like
+    // Continuous. Computed once per loop (the mode cannot change mid-turn
+    // without a session change, which aborts the loop anyway).
+    const loopMode = execMode();
     armTruthIfNeeded();
 
     const loopRolePrompt = (role, turn, maxTurns) => {
@@ -1885,7 +1954,7 @@
           // `continue` that relied on the model saying "I'm done". They now have
           // (a) an explicit iteration budget, (b) a progress watchdog, and (c) a
           // real planner→coder→checker handoff through the wall + agent hub.
-          const mode = execMode();
+          const mode = loopMode;
           if (mode === "single") break;
           const txt = (res.text || "").toLowerCase();
           const saidDone = txt.length > 20
@@ -2069,6 +2138,16 @@
             id: P.lastAssistantId ? P.lastAssistantId() : undefined,
           };
 
+          // ── 4.7.0 Single-mode fix ───────────────────────────────────────
+          // Single means "one command, then stop". The tool has now run and its
+          // chip is painted with the real outcome, so returning the result to
+          // the model would silently turn Single into Continuous. Break here —
+          // after decoration, so the user still sees what ran.
+          if (loopMode === "single") {
+            diag("exec.single.toolDone", { tool: call.tool });
+            break;
+          }
+
           // Continuous/Loop exec mode: honor deferred stop at progress boundary (no half-coded blocks)
           if (A.pendingStop && isProgress) {
             // still send the tool feedback so conversation stays consistent, then honor
@@ -2246,6 +2325,7 @@
     } catch { return false; }
   }
   function stopLoop() {
+    fireStop();
     if (A.stopping && !A.pendingStop) return; // already winding down - ignore double-clicks (but allow pendingStop re-assert)
     diag("stopLoop",{exec:execMode(), pending:A.pendingStop});
     const isDeferred = (execMode() === "continuous" || execMode() === "loop");
@@ -5313,7 +5393,8 @@
   // enough that a leaked observer keeps a detached document referenced.
   const _releaseObservers = () => {
     try { mo.disconnect(); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.mo", _e); }
-    try { if (_mo) { _mo.disconnect(); _mo = null; } } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.fastMo", _e); }
+    // (the shared DOM-change observer lives in core/dom_watch.js and releases
+    //  itself on pagehide — nothing to disconnect here since 4.7.0)
   };
   try { window.addEventListener("pagehide", _releaseObservers, { once: true }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.releaseObservers.hook", _e); }
   // Belt-and-braces: a low-frequency sweep regardless of tab visibility or

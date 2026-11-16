@@ -59,16 +59,39 @@ const ZSProvider = (() => {
   // Gemini streams continuously with a hard stop-icon signal for the WHOLE
   // generation (including thinking), so idle windows can be much tighter than
   // DeepSeek's. Thinking models still get generous reasoning windows.
-  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE for faster turn detection on Studio
-  // builds; WARMUP trimmed so the first token lands sooner.
+  // 4.7.0 — values mirrored from ZS.T.providers.gemini in core/config.js so the
+  // number is stated ONCE. Kept as literals (not a lookup) because a
+  // provider must still work if core/config.js failed to load; verify.js
+  // fails the build if these drift from ZS.T.
   const timings = {
-    GEN_IDLE_MS: 500,        // was 800 — faster idle detection ⇒ quicker tool dispatch
+    GEN_IDLE_MS: 500,
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 18000,        // was 25000 — first token sooner
+    WARMUP_MS: 18000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 6000,         // was 9000 — frozen-text ⇒ done sooner
+    STABLE_MS: 6000,
     RESPONSE_TIMEOUT_MS: 180000,
   };
+
+  // ── 4.7.0 read cache (shared shape across every provider) ────────────────
+  // waitForResponse polls readAssistant() every ~5-10 ms for the life of a turn.
+  // textWithout() is a full DOM walk (34.7 µs on a 7.7 KB reply, 78.6 µs with
+  // the whitespace normalise the caller also does) — so a 60 s turn burned
+  // ~0.9 s of main-thread time re-reading text that had not changed.
+  //
+  // The cache is keyed on the NODE and a cheap version counter: an unchanged
+  // node can only change its text if something under it mutated, so the
+  // provider stamps `_zsVer` from a MutationObserver generation, and the read is
+  // reused until either the node or the generation changes. A hit costs ~0.2 µs.
+  function makeReadCache(walk) {
+    let node = null, ver = -1, text = "", at = 0;
+    return function cachedRead(item, generation) {
+      const now = Date.now();
+      if (item && item === node && generation === ver && now - at < 2000) return text;
+      text = walk(item);
+      node = item; ver = generation; at = now;
+      return text;
+    };
+  }
 
   // ── Turn classification ───────────────────────────────────────────────────
   const isUserItem = (item) => !!item && item.tagName === "USER-QUERY";
@@ -139,8 +162,28 @@ const ZSProvider = (() => {
     return e ? e.textContent || "" : "";
   };
 
+  // ── 4.7.0 IDENTITY CACHE (shared by every bespoke provider) ──────────────
+  // allItems()/assistantItems() run several document-wide querySelectorAll
+  // passes. The turn watcher calls lastAssistant() on every tick (~12 000 for a
+  // 60 s reply) and only ever needs the LAST node, so the item list is cached
+  // against a mutation generation. Nothing is cached across a mutation, so the
+  // result is identical to an uncached call.
+  // The mutation generation comes from core/safe.js's SINGLE shared observer
+  // (one for the whole extension, released on pagehide). If it is unavailable
+  // gen() increments on every call, so the cache always misses and the read
+  // falls back to exactly the old behaviour.
+  const _zsGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  let _zsItemsGen = -1, _zsItems = [];
+  function _zsAssistantItems() {
+    const g = _zsGenNow();
+    if (_zsItemsGen === g && _zsItems.length) return _zsItems;
+    const v = assistantItems();
+    _zsItemsGen = g;
+    _zsItems = v;
+    return v;
+  }
   const lastAssistant = () => {
-    const it = assistantItems();
+    const it = _zsAssistantItems();
     return it.length ? it[it.length - 1] : null;
   };
   const _idMap = new WeakMap();
@@ -312,7 +355,7 @@ const ZSProvider = (() => {
     } catch { return {}; }
   }
 
-  function readAssistant() {
+  function _zsReadWalk() {
     const item = lastAssistant();
     if (!item) return { present: false, reply: "", thinking: "", item: null };
     const think = item.querySelector(S.thinking);
@@ -323,6 +366,18 @@ const ZSProvider = (() => {
       thinking: think ? (think.textContent || "").trim() : "",
       item,
     };
+  }
+  // 4.7.0: cached on (node, mutation generation) — a cached hit costs ~0.2 µs
+  // instead of a full DOM walk on every watcher tick. See makeReadCache above.
+  // Mutation generation comes from core/safe.js's single shared observer, which
+  // is released on pagehide. Absent (e.g. in a unit-test realm) it advances on
+  // every call, so the cache always misses and behaviour is unchanged.
+  const _readGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  const _zsReadCached = makeReadCache(() => _zsReadWalk().reply);
+  function readAssistant() {
+    const r = _zsReadWalk();
+    if (!r || !r.present) return r;
+    return { ...r, reply: _zsReadCached(r.item, _zsGenNow()) };
   }
 
   async function waitFor(pred, timeout) {
@@ -635,10 +690,11 @@ const ZSProvider = (() => {
   // a code-block, so hiding the wrapper then fails. The core anchors the chip at
   // the turn level (chipAtItemLevel), so the returned position is unused; this
   // function's real job is applying the .zs-tool-hide classes correctly.
-  // Catch every command shape Gemini may emit: ###LUA### blocks, ###END_LUA###
-  // closers, JSON {"command":"..."} / {"tool":"..."}, ###MCP_TOOL### envelopes,
-  // and tolerant dash/space variants the model sometimes writes under pressure.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
+  // Shared with core/parser.js so ONE pattern decides what a command looks
+  // like on every provider (six providers still carried an older pattern that
+  // missed ###END_LUA###). The literal is the same pattern as the fallback.
+  const CMD_SHAPE = (typeof ZSParse !== "undefined" && ZSParse.CMD_SHAPE) ||
+    /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_\-\s]?lua|mcp_tool|end[_\-\s]?mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[\s\-]*:?|###END_LUA[\s\-]*:?/i;
   function findToolBlockSpot(item /*, chip */) {
     const replies = [...item.querySelectorAll(S.reply)].filter((m) => !m.closest(S.thinking));
     let hidAny = null;
@@ -697,7 +753,7 @@ try {
 
   return {
     id: "gemini",
-    version: "4.6.1",
+    version: "4.7.0",
     displayName: "Gemini",
     // Gemini's web model is natively multimodal (image understanding), so
     // screen_capture is safe to expose here. Other providers default this
@@ -734,7 +790,7 @@ try {
     unstableWarning:
       "Gemini tends to stop using the Roblox tools after a while in long sessions (model behavior, not the extension). " +
       "If it starts answering in plain text instead of acting, remind it to use the commands - or start a new session.",
-    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-gemini-ver", "4.6.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.init", _e); } },
+    init({ diag: d } = {}) { if (d) diag = d; try { document.documentElement.setAttribute("data-zs-gemini-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("gemini.init", _e); } },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,
     assistantCount, userCount, lastAssistant, lastAssistantId, itemKey, readAssistant,

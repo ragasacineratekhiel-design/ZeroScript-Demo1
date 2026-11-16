@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only timestamped bridge team console. Standard library only. 4.6.1.
+"""Read-only timestamped bridge team console. Standard library only. 4.6.0.
 
 4.6.0: long-poll wake (instant events, no 1s blind poll), --json output,
 --status one-shot summary, exponential reconnect backoff, role-violation

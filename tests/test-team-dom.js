@@ -1,4 +1,4 @@
-// Integration check for actual shared core against a simulated chat DOM (v4.6.0).
+// Integration check for actual shared core against a simulated chat DOM (v4.7.0).
 // Exercises MemoryWall + PromptEnhancer coexistence, /new -> /chat/test landing
 // navigation, bounded inbox chunking, WS push wakeup, and strict role enforcement.
 const assert = require("node:assert/strict");
@@ -31,7 +31,7 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
   };
   const items = () => [...w.document.querySelectorAll("[data-role]")];
   w.fakeProvider = {
-    id: "claude", displayName: "Claude", version: "4.6.0",
+    id: "claude", displayName: "Claude", version: "4.7.0",
     timings: { RESPONSE_TIMEOUT_MS: 10000, STABLE_MS: 200, WARMUP_MS: 200, REASON_NOREPLY_MS: 500 },
     init() {}, snapshot: () => ({}), getEditor: () => editor, editorText: () => editor.value,
     chatIsEmpty: () => items().length === 0, isFreshChat: () => items().length === 0,
@@ -74,7 +74,7 @@ async function scenario({ sendWorks = true, hidden = false, deliverInbox = false
   w.chrome = {
     runtime: {
       id: "test-extension",
-      getManifest: () => ({ version: "4.6.0" }),
+      getManifest: () => ({ version: "4.7.0" }),
       onMessage: { addListener: (fn) => listeners.push(fn) },
       lastError: null,
       sendMessage: (msg, callback) => {

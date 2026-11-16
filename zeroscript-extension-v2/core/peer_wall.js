@@ -32,7 +32,7 @@
 //                   conversation between two different AIs.
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
 
   // hostname → stable provider id. Must stay in sync with manifest matches;
   // background.js has its own copy for tab routing (it cannot see this module's
