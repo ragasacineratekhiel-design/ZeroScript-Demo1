@@ -91,12 +91,13 @@ const ZSProvider = (() => {
 
   // Meta streams with a hard stop-button signal for the WHOLE generation (incl.
   // the "Réflexion" reasoning phase), so idle windows can be tight (like Gemini).
+  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,        // was 800
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,        // was 25000
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,         // was 9000
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -712,7 +713,7 @@ const ZSProvider = (() => {
   // subtree on stream settle and on the next send, so also mark the assistant body
   // (its identity survives) with .zs-cmd-mask; the overlay.css rule keeps recreated
   // code wrappers hidden.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   function findToolBlockSpot(item /*, chip */) {
     const b = bodyOf(item);
     if (!b) return null;
@@ -765,7 +766,7 @@ try {
 
   return {
     id: "meta",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "Meta AI",
     // Meta's composer accepts image uploads (hidden multi-file input → inline
     // Lexical preview → uploaded on send; see attachImages). Vision-capable, so

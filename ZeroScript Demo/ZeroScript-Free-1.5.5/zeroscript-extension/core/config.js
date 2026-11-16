@@ -6,10 +6,27 @@
 const ZS = (() => {
   "use strict";
 
-  // ZeroScript MAX 4.3.0 — verified loop + static Luau analyser + event-driven wall
+  // ZeroScript MAX 4.6.1 — verified loop + static Luau analyser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.6.0";
+  const APP_VERSION = "4.6.1";
   const SYS_MARKER = "⟦ZS-SYS⟧";
+  // ── STUDIO BUILD MODE (Problem 2 fix) ─────────────────────────────────────
+  // Injected verbatim at the top of every system prompt so the model can never
+  // plead ignorance about Roblox Studio. This is the anti-"static text" fix:
+  // the model is a senior Roblox Studio developer, period.
+  const STUDIO_BUILD_MODE = `━━━ STUDIO BUILD MODE — MANDATORY ━━━
+You are a SENIOR ROBLOX STUDIO DEVELOPER with FULL, live, unrestricted control of the user's Roblox Studio place. You do NOT describe how to build — YOU BUILD IT via ZeroScript commands. Every turn, your default action is to emit a command block (###LUA### for Luau, or fenced json for everything else) and wait for the result. Plain descriptive text without a command is ONLY for final answers when the user is satisfied.
+
+STUDIO CONTROL YOU ACTUALLY HAVE:
+- execute_luau ###LUA### ... ###END_LUA### — run any Luau in Edit/Server/Client datamodel. Use return for output.
+- multi_edit — create/change any Script, LocalScript, ModuleScript, GUI.
+- inspect_instance / get_studio_state / script_read / search_game_tree — read real state before mutating.
+- start_stop_play {is_start:true/false} — enter/leave Play mode to test.
+- screen_capture — see what you built.
+- generate_mesh / generate_procedural_model — 3D geometry.
+- list_commands FIRST — always get exact names/params before guessing.
+
+ANTI-STATIC-TEXT RULE: Never answer "here's how you'd do it". Always do it. If you are unsure of a path/API, inspect_instance it first. If a tool errors, read the error, script_read the file, fix, retry (≤3). Never leave broken code. When done, report verified results with return values, then STOP.`;
   // ── SWITCH PLAN — 4 modes — orchestrated multi-AI over the peer channel ──
   const PLANS = {
     direct: { id:"direct", name:"Direct", ais:1, roles:["coder"], desc:"1 AI direct — fastest single" },
@@ -21,7 +38,7 @@ const ZS = (() => {
   const DEFAULT_EXEC = "single";
   const EXEC_MODES = { single: { label: "Single", def: true }, continuous: { label: "Continuous" }, loop: { label: "Loop" } };
 
-  // ── ROLE PERMISSIONS 4.6.0 (single source of truth, mirrored in team_hub.py) ──
+  // ── ROLE PERMISSIONS 4.6.1 (single source of truth, mirrored in team_hub.py) ──
   // Only the coder mutates Studio. Planner plans, checker verifies — both are
   // read-only + team_send. Enforced in main.js runTool, background.js and
   // bridge.py safe_call; prompt text alone never stopped a planner from coding.
@@ -473,7 +490,7 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
       ? `\n\n━━━ USER'S CUSTOM PROMPT (extra) ━━━\n${customPrompt.trim()}`
       : "";
 
-    return `${SYS_MARKER}\n${prompt}${siteRules}${extra}`;
+    return `${SYS_MARKER}\n${STUDIO_BUILD_MODE}\n${prompt}${siteRules}${extra}`;
   }
 
   const TOOL_NOTES = {

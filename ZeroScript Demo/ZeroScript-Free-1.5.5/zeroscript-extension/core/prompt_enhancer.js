@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.6.0";
+  const ENHANCER_VERSION = "4.6.1";
 
   function getPlanOrchestration(raw){
     try{
@@ -173,7 +173,7 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
   };
 
   // Parse MULTIPLE slashes: "/truth /code /force <body>" → [{cmd, body}]
-  // 4.6.0: aliases /brutal-honest & /0%-lies → truth, /follow-everything → prompt,
+  // 4.6.1: aliases /brutal-honest & /0%-lies → truth, /follow-everything → prompt,
   // /absolute-effort → force so real-world truth/effort flags activate enforcement.
   const SLASH_ALIASES = {
     "brutal-honest": "truth",

@@ -871,7 +871,7 @@ try {
 
   return {
     id: "arena",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "Arena",
     // Arena's chat composer accepts image uploads (hidden `input[type=file]` in
     // the form → staged preview card → uploaded on send; see attachImages). The

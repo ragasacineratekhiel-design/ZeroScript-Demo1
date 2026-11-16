@@ -59,12 +59,14 @@ const ZSProvider = (() => {
   // Gemini streams continuously with a hard stop-icon signal for the WHOLE
   // generation (including thinking), so idle windows can be much tighter than
   // DeepSeek's. Thinking models still get generous reasoning windows.
+  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE for faster turn detection on Studio
+  // builds; WARMUP trimmed so the first token lands sooner.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,        // was 800 — faster idle detection ⇒ quicker tool dispatch
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,        // was 25000 — first token sooner
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,         // was 9000 — frozen-text ⇒ done sooner
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -633,7 +635,10 @@ const ZSProvider = (() => {
   // a code-block, so hiding the wrapper then fails. The core anchors the chip at
   // the turn level (chipAtItemLevel), so the returned position is unused; this
   // function's real job is applying the .zs-tool-hide classes correctly.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  // Catch every command shape Gemini may emit: ###LUA### blocks, ###END_LUA###
+  // closers, JSON {"command":"..."} / {"tool":"..."}, ###MCP_TOOL### envelopes,
+  // and tolerant dash/space variants the model sometimes writes under pressure.
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   function findToolBlockSpot(item /*, chip */) {
     const replies = [...item.querySelectorAll(S.reply)].filter((m) => !m.closest(S.thinking));
     let hidAny = null;
@@ -692,7 +697,7 @@ try {
 
   return {
     id: "gemini",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "Gemini",
     // Gemini's web model is natively multimodal (image understanding), so
     // screen_capture is safe to expose here. Other providers default this

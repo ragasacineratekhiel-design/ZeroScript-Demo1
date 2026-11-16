@@ -74,12 +74,13 @@ const ZSProvider = (() => {
     usageLimit: /(reached|exceeded|atteint|dépassé).{0,20}(daily|usage|quota|free|限)|daily.{0,10}(usage|message|limit)|usage limit|quota.{0,15}(exceeded|reached|atteint)|please wait.{0,12}\d+\s*hour|(每日|免费).{0,6}(额度|次数|上限|限制)/i,
   };
 
+  // ULTRA 4.6.0: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,        // was 800
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,        // was 25000
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,         // was 9000
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -847,7 +848,7 @@ const ZSProvider = (() => {
   // markdown subtree on stream updates, so mark the assistant turn with
   // .zs-cmd-mask and let the CSS rule (overlay.css) re-hide recreated pre
   // elements with no flash.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   function findToolBlockSpot(item) {
     const bd = bodyEl(item);
     if (!bd) return null;
@@ -1037,7 +1038,7 @@ try {
 
   return {
     id: "qwen",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "Qwen",
     // DYNAMIC per selected model (see the capability section above). A getter so
     // the core always reads the CURRENT model's capability - it can change

@@ -106,12 +106,13 @@ const ZSProvider = (() => {
 
   // ChatGPT streams continuously with a hard stop-button signal for the WHOLE
   // generation (including reasoning), so windows can be tight like Gemini.
+  // ULTRA 4.6.1: tightened GEN_IDLE/STABLE/WARMUP for faster Studio tool turns.
   const timings = {
-    GEN_IDLE_MS: 800,
+    GEN_IDLE_MS: 500,        // was 800
     REASON_IDLE_MS: 6000,
-    WARMUP_MS: 25000,
+    WARMUP_MS: 18000,        // was 25000
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 9000,
+    STABLE_MS: 6000,         // was 9000
     RESPONSE_TIMEOUT_MS: 180000,
   };
 
@@ -941,7 +942,7 @@ const ZSProvider = (() => {
   // catches a stray inline one). React re-creates these nodes on every token, so
   // - like Gemini - we also mark the .markdown container with .zs-cmd-mask; the
   // overlay.css rule keeps every recreated <pre> hidden with no flash.
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*lua|###mcp_tool###/i;
+  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
   // Marker pair, for the UNFENCED case below. Kept separate from CMD_SHAPE so the
   // opener test can't also match the closer.
   const CMD_OPEN = /###\s*(?:LUA|MCP_TOOL)\s*###/i;
@@ -1032,7 +1033,7 @@ try {
 
   return {
     id: "chatgpt",
-    version: "4.6.0",
+    version: "4.6.1",
     displayName: "ChatGPT",
     timings,
     // Exported for test-chatgpt.js (the Node smoke test drives it against a stub
