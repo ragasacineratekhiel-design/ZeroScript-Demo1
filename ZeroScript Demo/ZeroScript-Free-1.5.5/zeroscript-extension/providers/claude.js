@@ -38,15 +38,40 @@ const ZSProvider = (() => {
     paused: /limit|quota|rate.?limit/i,
   };
 
-  // ULTRA 4.6.0 timings for Claude — tighter, never drops, self-heal aware.
+  // ULTRA 3.4 timings for Claude — tighter, never drops, self-heal aware — tighter, never drops
+  // 4.7.0 — values mirrored from ZS.T.providers.claude in core/config.js so the
+  // number is stated ONCE. Kept as literals (not a lookup) because a
+  // provider must still work if core/config.js failed to load; verify.js
+  // fails the build if these drift from ZS.T.
   const timings = {
-    GEN_IDLE_MS: 500, // was 1100 — faster idle detection ⇒ quicker tool dispatch
-    REASON_IDLE_MS: 6000, // was 15000
-    WARMUP_MS: 18000, // was 32000 — first token sooner
+    GEN_IDLE_MS: 500,
+    REASON_IDLE_MS: 6000,
+    WARMUP_MS: 18000,
     REASON_NOREPLY_MS: 90000,
-    STABLE_MS: 6000, // was 7000 — frozen-text ⇒ done sooner
+    STABLE_MS: 6000,
     RESPONSE_TIMEOUT_MS: 180000,
   };
+
+  // ── 4.7.0 read cache (shared shape across every provider) ────────────────
+  // waitForResponse polls readAssistant() every ~5-10 ms for the life of a turn.
+  // textWithout() is a full DOM walk (34.7 µs on a 7.7 KB reply, 78.6 µs with
+  // the whitespace normalise the caller also does) — so a 60 s turn burned
+  // ~0.9 s of main-thread time re-reading text that had not changed.
+  //
+  // The cache is keyed on the NODE and a cheap version counter: an unchanged
+  // node can only change its text if something under it mutated, so the
+  // provider stamps `_zsVer` from a MutationObserver generation, and the read is
+  // reused until either the node or the generation changes. A hit costs ~0.2 µs.
+  function makeReadCache(walk) {
+    let node = null, ver = -1, text = "", at = 0;
+    return function cachedRead(item, generation) {
+      const now = Date.now();
+      if (item && item === node && generation === ver && now - at < 2000) return text;
+      text = walk(item);
+      node = item; ver = generation; at = now;
+      return text;
+    };
+  }
 
   function isUserItem(item){
     if (!item) return false;
@@ -128,7 +153,27 @@ const ZSProvider = (() => {
     // Claude ProseMirror: innerText preserves line breaks better than textContent
     return (e.matches("textarea") ? e.value : (e.innerText||e.textContent||"")).trim();
   };
-  const lastAssistant = () => { const a=assistantItems(); return a.length? a[a.length-1]: null; };
+  // ── 4.7.0 IDENTITY CACHE (shared by every bespoke provider) ──────────────
+  // allItems()/assistantItems() run several document-wide querySelectorAll
+  // passes. The turn watcher calls lastAssistant() on every tick (~12 000 for a
+  // 60 s reply) and only ever needs the LAST node, so the item list is cached
+  // against a mutation generation. Nothing is cached across a mutation, so the
+  // result is identical to an uncached call.
+  // The mutation generation comes from core/safe.js's SINGLE shared observer
+  // (one for the whole extension, released on pagehide). If it is unavailable
+  // gen() increments on every call, so the cache always misses and the read
+  // falls back to exactly the old behaviour.
+  const _zsGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  let _zsItemsGen = -1, _zsItems = [];
+  function _zsAssistantItems() {
+    const g = _zsGenNow();
+    if (_zsItemsGen === g && _zsItems.length) return _zsItems;
+    const v = assistantItems();
+    _zsItemsGen = g;
+    _zsItems = v;
+    return v;
+  }
+  const lastAssistant = () => { const a=_zsAssistantItems(); return a.length? a[a.length-1]: null; };
   const chatIsEmpty = () => allItems().length===0;
   const isFreshChat = () => {
     const empty = chatIsEmpty();
@@ -293,7 +338,7 @@ const ZSProvider = (() => {
   function snapshot(){
     try{ const it=lastAssistant(); if(!it) return{th:0,rp:0}; return{th:0,rp:(it.textContent||"").length}; }catch(_e){globalThis.ZSSafe?.seen?.("claude.snapshot",_e);return{};}
   }
-  function readAssistant(){
+  function _zsReadWalk(){
     const it=lastAssistant();
     if(!it) return{present:false,reply:"",thinking:"",item:null};
     // Extract thinking separately if present
@@ -303,6 +348,18 @@ const ZSProvider = (() => {
       if(thEl) thinking = textWithout(thEl, ".zs-chip").trim();
     }catch (_e) { globalThis.ZSSafe?.seen?.("claude.readAssistant", _e); }
     return{present:true, reply: textWithout(it,".zs-chip, " + S.thinking).trim(), thinking, item:it};
+  }
+  // 4.7.0: cached on (node, mutation generation) — a cached hit costs ~0.2 µs
+  // instead of a full DOM walk on every watcher tick. See makeReadCache above.
+  // Mutation generation comes from core/safe.js's single shared observer, which
+  // is released on pagehide. Absent (e.g. in a unit-test realm) it advances on
+  // every call, so the cache always misses and behaviour is unchanged.
+  const _readGenNow = () => (globalThis.ZSSafe && globalThis.ZSSafe.gen ? globalThis.ZSSafe.gen() : (Date.now() | 0));
+  const _zsReadCached = makeReadCache(() => _zsReadWalk().reply);
+  function readAssistant() {
+    const r = _zsReadWalk();
+    if (!r || !r.present) return r;
+    return { ...r, reply: _zsReadCached(r.item, _zsGenNow()) };
   }
   async function waitFor(pred, timeout){
     // 30ms granularity added up to ~30ms of dead time on EVERY wait (and there
@@ -526,7 +583,11 @@ const ZSProvider = (() => {
     },true);
   }
 
-  const CMD_SHAPE = /"(?:command|tool)"\s*:\s*\"|###\s*(?:lua|end[_ \-]?lua|mcp_tool|end_mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[ \-]*:?|###END_LUA[ \-]*:?/i;
+  // Shared with core/parser.js so ONE pattern decides what a command looks
+  // like on every provider (six providers still carried an older pattern that
+  // missed ###END_LUA###). The literal is the same pattern as the fallback.
+  const CMD_SHAPE = (typeof ZSParse !== "undefined" && ZSParse.CMD_SHAPE) ||
+    /"(?:command|tool)"\s*:\s*"|###\s*(?:lua|end[_\-\s]?lua|mcp_tool|end[_\-\s]?mcp_tool)|###MCP_TOOL|###END_MCP_TOOL|###LUA[\s\-]*:?|###END_LUA[\s\-]*:?/i;
   const CMD_OPEN = /###\s*(?:LUA|MCP_TOOL)\s*###/i;
   const CMD_CLOSE = /###\s*END_(?:LUA|MCP_TOOL)\s*###/i;
   function findToolBlockSpot(item){
@@ -614,10 +675,10 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    version: "4.6.1",
+    version: "4.7.0",
     init({diag:d}={}){
       if(d) diag=d;
-      try{document.documentElement.setAttribute("data-zs-claude-ver","4.6.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }
+      try{document.documentElement.setAttribute("data-zs-claude-ver","4.7.0");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }
       try{window.ZSClaudeConnector?.attachToProvider?.();}catch (_e) { globalThis.ZSSafe?.seen?.("claude.connector", _e); }
     },
     getEditor, editorText, chatIsEmpty, isFreshChat, composerFrame, barMount,

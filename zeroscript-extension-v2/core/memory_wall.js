@@ -8,7 +8,7 @@
 (() => {
   "use strict";
 
-  const WALL_VERSION = "4.6.0";
+  const WALL_VERSION = "4.7.0";
   const WALL_KEY_PREFIX = "zsWall:";
   const WALL_MAX_ENTRIES = 200; // MAX 200 — leaner, faster prune
   const WALL_PRUNE_AT = 240; // MAX 240 — earlier prune
@@ -64,6 +64,8 @@ _One-line what this place is_
   }
 
   let _wall = null;
+  // The legacy "zsMemoryWall" mirror is written at most once per document.
+  let _legacyMirrored = false;
   // 10× cache: precomputed buildContext string + facts snapshot version
   let _ctxCache = "";
   let _ctxAt = 0;
@@ -138,7 +140,18 @@ _One-line what this place is_
     const k = wallKey();
     // no compress — raw wall is <20k, compress cost > benefit. Keep pack compat for legacy reads only.
     const toSave = { version:_wall.version, updatedAt:_wall.updatedAt, wall:_wall.wall, timeline: (_wall.timeline||[]).slice(-WALL_MAX_ENTRIES), facts: _wall.facts||{} };
-    try{ chrome.storage.local.set({ [k]: toSave, zsMemoryWall: toSave }); }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.saveWall", _e); }
+    // 4.6.0 wrote the SAME object under both the per-place key and the legacy
+    // "zsMemoryWall" key on every save. chrome.storage.local.set costs one write
+    // per key, so that doubled the write traffic and the quota for the whole
+    // life of the wall — for a fallback that only has to exist until the first
+    // successful per-place save. The legacy key is still WRITTEN ONCE per
+    // document (so an older reader, or a place whose key changed, still finds
+    // something), then never again.
+    try{
+      const payload = { [k]: toSave };
+      if (!_legacyMirrored) { payload.zsMemoryWall = toSave; _legacyMirrored = true; }
+      chrome.storage.local.set(payload);
+    }catch (_e) { globalThis.ZSSafe?.seen?.("memory_wall.saveWall", _e); }
     beaconWall(_wall);
     _ctxDirty = true;
   }

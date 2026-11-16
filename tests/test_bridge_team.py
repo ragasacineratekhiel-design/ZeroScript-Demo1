@@ -35,6 +35,46 @@ class TeamTests(unittest.TestCase):
         for role in ("planner", "coder", "checker"):
             self.hub.ready(role)
 
+    def test_one_member_leaving_does_not_kill_the_team(self):
+        """4.6.0 called stop(team) from leave(), so ANY departure ended the run.
+
+        A plain tab reload fires tabs.onUpdated(status="loading") -> leave(), so
+        reloading one AI page stopped the team for the other two tabs as well.
+        """
+        self.start()
+        planner = [m for m in self.hub.members.values() if m["role"] == "planner"][0]
+        self.hub.leave(planner["id"])
+        self.assertTrue(self.hub.teams["studio"]["active"], "team must survive losing one of three members")
+        coder = [m for m in self.hub.members.values() if m["role"] == "coder"][0]
+        self.hub.leave(coder["id"])
+        self.assertTrue(self.hub.teams["studio"]["active"], "team must survive losing two of three members")
+        checker = [m for m in self.hub.members.values() if m["role"] == "checker"][0]
+        self.hub.leave(checker["id"])
+        self.assertFalse(self.hub.teams["studio"]["active"], "the last member leaving stops the team")
+
+    def test_event_log_reports_truncation_at_the_real_boundary(self):
+        """`since < oldest - 1` said "nothing lost" when the answer was "lost"."""
+        for i in range(1200):                      # buffer keeps the newest 1000
+            with self.hub.lock:                    # _event expects the lock held
+                self.hub._event("noise", team="t", name="n", role="r", text=str(i))
+        oldest = self.hub.events[0]["seq"]
+        # Cursor one behind the oldest retained event: that event is gone.
+        self.assertTrue(self.hub.event_log(oldest - 1)["truncated"],
+                        "since==oldest-1 means the event asked for was evicted")
+        # Cursor exactly at the oldest retained event: nothing was missed.
+        self.assertFalse(self.hub.event_log(oldest)["truncated"])
+        self.assertEqual(self.hub.event_log(oldest)["oldest"], oldest)
+
+    def test_summary_does_not_report_expired_ghost_teams(self):
+        self.start()
+        for m in list(self.hub.members.values()):
+            self.hub.leave(m["id"])
+        self.hub.stop("studio")
+        self.now += self.hub.ttl * 10
+        summary = self.hub.summary()
+        self.assertEqual(list(summary["teams"].keys()), [],
+                         "an expired member must not keep an empty team in the summary")
+
     def test_expired_required_role_stops_run_and_clears_queues(self):
         self.start()
         self.hub.send("planner","coder","queued work","stale-work")
@@ -129,11 +169,24 @@ class TeamTests(unittest.TestCase):
         with self.assertRaises(TeamError):
             self.hub.send("planner", "all", "No", "2")
 
-    def test_leaving_stops_team_and_clears_queued_messages(self):
+    def test_leaving_does_not_stop_the_team_until_the_last_member_goes(self):
+        """4.6.0's contract here was the bug: leave() -> stop(team) on ANY exit.
+
+        A tab reload emits tabs.onUpdated(status="loading") -> leave(), so this
+        test used to certify that reloading one AI page killed the other two.
+        """
         self.start()
+        self.hub.send("planner", "all", "Hello", "1")
         self.hub.leave("coder")
-        self.assertFalse(self.hub.status("planner")["active"])
-        self.assertEqual(self.hub.inbox("checker")["messages"], [])
+        self.assertTrue(self.hub.status("planner")["active"],
+                        "one of three members leaving must not end the run")
+        self.hub.leave("planner")
+        self.assertTrue(self.hub.status("checker")["active"])
+        self.hub.leave("checker")
+        # The member is gone, so ask the team rather than the member.
+        self.assertNotIn("studio", self.hub.summary()["teams"],
+                         "a stopped team with no live members must not be reported")
+        self.assertFalse(self.hub.teams["studio"]["active"], "the last member leaving stops the team")
 
     def test_limits_and_restart_cursor(self):
         self.start()

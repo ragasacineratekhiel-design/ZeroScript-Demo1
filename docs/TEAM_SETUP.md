@@ -1,4 +1,4 @@
-# ZeroScript MAX 4.6.0 — bridge-mediated planner, coder, checker
+# ZeroScript MAX 4.7.0 — bridge-mediated planner, coder, checker
 
 A Chrome/Edge extension connects open AI chat tabs to a local Python bridge and Roblox Studio's MCP server. **Team messages travel through bridge mailboxes, not through Roblox scripts or a shared website.** The bridge does not contain AI models and does not call model APIs.
 
@@ -38,9 +38,9 @@ Console event meanings:
 | `stopped` / `left` | Relay paused, or a tab left/navigated to a different conversation. Already-running Studio operations are not undone. |
 | `role_violation` | A `planner` or `checker` tab attempted a Studio mutation (`execute_luau`, `multi_edit`, etc.) and was blocked (`[ROLE-BLOCKED]`). Only `coder` may mutate Studio. |
 
-### Enforced role boundaries (4.6.0)
+### Enforced role boundaries (4.7.0)
 
-Unlike prompt-only instructions, 4.6.0 enforces role permissions in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
+Unlike prompt-only instructions, 4.7.0 enforces role permissions in `core/main.js`, `background.js`, **and** `bridge.py`/`team_hub.py`:
 
 - **Planner** (`read-only + team_*`): inspects Studio (`inspect_instance`, `script_read`, `search_game_tree`, `get_studio_state`, `verify_fact`), designs the architecture, and hands plans to `coder` via `team_send`. Any `execute_luau` / `multi_edit` call is rejected with `ROLE VIOLATION`.
 - **Coder** (`full Studio read/write + team_*`): the **only** role allowed to create, edit, or execute Luau/instances in Roblox Studio; reports completed changes and evidence via `team_send`.

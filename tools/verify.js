@@ -120,6 +120,7 @@ function checkManifest() {
     "core/config.js": ["ZS"],
     "core/parser.js": ["ZSParse"],
     "core/sandbox.js": ["ZSSandbox"],
+    "core/dom_watch.js": ["ZSDomWatch"],
     "core/memory_wall.js": ["ZSMemoryWall"],
     "core/plan_wall.js": ["ZSPlanWall"],
     "core/agent_hub.js": ["ZSAgentHub"],
@@ -361,6 +362,7 @@ function checkApiMembers() {
   console.log("\n[4] cross-module API contract");
   const mods = {
     ZSSandbox: { rel: "core/sandbox.js", exports: ["ZSSandbox"] },
+    ZSDomWatch: { rel: "core/dom_watch.js", exports: ["ZSDomWatch"] },
     ZSAgentHub: { rel: "core/agent_hub.js", exports: ["API"] },
     ZSPlanWall: { rel: "core/plan_wall.js", exports: ["API"] },
     ZSMemoryWall: { rel: "core/memory_wall.js", exports: ["MemoryWall"] },
@@ -405,19 +407,12 @@ function selfTestScopeChecker() {
     if (caught2.length) ok("scope", `self-test caught the undefined call inside a nested function (${caught2.length})`);
     else fail("scope", "the checker did NOT catch an undefined call inside a nested function body — it is blind again");
   }
-  const realExt = EXT;
-  // temporarily point the walker at the fixtures dir only
+  // `before`/`savedRoot` are load-bearing: the self-test below must NOT append to
+  // the real failure list (line ~462 restores it). 4.7.0 removed only what was
+  // genuinely dead here: `realExt`, the console mute/restore pair, and a parse of
+  // the fixture into a variable that was immediately discarded via `void ast`.
   const savedRoot = ROOT;
   const before = failures.length;
-  const quiet = console.log;
-  console.log = () => {};
-  try {
-    const src = fs.readFileSync(fixture, "utf8");
-    const ast = ACORN.parse(src, { ecmaVersion: "latest", locations: true });
-    void ast;
-  } catch {}
-  console.log = quiet;
-  // Simplest reliable self-test: run the same resolution logic over the fixture.
   const caught = (function () {
     let n = 0;
     const src = fs.readFileSync(fixture, "utf8");
@@ -466,7 +461,7 @@ function selfTestScopeChecker() {
     }
     return n;
   })();
-  failures.length = before;
+  failures.length = before;   // self-test must not pollute the real failure list
   void savedRoot;
   if (caught > 0) ok("scope", `self-test caught the trapped declaration in the fixture (${caught} read(s))`);
   else fail("scope", "self-test FAILED: the fixture's ReferenceError was not detected — the check protects nothing");
@@ -738,6 +733,37 @@ function checkTimingHonesty() {
   }
   if (hot.length) warn("timing", `sub-50ms setInterval polling: ${hot.join(", ")} — verify it is a deliberate safety net`);
   else ok("timing", "no gratuitous sub-50ms interval polling in hot paths");
+
+  // (e) 4.7.0: documentation is where invented latency lives. ULTRA.md carried a
+  //     "Latency" column of `~1–3ms` / `~2ms` figures that nothing in this tree
+  //     ever measured. Code-only checks cannot see that, so scan the prose too:
+  //     a sub-millisecond-to-few-ms claim in a markdown table must be backed by
+  //     either a measured marker or an explicit correction note.
+  const DOCS = ["README.md", "docs/UPGRADE_AUDIT_4.7.0.md",
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "ULTRA.md"),
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "CHANGELOG_ULTRA.md"),
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "CHANGELOG_STUDIO_v2.1.md")];
+  const unbacked = [];
+  for (const rel of DOCS) {
+    const abs = path.join(ROOT, rel);
+    if (!fs.existsSync(abs)) continue;
+    const lines = fs.readFileSync(abs, "utf8").split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (!/^\s*\|/.test(line)) return;                    // table rows only
+      const claim = /~\d+(?:[–-]\d+)?\s?ms|\d+(?:[–-]\d+)\s?ms\b/.exec(line);
+      if (!claim) return;
+      // A tilde (`~2ms`) or a range (`4–8ms`) is an estimate. A bare interval
+      // ("250 ms trailing", "0 ms long-poll", "10 ms busy-poll") is a configured
+      // technical value, not a latency claim, so it is not flagged.
+      if (/measured|benchmark|asserted/i.test(line)) return;  // explicitly sourced
+      unbacked.push(`${rel}:${i + 1} claims "${claim[0]}"`);
+    });
+  }
+  if (unbacked.length) {
+    warn("timing", `unmeasured latency claim(s) in docs — measure them or write the correction: ${unbacked.slice(0, 4).join("; ")}${unbacked.length > 4 ? ` (+${unbacked.length - 4} more)` : ""}`);
+  } else {
+    ok("timing", "no unmeasured millisecond claims in the documented tables");
+  }
 }
 
 // ── 6. version agreement// ── 6. version agreement ──────────────────────────────────────────────────
@@ -755,13 +781,25 @@ function checkVersions(mf) {
       if (!v.startsWith(want)) { fail("version", `${path.relative(ROOT, f)} declares "${v}", manifest says ${want}`); bad++; }
     }
   }
-  if (!bad) ok("version", `all module versions start with ${want}`);
+  // 4.7.0: object-literal versions were invisible to this check. Several modules
+  // report themselves through `{ ..., version: "4.7.0" }` (agent_stability used
+  // to say 4.5.0 there while every other surface said 4.7.0, and nothing caught
+  // it). Match the property form too, but only on an exact dotted version so a
+  // `version: "ws"` string elsewhere is not misread.
+  for (const f of files) {
+    const src = fs.readFileSync(f, "utf8");
+    for (const m of src.matchAll(/\bversion\s*:\s*"((?:\d+\.)+\d+)"/g)) {
+      const v = m[1];
+      if (!v.startsWith(want)) { fail("version", `${path.relative(ROOT, f)} exposes version "${v}", manifest says ${want}`); bad++; }
+    }
+  }
+  if (!bad) ok("version", `all module versions start with ${want} (const and object-literal forms)`);
 }
 
 // ── 7. assertion tests ────────────────────────────────────────────────────
 function runTests(testsOnly) {
   console.log("\n[6] assertion tests");
-  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js"];
+  const tests = ["test-parser.js", "test-chatgpt.js", "test-sandbox.js", "test-plan-wall.js", "test-memory-wall.js", "test-safe.js", "test-peer-wall.js", "test-two-tabs.js", "test-observers.js", "test-composer.js", "test-coalescing.js", "test-dom-watch.js", "test-status-fanout.js", "test-studio-monitor.js"];
   let failCount = 0, ran = 0;
   for (const t of tests) {
     const p = path.join(EXT, t);

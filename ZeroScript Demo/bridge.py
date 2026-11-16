@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ZeroScript Bridge 4.6.0: authenticated loopback WebSocket/HTTP MCP proxy.
+# ZeroScript Bridge 4.7.0: authenticated loopback WebSocket/HTTP MCP proxy.
+# 4.7.0: parallel studio_full_tree fan-out, single-flight Studio probe with a
+#        short negative TTL, O(1) agent-temp eviction, POSIX port-owner lookup.
 # 4.6.0: team_* over WS (not just HTTP), coder-only mutation enforcement,
 # /api/verify ground-truth reads for /truth, team-event push to WS clients,
 # long-poll team events, cached Studio probes.
@@ -19,6 +21,7 @@ import os
 import queue
 import re
 import functools
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from team_hub import TeamHub, TeamError, is_mutating as _team_is_mutating
 except ImportError:  # run as a package / different cwd
@@ -83,7 +86,7 @@ def _enable_ansi_colors():
     except: return False
 
 HOST="127.0.0.1"
-BRIDGE_VERSION="4.6.1"
+BRIDGE_VERSION="4.7.0"
 PORT=int(os.environ.get("ZS_BRIDGE_PORT","17613"))
 PORT_HTTP=int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(PORT+1)))
 # Back-compat: extension originally only knew 17613 WS. We now serve BOTH ports:
@@ -179,7 +182,12 @@ class RateLimiter:
             return False
 _rate_limiter=RateLimiter()
 
-# ── LRU cache for idempotent queries ──────────────────────────────────
+# ── bounded TTL store for agent scratch values ────────────────────────
+# 4.6.0 evicted with `min(...)` over the WHOLE dict on every insert once the map
+# was full: O(n) per write, so the 256-entry cap turned a hot scratchpad into
+# quadratic work (and it scanned live entries the TTL sweeper had already
+# expired). A plain insertion-ordered dict gives O(1) eviction of the oldest key,
+# which is the FIFO behaviour the old code was approximating.
 _AGENT_TEMP = {}
 _AGENT_TEMP_LOCK = threading.Lock()
 _AGENT_TEMP_MAX = 256
@@ -187,10 +195,13 @@ _AGENT_TEMP_MAX = 256
 def _agent_temp_set(key, value, src="agent", ttl=120.0):
     now = time.time()
     with _AGENT_TEMP_LOCK:
-        if len(_AGENT_TEMP) >= _AGENT_TEMP_MAX:
-            # drop the oldest entry first — bounded memory, never unbounded growth
-            oldest = min(_AGENT_TEMP.items(), key=lambda kv: kv[1].get("ts", 0))[0]
+        while len(_AGENT_TEMP) >= _AGENT_TEMP_MAX:
+            oldest = next(iter(_AGENT_TEMP), None)
+            if oldest is None: break
             _AGENT_TEMP.pop(oldest, None)
+        # Re-inserting an existing key must move it to the end (dict keeps
+        # insertion order, and plain re-assignment does NOT move it).
+        _AGENT_TEMP.pop(key, None)
         _AGENT_TEMP[key] = {"value": value, "from": src, "ts": now, "exp": now + max(1.0, ttl)}
     return True
 
@@ -275,7 +286,14 @@ STUDIO_MCP_PORT=13469
 
 # ── port helpers (kept) ────────────────────────────────────────────────
 def _port_owner(port):
-    if sys.platform!="win32": return None
+    """(pid, name, path) of whoever is listening on `port`, or None.
+
+    4.6.0 returned None for every non-Windows platform, yet MacOS_START.command
+    ships a macOS launcher — so on macOS the "port 17613 is already in use"
+    message had no idea WHO held it and the user got no actionable advice. The
+    POSIX path below uses only stdlib + the OS's own tools and degrades to None.
+    """
+    if sys.platform!="win32": return _port_owner_posix(port)
     out=""
     for proto in ("TCP","TCPv6"):
         try: out+=subprocess.run(["netstat","-ano","-p",proto],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=8).stdout
@@ -293,6 +311,46 @@ def _port_owner(port):
         ps=[l.strip() for l in ps if l.strip()]
         if ps: name=ps[0]; path=ps[1] if len(ps)>1 else ""
     except: pass
+    return (pid,name,path)
+
+def _port_owner_posix(port):
+    """lsof/ss + ps based lookup for macOS/Linux. Never raises."""
+    pid=None
+    try:
+        r=subprocess.run(["lsof","-nP","-iTCP:%d"%port,"-sTCP:LISTEN","-Fpn"],
+                         capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=6)
+        if r.returncode==0 and r.stdout:
+            # -F output is records: "p<pid>" then "n<addr>"; the first p is ours.
+            for line in r.stdout.splitlines():
+                if line.startswith("p") and line[1:].isdigit():
+                    pid=line[1:]; break
+    except Exception:
+        pid=None
+    if not pid:
+        try:  # ss is the iproute2 fallback (Linux without lsof)
+            r=subprocess.run(["ss","-lptnH","sport = :%d"%port],
+                             capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=6)
+            m=re.search(r"pid=(\d+)",r.stdout or "")
+            if m: pid=m.group(1)
+        except Exception:
+            pid=None
+    if not pid: return None
+    name,path="?",""
+    try:
+        r=subprocess.run(["ps","-p",pid,"-o","comm="],capture_output=True,text=True,
+                         encoding="utf-8",errors="replace",timeout=6)
+        name=(r.stdout or "").strip() or "?"
+    except Exception:
+        name="?"
+    try:
+        if sys.platform=="darwin":
+            r=subprocess.run(["ps","-p",pid,"-o","command="],capture_output=True,text=True,
+                             encoding="utf-8",errors="replace",timeout=6)
+            path=(r.stdout or "").strip()
+        else:
+            path=os.path.realpath("/proc/%s/exe"%pid)
+    except Exception:
+        path=""
     return (pid,name,path)
 
 def _roblox_studio_app_running():
@@ -697,20 +755,54 @@ def _probe_tool_text(tool):
     except: return None
     finally: holder.call_lock.release()
 
-_probe_cache={"at":0.0,"val":None}
+_probe_cache={"at":0.0,"val":None,"busy":False,"done":None}
 _probe_cache_lock=threading.Lock()
 _PROBE_TTL=1.0
+# A negative/unknown probe is cached for this long instead of the full TTL.
+# Studio start-up is exactly when users retry, so a stale "app: null" costs a
+# whole second of the user staring at "disconnected".
+_PROBE_NEG_TTL=_PROBE_TTL/4
 
 def probe_studio_cached():
-    """probe_studio with a 1s TTL — hello/status bursts reuse one MCP read."""
-    now=time.monotonic()
+    """probe_studio with a TTL and single-flight coalescing.
+
+    4.6.0 gated on `_probe_cache["val"] is not None`, but probe_studio returns
+    {"app": None} when Studio is unreachable — a NON-None dict. The guard was
+    therefore always true and never did what its comment claimed; and every
+    hello/status burst that arrived while Studio was down re-ran the two-tool
+    probe. The timestamp (`at`) is the single source of truth now: 0.0 means
+    "never probed", so a None-shaped answer is a valid cache entry.
+    """
     with _probe_cache_lock:
-        if _probe_cache["val"] is not None and now-_probe_cache["at"] < _PROBE_TTL:
+        if _probe_cache["at"]:
+            age=time.monotonic()-_probe_cache["at"]
+            val=_probe_cache["val"]
+            neg=isinstance(val,dict) and val.get("app") is not True
+            if age < (_PROBE_NEG_TTL if neg else _PROBE_TTL):
+                return val
+        if _probe_cache["busy"]:
+            wait_on=_probe_cache["done"]        # someone else is probing: wait
+            claimed=False
+        else:
+            _probe_cache["busy"]=True
+            _probe_cache["done"]=threading.Event()
+            wait_on=None
+            claimed=True
+    if not claimed:
+        wait_on.wait(timeout=_PROBE_TTL*2)
+        with _probe_cache_lock:
             return _probe_cache["val"]
-    val=probe_studio()
-    with _probe_cache_lock:
-        _probe_cache["at"]=time.monotonic(); _probe_cache["val"]=val
-    return val
+    finish=_probe_cache["done"]
+    try:
+        val=probe_studio()
+        with _probe_cache_lock:
+            _probe_cache["at"]=time.monotonic()
+            _probe_cache["val"]=val
+        return val
+    finally:
+        with _probe_cache_lock:
+            _probe_cache["busy"]=False
+        finish.set()
 
 def probe_studio():
     roblox=mgr.clients.get(PRIMARY_SERVER_ID)
@@ -756,15 +848,56 @@ def studio_heartbeat_check():
         _studio_consec_fails += 1
         return False
 
+_TREE_WORKERS = 8
+_TREE_DEADLINE_S = 12.0
+
 def studio_full_tree(max_depth=2):
-    # inspect_instance returns a summary, not a recursively complete DataModel.
-    root={"services":{},"ok":True,"truncated":True,"requested_depth":max_depth,"note":"Service summaries only; inspect child paths separately.","errors":{}}
-    for svc in dict.fromkeys(STUDIO_ALL_SERVICES):
-        if svc in ("StarterPlayerScripts","StarterCharacterScripts"): continue
-        result=safe_call("inspect_instance",{"path":svc},4)
-        if result.get("ok"): root["services"][svc]=result["text"]
-        else: root["errors"][svc]=result.get("error")
+    """Summaries for every Studio service.
+
+    4.6.0 called inspect_instance for 27 services IN SERIES at 4 s each: worst
+    case 108 s of one HTTP request, for an answer that is only as good as the
+    slowest service anyway. Studio is a local MCP, so those calls are latency-
+    bound, not CPU-bound — they run concurrently now.
+
+    Two limits keep it honest:
+      * the shared _tool_slots semaphore (16) still caps total in-flight tools,
+        so this cannot starve a user-initiated script run;
+      * a wall-clock deadline abandons stragglers instead of waiting for them.
+        Results that arrived are returned and the rest are reported as errors,
+        exactly as a timeout would have.
+    """
+    t0 = time.monotonic()
+    services = [s for s in dict.fromkeys(STUDIO_ALL_SERVICES)
+                if s not in ("StarterPlayerScripts", "StarterCharacterScripts")]
+    root={"services":{},"ok":True,"truncated":True,"requested_depth":max_depth,
+          "note":"Service summaries only; inspect child paths separately.","errors":{}}
+    if not services:
+        return root
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(_TREE_WORKERS, len(services)),
+                            thread_name_prefix="zs-tree") as pool:
+        futures = {pool.submit(safe_call, "inspect_instance", {"path": svc}, 4): svc
+                   for svc in services}
+        # as_completed raises the stdlib TimeoutError, which bridge.py also uses
+        # as its own timeout type — handled explicitly so it cannot be confused
+        # with a per-service failure.
+        try:
+            for fut in as_completed(futures, timeout=_TREE_DEADLINE_S):
+                svc = futures[fut]
+                try:
+                    results[svc] = fut.result()
+                except Exception as e:                 # noqa: BLE001 - per service
+                    results[svc] = {"ok": False, "error": str(e), "kind": type(e).__name__}
+        except TimeoutError:
+            for fut, svc in futures.items():
+                if svc not in results:
+                    results[svc] = {"ok": False, "error": "service summary timed out", "kind": "timeout"}
+    for svc in services:
+        r = results.get(svc) or {"ok": False, "error": "no result", "kind": "incomplete"}
+        if r.get("ok"): root["services"][svc]=r["text"]
+        else: root["errors"][svc]=r.get("error")
     root["ok"]=not root["errors"]
+    root["elapsed_ms"]=int((time.monotonic()-t0)*1000)
     return root
 
 def studio_exec(code, timeout=20, datamodel="Edit", member_id=None):

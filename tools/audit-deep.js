@@ -249,13 +249,25 @@ for (const { file, src } of allFiles) {
   const observeCalls = src.match(/\.observe\(/g) || [];
   if (observeCalls.length > 0) {
     const hasWholeDoc = /\{[^}]*subtree\s*:\s*true/.test(src);
-    const hasCoalesce = /(clearTimeout|setTimeout\(\s*\(\)\s*=>)/.test(src);
+    // A coalescer is any single-slot batching primitive: a timer, a microtask,
+    // or an explicit "already scheduled" flag. 4.7.0 only recognised setTimeout,
+    // so a CORRECT observer that batched through queueMicrotask (core/dom_watch.js
+    // does exactly that) was reported as an observer storm — a false positive that
+    // teaches people to ignore the audit.
+    const hasCoalesce = /(clearTimeout|setTimeout\(\s*\(\)\s*=>|queueMicrotask|requestAnimationFrame|_scheduled|scheduled\s*=\s*true)/.test(src);
     const observerCb = /new\s+MutationObserver\(\s*\(?[\w,\s]*\)?\s*=>/.test(src);
     if (hasWholeDoc && observerCb && !hasCoalesce) {
       add("observer-storm", "P2", file, 0,
         "subtree observer calls its scan directly from the callback with no coalescing — " +
         "a streamed reply turns every DOM mutation into a full-document scan",
         "batch through a 0ms timer and skip while document.hidden");
+    }
+    // A whole-document observer that never checks visibility keeps scanning a
+    // page nobody is looking at: background tabs are throttled, not stopped.
+    if (hasWholeDoc && observerCb && !/document\.hidden/.test(src)) {
+      add("observer-hidden", "P3", file, 0,
+        "whole-document observer never checks document.hidden — it keeps working in a background tab",
+        "return early while the document is hidden");
     }
   }
 }
@@ -791,4 +803,15 @@ if (process.argv.includes("--json")) {
   console.log("\n" + "=".repeat(70));
   console.log(`TOTAL: ${findings.length} findings`);
 }
-process.exit(bySev.P0.length ? 1 : 0);
+// 4.7.0: this used to exit 0 for everything but a P0, while the CI step that
+// runs it is literally titled "zero P0/P1/P2". A P1 regression would therefore
+// pass CI with a green tick and a printed defect. The severity gate below is the
+// one that title promises: P0 and P1 fail the build; P2 is reported and fails
+// only when ZS_AUDIT_STRICT=1, because the currently-known P2/P3 items are
+// advisory (byte-identical helpers across self-contained providers).
+const blocking = bySev.P0.length + bySev.P1.length;
+const strictP2 = process.env.ZS_AUDIT_STRICT === "1" ? bySev.P2.length : 0;
+if (blocking) console.log(`\nFAIL: ${bySev.P0.length} P0 + ${bySev.P1.length} P1 must be zero.`);
+else if (strictP2) console.log(`\nFAIL: ${strictP2} P2 under ZS_AUDIT_STRICT=1.`);
+else console.log(`\nOK: 0 P0, 0 P1${process.env.ZS_AUDIT_STRICT === "1" ? ", 0 P2" : `, ${bySev.P2.length} P2 advisory`}.`);
+process.exit(blocking + strictP2 ? 1 : 0);

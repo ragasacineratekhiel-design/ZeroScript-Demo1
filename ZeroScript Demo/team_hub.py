@@ -17,7 +17,9 @@ it does not prove that the model read or understood the message.
   every call — faster under heartbeat load.
 - inbox() reports total pending so callers know when more is queued.
 """
-__version__ = "4.6.1"
+# Team relay: roles, mailboxes, introduction turns, run lifecycle.
+VERSION = "4.7.0"
+
 import collections
 import datetime
 import secrets
@@ -399,16 +401,48 @@ class TeamHub:
             return {"ok": True}
 
     def leave(self, member_id):
+        """Remove one member.
+
+        4.6.0 called self.stop(team) here, i.e. ONE tab navigating away killed
+        the whole run for every other tab — including a reload, which fires
+        tabs.onUpdated status=loading. A team is only stopped when the departing
+        member was the LAST live one; otherwise it is marked incomplete and the
+        remaining members are told exactly which role is missing.
+        """
         with self.lock:
-            member=self.members.pop(member_id,None)
-            if member:
-                self.stop(member["team"])
-                self._event("left",team=member["team"],name=member["name"],role=member["role"],text="Tab left or navigated away. Rejoin all required roles before restarting.")
-            return {"ok":True}
+            member = self.members.pop(member_id, None)
+            if not member:
+                return {"ok": True}
+            team = member["team"]
+            remaining = self._live(team)
+            if not remaining:
+                self.stop(team, "The last member left.")
+            else:
+                self._event("left", team=team, name=member["name"], role=member["role"],
+                            text=f"{member['role']} left ({len(remaining)} tab(s) still live). "
+                                 f"Rejoin that role and restart the team before it can continue.")
+            return {"ok": True}
 
     def event_log(self, since=0):
+        """Events newer than `since`.
+
+        `truncated` answers one question: did the caller miss events that were
+        already evicted? The buffer keeps the newest 1000, so if the oldest
+        surviving id is 500 and the caller\'s cursor is 499, then event 499 is
+        gone and the answer is YES. 4.6.0 compared `since < oldest - 1`, which
+        says NO for exactly that case (499 < 499 is false) — an off-by-one that
+        hid data loss precisely when a cursor sat one event behind the buffer.
+        `since == oldest` is the correct "nothing missed" boundary.
+        """
         with self.lock:
-            return {"ok": True, "events": [e for e in self.events if e["seq"] > since], "cursor": self.seq, "reset": since > self.seq, "truncated": bool(self.events and since and since < self.events[0]["seq"] - 1)}
+            oldest = self.events[0]["seq"] if self.events else None
+            dropped = bool(oldest is not None and since and since < oldest)
+            return {"ok": True,
+                    "events": [e for e in self.events if e["seq"] > since],
+                    "cursor": self.seq,
+                    "reset": since > self.seq,
+                    "oldest": oldest,
+                    "truncated": dropped}
 
     def wait_events(self, since=0, timeout=5.0):
         """Block until a new event arrives after `since` or `timeout` elapses (0ms wake)."""
@@ -426,7 +460,17 @@ class TeamHub:
         with self.lock:
             self._expire_runs()
             teams_out = {}
-            all_names = set(self.teams.keys()) | {m["team"] for m in self.members.values()}
+            # Only LIVE members contribute team names: a dead member from a
+            # finished run used to keep an empty ghost team in the summary
+            # forever, which made team_console print phantom rows.
+            # A stopped team with no live members is finished: keeping its name
+            # here made team_console print a phantom row for every run that had
+            # ever ended, because `self.teams` itself is never pruned. The run
+            # record stays available via status() until it expires; it just stops
+            # masquerading as a team.
+            all_names = {t for t, st in self.teams.items() if st.get("active")}
+            all_names |= {m["team"] for m in self.members.values()
+                          if self.clock() - m["seen"] <= self.ttl}
             if team:
                 all_names = {n for n in all_names if n == team}
             for tname in sorted(all_names):

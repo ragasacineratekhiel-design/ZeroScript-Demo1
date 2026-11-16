@@ -7,7 +7,7 @@
 // Stores plan config in chrome.storage (zsPlan, zsPlanRoles, zsPlanWallLog)
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
   const PLAN_WALL_KEY = "zsPlanWall";
   const PLAN_KEY = "zsPlan";
   const PLAN_ROLES_KEY = "zsPlanRoles";
@@ -56,9 +56,89 @@
     if(!PLANS[planId]) return false;
     currentPlan = planId;
     if(roles && typeof roles==="object") currentRoles = {...currentRoles, ...roles};
-    // defaults per plan
+    // Defaults for roles the caller did not supply.
+    //
+    // 4.6.0 assigned AI_PROVIDERS[0] to EVERY missing role, so the default state
+    // of a fresh plan was "all three roles are DeepSeek". peer_wall.auditPlan()
+    // rejects exactly that ("a model cannot review itself" / "every role is the
+    // same AI"), and the extension would start a run that its own auditor calls
+    // invalid. Spread the defaults over DISTINCT providers instead, skipping any
+    // provider a role already holds.
     const needed = PLANS[planId].roles;
-    for(const r of needed){ if(!currentRoles[r]) currentRoles[r] = AI_PROVIDERS[0]; }
+    // ANY provider a NEEDED role already holds is off-limits for the defaults —
+    // seeded up front, before any pick. My first version added assignments to
+    // `taken` while walking the roles, so a provider pinned for a LATER role
+    // could still be handed to an EARLIER one (pinning planner: Claude after a
+    // previous call had already defaulted coder: Claude produced two Claudes,
+    // which is the exact condition auditPlan rejects). Caught by the plan-wall
+    // test, not by anything that ran the extension.
+    const taken = new Set();
+    for (const r of needed) {
+      if (currentRoles[r]) taken.add(String(currentRoles[r]).toLowerCase());
+    }
+    let next = 0;
+    const pickFree = () => {
+      while (next < AI_PROVIDERS.length) {
+        const cand = AI_PROVIDERS[next++];
+        if (!taken.has(cand.toLowerCase())) { taken.add(cand.toLowerCase()); return cand; }
+      }
+      // Every provider is already in use (more roles than providers, or a caller
+      // pinned them all). Assigning a duplicate would be dishonest about what a
+      // plan can promise, so leave it and let auditPlan report it.
+      return "";
+    };
+    // Roles outside this plan keep their assignment but must not block a pick
+    // that a NEEDED role requires... except they share the same provider pool, so
+    // they do block: two roles on one provider is what the audit forbids.
+    for (const [r, p] of Object.entries(currentRoles || {})) {
+      if (!needed.includes(r)) taken.add(String(p).toLowerCase());
+    }
+    // Pass 1: fill every empty role.
+    for (const r of needed) {
+      if (currentRoles[r]) continue;      // already assigned (and in `taken`)
+      const pick = pickFree();
+      if (pick) currentRoles[r] = pick;
+    }
+    // Pass 2: self-heal a duplicate the caller did not ask for. Pinning one role
+    // can leave a DIFFERENT role holding the same provider (it was defaulted
+    // before, and `roles` carries only the new pin). Leaving it means
+    // peer_wall.auditPlan() rejects the plan before the run starts, so reassign
+    // the duplicate — never the role the caller just pinned.
+    //
+    // Rewritten after the first attempt at this made things WORSE: it reassigned
+    // a dupe onto `AI_PROVIDERS.find(free)` where "free" was computed against
+    // the map it was mid-way through updating, so it happily picked a provider
+    // already taken. A sweep of 72 plan states against the real auditor found 5
+    // still-rejected plans; this loop is written so that cannot happen.
+    const pinnedRoles = new Set(Object.keys(roles && typeof roles === "object" ? roles : {}));
+    const resolveDuplicates = () => {
+      const byProvider = new Map();
+      for (const r of needed) {
+        const p = String(currentRoles[r] || "").toLowerCase();
+        if (!p) continue;
+        if (!byProvider.has(p)) { byProvider.set(p, [r]); continue; }
+        byProvider.get(p).push(r);
+      }
+      let changed = false;
+      for (const [prov, holders] of byProvider) {
+        if (holders.length < 2) continue;
+        // Whoever the caller pinned keeps the provider; heal the rest.
+        const keeper = holders.find((r) => pinnedRoles.has(r)) || holders[0];
+        for (const r of holders) {
+          if (r === keeper) continue;
+          const used = new Set([...byProvider.keys()]);
+          const free = AI_PROVIDERS.find((c) => !used.has(c.toLowerCase()));
+          if (!free) continue;                     // pool exhausted: report, never duplicate
+          currentRoles[r] = free;
+          byProvider.set(free.toLowerCase(), [r]);
+          changed = true;
+        }
+      }
+      return changed;
+    };
+    // Two rounds is enough for three roles; the loop guard keeps a pathological
+    // plan (more roles than providers) from spinning.
+    for (let i = 0; i < 3 && resolveDuplicates(); i++) { /* heal */ }
     _savePlan();
     // broadcast plan change at 10ms
     send("__system","__all",{type:"plan_change", plan: planId, roles: currentRoles, t: Date.now()}, "plan");

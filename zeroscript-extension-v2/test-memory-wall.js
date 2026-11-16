@@ -104,6 +104,23 @@ check("adoptStudioText adopts a richer wall", /## C/.test(W.get().wall));
 W.save();
 check("save writes to chrome.storage", Object.keys(storage).some((k) => k.startsWith("zsWall:") || k === "zsMemoryWall"));
 
+// ── 4.7.0 the legacy mirror is written ONCE per document, not every save ───
+// 4.6.0 wrote the same object under both keys on every saveWall(), doubling
+// write traffic (and quota) forever for a fallback that only exists to migrate
+// a wall written by a version that predates the per-site key. The previous
+// check above cannot see this -- it only asks whether the key exists.
+{
+  let legacyWrites = 0;
+  const realSet = chrome.storage.local.set;
+  chrome.storage.local.set = function (payload) {
+    if (payload && Object.prototype.hasOwnProperty.call(payload, "zsMemoryWall")) legacyWrites++;
+    return realSet.call(this, payload);
+  };
+  for (let i = 0; i < 5; i++) { W.setWallText("# w\n## A\n" + i); W.save(); }
+  chrome.storage.local.set = realSet;
+  check("5 saves write the legacy mirror at most once", legacyWrites <= 1, legacyWrites + " legacy write(s)");
+}
+
 
 // ── 4.6.0 query-keyed trimmed context cache ────────────────────────────────
 const tr1 = W.buildTrimmedContext("shop pricing formula", 400);

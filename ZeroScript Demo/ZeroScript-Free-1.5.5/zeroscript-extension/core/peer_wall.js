@@ -32,7 +32,7 @@
 //                   conversation between two different AIs.
 (() => {
   "use strict";
-  const VERSION = "4.6.1";
+  const VERSION = "4.7.0";
 
   // hostname → stable provider id. Must stay in sync with manifest matches;
   // background.js has its own copy for tab routing (it cannot see this module's
@@ -373,7 +373,7 @@
   // The legacy wall stays (it carries plan/config messages) but every message
   // that crosses AI boundaries now goes through here so identity + distinctness
   // + acknowledgement are guaranteed exactly once.
-  // 4.6.1 role gate: planner/checker may not send executable code tasks.
+  // 4.6.0 role gate: planner/checker may not send executable code tasks.
   // Only the coder executes; planner sends plans (text), checker sends defects.
   function canMutate(role) { return role === "coder"; }
   function sendToRole(planRoles, targetRole, kind, payload) {

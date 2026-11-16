@@ -5,7 +5,7 @@
 // Stores {key, value, from, t, ttl} in background memory + chrome.storage cache, readable by all tabs in 10ms
 (() => {
   "use strict";
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
   const HUB_PREFIX = "zsAgentHub_";
   const BC_NAME = "zs-agent-hub";
 
@@ -135,7 +135,7 @@
     hedgeMs: 5,
     pollMs: 5,
     batchMax: 32,
-    version: "4.6.0",
+    version: "4.7.0",
   };
 
   // HONEST LATENCY (audit #20): these are REAL paths, not marketing numbers.

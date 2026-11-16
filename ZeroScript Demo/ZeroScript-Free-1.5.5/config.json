@@ -1,10 +1,19 @@
 {
-  "version": "4.6.0",
+  "version": "4.7.0",
   "mcpServers": {
     "roblox": {
       "command": "launch_studio_mcp.py",
       "args": [],
       "env": {}
     }
+  },
+  "bridge": {
+    "_comment": "Ports must match the extension (core/config.js TRANSPORT). Env vars ZS_BRIDGE_PORT / ZS_BRIDGE_HTTP_PORT override these.",
+    "wsPort": 17613,
+    "httpPort": 17614,
+    "heartbeatMs": 10000,
+    "reconnectMinMs": 250,
+    "reconnectMaxMs": 5000,
+    "httpTimeoutMs": 5000
   }
 }

@@ -18,7 +18,7 @@ import signal
 import traceback
 from datetime import datetime, timezone
 
-VERSION = "4.6.1"
+VERSION = "4.7.0"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -37,12 +37,41 @@ def local_python():
     return ROOT / '.venv' / ('Scripts/python.exe' if os.name=='nt' else 'bin/python')
 
 
-def install_dependencies():
+WEBSOCKETS_SPEC = 'websockets>=13,<16'
+
+
+def _venv_has_websockets(target):
+    """True when the venv already satisfies WEBSOCKETS_SPEC.
+
+    `install_dependencies` used to shell out to pip unconditionally, which is a
+    network round trip plus a resolver run on every single launch — and it
+    printed "Run start.py again" even when nothing was installed. Asking the venv
+    itself is instant and offline.
+    """
+    try:
+        probe = subprocess.run(
+            [str(target), '-c',
+             'import importlib.metadata as m;print(m.version("websockets"))'],
+            capture_output=True, text=True, timeout=15)
+        if probe.returncode != 0:
+            return False
+        major = int((probe.stdout or '0').strip().split('.')[0])
+        return 13 <= major < 16
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def install_dependencies(force=False):
     import venv
-    target=local_python()
+    target = local_python()
+    created = False
     if not target.is_file():
         venv.EnvBuilder(with_pip=True).create(ROOT / '.venv')
-    subprocess.run([str(target), '-m', 'pip', 'install', 'websockets>=13,<16'], check=True)
+        created = True
+    if not force and not created and _venv_has_websockets(target):
+        print('Dependencies already satisfied in .venv — nothing to install.', flush=True)
+        return 0
+    subprocess.run([str(target), '-m', 'pip', 'install', WEBSOCKETS_SPEC], check=True)
     print('Dependencies installed locally. Run start.py again.', flush=True)
     return 0
 
@@ -74,20 +103,39 @@ def check():
             continue
         probe = socket.socket()
         try:
+            # SO_REUSEADDR off on purpose: we are asking "is somebody there?",
+            # and a reusable bind would answer "no" for a port in TIME_WAIT.
             probe.bind(('127.0.0.1', port))
-        except OSError:
-            print('Warning: port ' + str(port) + ' is already in use (bridge may already be running).', flush=True)
+        except OSError as exc:
+            print('Warning: port ' + str(port) + ' is already in use (' + (exc.strerror or 'in use') +
+                  '; the bridge may already be running).', flush=True)
         finally:
             probe.close()
     print('Checks passed: Python ' + sys.version.split()[0] + ', websockets ' + version, flush=True)
 
 
+def http_port():
+    """The bridge's HTTP port: ZS_BRIDGE_HTTP_PORT, else WS port + 1.
+
+    The same expression appeared three times (health, status, check) with the
+    same parsing bug in each: a malformed ZS_BRIDGE_PORT raised inside the
+    fallback and the whole lookup vanished. One function, one place to be right.
+    """
+    raw = os.environ.get('ZS_BRIDGE_HTTP_PORT')
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    try:
+        return int(os.environ.get('ZS_BRIDGE_PORT', '17613')) + 1
+    except ValueError:
+        return 17614
+
+
 def bridge_health(timeout=2.0):
     """Best-effort /health probe. Returns dict or None. Never raises."""
-    try:
-        port = int(os.environ.get('ZS_BRIDGE_HTTP_PORT', str(int(os.environ.get('ZS_BRIDGE_PORT', '17613')) + 1)))
-    except ValueError:
-        return None
+    port = http_port()
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=timeout) as response:
             return json.load(response)
@@ -103,7 +151,7 @@ def status_summary():
         return 1
     print('Bridge: ' + json.dumps(health), flush=True)
     try:
-        port = int(os.environ.get('ZS_BRIDGE_HTTP_PORT', str(int(os.environ.get('ZS_BRIDGE_PORT', '17613')) + 1)))
+        port = http_port()
         token = (Path(os.environ.get('ZS_DATA_DIR', ROOT)) / '.zs_token').read_text(encoding='utf-8').strip()
         request = urllib.request.Request(f'http://127.0.0.1:{port}/api/team/events?since=0', headers={'X-ZS-Token': token})
         with urllib.request.urlopen(request, timeout=3) as response:

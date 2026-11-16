@@ -195,6 +195,12 @@ for (const block of blocks) {
     ZS_Transport: ["status", "listTools", "callTool", "verifyFact", "invalidate"],
     ZSParse: ["parseToolCalls", "toolNameFromText", "extractJson", "salvageCutOff"],
     ZSSandbox: ["analyseLuau"],
+    // 4.7.0: the shared DOM-change observer moved out of main.js. It is loaded
+    // from the manifest like every other core module, so the smoke boot must
+    // prove it exists and exposes the surface main.js delegates to — otherwise
+    // a manifest edit that drops the file degrades every wait to a timeout and
+    // nothing else in this repo would notice.
+    ZSDomWatch: ["waitForDOMChange", "waitFor", "onDomChange", "stats"],
     ZSMemoryWall: ["buildTrimmedContext", "buildContext", "remember", "stats"],
     ZSPlanWall: ["send", "sendWallTask", "getWallLog", "setPlan", "magicForCurrentTab"],
     ZSAgentHub: ["write", "read", "pushTemp", "getTemp"],

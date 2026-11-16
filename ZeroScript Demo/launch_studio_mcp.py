@@ -16,6 +16,9 @@
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+# Locate and launch the Roblox StudioMCP binary.
+VERSION = "4.7.0"
+
 import os
 import subprocess
 import signal
@@ -129,18 +132,33 @@ _FIND_TTL_MISS = 2.0   # re-check quickly if Studio is still installing/opening
 
 
 def find_studio_mcp() -> Optional[Path]:
-    # 4.6.1 speed: avoid repeating a full Versions/ directory walk on every
-    # watch tick, while invalidating immediately if ZS_STUDIO_MCP_PATH changes.
+    """Locate StudioMCP, cached with an asymmetric TTL.
+
+    4.6.0 chose the TTL from the CACHED value (`value is not None`), so a cache
+    entry that was a hit kept its 30 s TTL even after the binary had been
+    deleted by a Studio update — and a cache entry that was a MISS only stayed
+    fresh for 2 s even if a binary appeared. Worse, the hit branch returned the
+    cached path without re-checking `is_file()` when the entry was a MISS, so
+    the `is_file()` guard only ever protected one of the two paths.
+
+    Now the TTL is chosen from what the caller is about to trust (cached hit vs
+    cached miss), and a cached path is never returned unless it still exists.
+    """
     now = time.monotonic()
     cur_override = os.environ.get(ENV_OVERRIDE)
-    ttl = _FIND_TTL_HIT if _find_cache["value"] is not None else _FIND_TTL_MISS
+    cached = _find_cache["value"]
+    if cached is not None and not cached.is_file():
+        # The binary vanished (Studio update / uninstall). Do not trust it for
+        # the rest of the TTL — invalidate and re-walk immediately.
+        _find_cache["at"] = None
+        cached = None
+    ttl = _FIND_TTL_HIT if cached is not None else _FIND_TTL_MISS
     if (
         _find_cache["at"] is not None
         and _find_cache["override"] == cur_override
         and 0.0 <= now - _find_cache["at"] < ttl
-        and (_find_cache["value"] is None or _find_cache["value"].is_file())
     ):
-        return _find_cache["value"]
+        return cached
     value = _find_studio_mcp_uncached()
     _find_cache["at"] = now
     _find_cache["override"] = cur_override
@@ -182,15 +200,42 @@ def main(argv=None) -> int:
     sys.stderr.write(f"launch_studio_mcp: using {exe}\n")
     sys.stderr.flush()
     proc = subprocess.Popen([str(exe)] + args)
-    # Forward bridge shutdown to our owned child on macOS too; never kill by name.
-    if sys.platform != "win32":
-        signal.signal(signal.SIGTERM, lambda signum, frame: proc.terminate() if proc.poll() is None else None)
-        signal.signal(signal.SIGINT, lambda signum, frame: proc.terminate() if proc.poll() is None else None)
+    # Forward termination to the child we own; never kill by name.
+    #
+    # 4.6.0 installed these handlers only when sys.platform != "win32", so on
+    # Windows a Ctrl+C in the console hit the default handler and orphaned
+    # StudioMCP.exe for the rest of the session. The handler itself is now
+    # idempotent and installed everywhere, and the KeyboardInterrupt path
+    # reuses it instead of duplicating the "terminate if alive" dance.
+    terminated = {"done": False}
+
+    def _forward(signum=None, frame=None):
+        if terminated["done"]:
+            return
+        terminated["done"] = True
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        except (OSError, ValueError):
+            pass
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _forward)
+        except (ValueError, OSError):   # not on the main thread, or unsupported
+            pass
     try:
         return proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        return proc.wait()
+        _forward()
+        try:
+            return proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return 1
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/agent_stability.js — ZeroScript MAX 4.3.0
+// core/agent_stability.js — ZeroScript 4.7.0
 // Makes ALL 15 agents super compatible, never lose connections, super stable during Roblox Studio at ULTRA speed.
 // UPGRADED 3.4: UNIVERSAL Claude+ChatGPT bottom-scan + syntax self-heal + universal STOP-loop + dedupe (fieldset + ProseMirror + composer-surface redesigns), tighter polls, Web Locks keepalive, universal fallbacks.
 // Logic-only — no GUI/text change except Claude tutorial doc.
@@ -80,33 +80,71 @@ const ZSAgentStability = (() => {
     throw lastErr || new Error("send failed");
   }
   function startStudioMonitor(diag, onStudioDrop) {
-    let lastStudio = null, dropSince = 0;
-    const iv = setInterval(async () => {
+    // Two states, not three: `lastStudio` is the last CONFIRMED value and
+    // `dropSince` is the moment an unconfirmed drop began. 4.6.0 mutated
+    // `lastStudio` inside the drop branch AND again in a trailing line
+    // ("keep the previous true state"), so a drop that took longer than two
+    // polls already looked confirmed and the 3 s debounce could fire on the
+    // wrong edge (or not at all). The trailing assignment is gone; the state is
+    // now monotone and readable.
+    let confirmed = null;   // last settled value
+    let dropSince = 0;      // start of a pending true -> false transition
+    let ticking = false;    // no overlapping polls: a slow bridge must not queue them
+    const tick = async () => {
+      if (ticking) return;
+      ticking = true;
       try {
-        const s = await new Promise(res => { try { chrome.runtime.sendMessage({type:"status"}, r => res(r)); } catch { res(null); } });
+        const s = await new Promise((res) => { try { chrome.runtime.sendMessage({ type: "status" }, (r) => res(r)); } catch (_e) { res(null); } });
         if (!s) return;
         const studio = s.studio;
-        if(typeof studio!=="boolean")return;
-        if (lastStudio === null) lastStudio = studio;
-        if (studio === false && lastStudio === true) {
+        if (typeof studio !== "boolean") return;
+        if (confirmed === null) { confirmed = studio; return; }
+        if (studio === true) { dropSince = 0; confirmed = true; return; }
+        // studio === false
+        if (confirmed === true) {
           if (!dropSince) dropSince = Date.now();
-          if (Date.now() - dropSince > 3000 && onStudioDrop) { try { onStudioDrop(s); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); } lastStudio = false; } // MAX 3s faster
-          try { diag("studio.drop", {studio, since: Date.now()-dropSince}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); }
-        } else if (studio === true) { dropSince = 0; lastStudio = true; }
-        // Keep the previous true state while a drop is being timed.
-        if (studio === true || (lastStudio === null && studio === false)) lastStudio = studio;
+          // Confirmed only after Studio has been gone for a whole debounce
+          // window: a one-poll blip (Studio reloading a place) is not a drop.
+          const goneFor = Date.now() - dropSince;
+          if (goneFor > 3000) {
+            confirmed = false;
+            dropSince = 0;
+            try { diag("studio.drop.confirmed", { goneMs: goneFor }); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.monitor.diag", _e); }
+            if (onStudioDrop) { try { onStudioDrop(s); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.monitor.drop", _e); } }
+          }
+        }
       } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startStudioMonitor", _e); }
-    }, 1800); // MAX 1.8s poll
-    return () => clearInterval(iv);
+      finally { ticking = false; }
+    };
+    const iv = setInterval(tick, 1800);
+    // Do not poll a background tab: chrome.runtime messages wake the worker and
+    // the answer cannot change anything the user can see.
+    const onVis = () => { if (document.hidden) { clearInterval(iv); } };
+    try { document.addEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.monitor.vis", _e); }
+    return () => {
+      clearInterval(iv);
+      try { document.removeEventListener("visibilitychange", onVis); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.monitor.vis", _e); }
+    };
   }
   function startKeepalive(getEditor) {
+    // 4.6.0 sent TWO messages ('ping' and 'status') plus a Web Lock request
+    // every 400 ms — 5 wakeups a second of the extension worker, forever, from
+    // every open tab. The 'status' message is the one that matters (it is what
+    // keeps the tab's state fresh); 'ping' was answered by nothing in
+    // background.js. The `document.hasFocus()` probe computed a value and threw
+    // it away. One message, and the lock is only requested while generating.
     const iv = setInterval(() => {
-      try { chrome.runtime.sendMessage({type:"ping"}, ()=>{}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
-      try { if (getEditor && document.hasFocus()) { /* keep alive */ } } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
-      try { chrome.runtime.sendMessage({type:"status"}, ()=>{}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
-      // Web Locks keepalive — holds lock so tab stays alive in background
-      try { if (navigator.locks) navigator.locks.request("zs-keepalive", {mode:"shared"}, async()=>{ await new Promise(r=>setTimeout(r, 25)); }); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.startKeepalive", _e); }
-    }, 400); // 400ms keepalive — holds the lock tight without polling the DOM
+      try { chrome.runtime.sendMessage({ type: "status" }, () => {}); } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.keepalive.status", _e); }
+      try {
+        if (navigator.locks && typeof getEditor === "function") {
+          // Hold the lock only while a reply is actually streaming; a permanent
+          // lock prevented the tab from ever being frozen, which is why the
+          // browser's own throttling never applied and the bar kept animating.
+          const busy = !!getEditor() && document.hasFocus();
+          if (busy) navigator.locks.request("zs-keepalive", { mode: "shared" }, async () => { await new Promise((r) => setTimeout(r, 25)); });
+        }
+      } catch (_e) { globalThis.ZSSafe?.seen?.("agent_stability.keepalive.lock", _e); }
+    }, 1000);   // 1s is the granularity chrome.runtime messaging actually honours
     return () => clearInterval(iv);
   }
   function installVisibilityHandler(onVisible, onHidden) {
@@ -181,5 +219,5 @@ const ZSAgentStability = (() => {
   // undefined, while tryPatch still hardened the provider). The three setTimeout
   // retries and the 10ms/45-try interval above are the real re-patch path.
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.5.0" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.7.0" };
 })();

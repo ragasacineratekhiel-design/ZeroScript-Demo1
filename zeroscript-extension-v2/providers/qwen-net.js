@@ -22,7 +22,7 @@
   if (window.__zsQwenNet) return;
   window.__zsQwenNet = true;
 
-  const VERSION = "4.6.0";
+  const VERSION = "4.7.0";
   const NODE_ID = "zs-qwen-net";
   const PUBLISH_MIN_MS = 24;
   let _lastPubAt = 0;

@@ -1,7 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!-- Popups are sized in CSS pixels and never scale; declaring it stops
+       Chrome from applying a synthetic zoom on high-DPI displays. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Defence in depth: popup.js is the only script, it is external, and no
+       network origins are needed. Stated explicitly so a future inline
+       <script> is rejected by the browser instead of silently running. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'" />
   <style>
     body { width: 248px; margin: 0; font-family: "Segoe UI", sans-serif; background: #16161a; color: #e8e8ec; }
     .wrap { padding: 14px; }
@@ -18,6 +26,19 @@
     .kofi { background: rgba(255,105,135,.16); color: #ff8fa3; border: 1px solid rgba(255,105,135,.4) !important; font-weight: 700; }
     input, select { width:100%; box-sizing:border-box; margin:4px 0; padding:6px; background:#25252b; color:#e8e8ec; border:1px solid #4b4b55; border-radius:4px; }
     code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; }
+    /* 4.7.0: a visible focus ring. The 4.6.0 popup had `border: 0` on every
+       button and no :focus rule, so keyboard navigation was invisible. */
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid #7c9cff; outline-offset: 1px;
+    }
+    button:disabled { opacity: .55; cursor: progress; }
+    /* Status text is announced by screen readers; make the transient states
+       legible instead of relying on a coloured dot alone. */
+    .row[data-tone="ok"] { color: #6ee7b7; }
+    .row[data-tone="warn"] { color: #fcd34d; }
+    @media (prefers-reduced-motion: reduce) {
+      .dot.on, .dot.warn { box-shadow: none; transition: none; }
+    }
   </style>
 </head>
 <body>
@@ -48,7 +69,7 @@
     <button class="ghost" id="team-start">Start all three team tabs</button>
     <button class="ghost" id="team-stop">Stop team</button>
     <div class="row" id="team-roster" style="white-space:pre-line;font-family:ui-monospace,monospace;font-size:11px;opacity:.85"></div>
-    <div class="row" id="team-result" role="status" style="white-space:pre-wrap"></div>
+    <div class="row" id="team-result" role="status" aria-live="polite" style="white-space:pre-wrap"></div>
     <div class="row">Messages travel through the bridge. Open AI tabs are required. Background tabs may be throttled; bring a stalled tab forward. See the separate Team Console for timestamps.</div>
     <button class="kofi" id="kofi">♥ Tip the developer on Ko-fi</button>
     <div class="row" style="margin-top:10px; opacity:0.6">

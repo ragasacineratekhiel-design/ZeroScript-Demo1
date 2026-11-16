@@ -30,3 +30,28 @@ jobs:
       - run: node tools/audit-deep.js
       - run: python scripts/sync_copies.py --check
       - run: bash -n 'ZeroScript Demo/ZeroScript-Free-1.5.5/MacOS_START.command'
+      # 4.7.0: `npm test` runs verify --tests-only, which does NOT include every
+      # script/version/timing gate. Run the full verifier here too, so CI fails on
+      # a dead module version or a stale mirror instead of only on unit tests.
+      - run: npm run verify
+      # 4.7.0: every shipped Python file must at least import cleanly. `ast.parse`
+      # (already used in verify.yml) only proves it parses; an import proves the
+      # module-level wiring (constants, decorators, `from __future__` placement)
+      # is intact — that is what caught a VERSION constant inserted above a
+      # `from __future__` import.
+      - name: Python modules import cleanly
+        run: |
+          python3 - <<'PY'
+          import importlib.util, pathlib, sys
+          ok = 0
+          for path in sorted(pathlib.Path("ZeroScript Demo/ZeroScript-Free-1.5.5").glob("*.py")):
+              if path.name == "bridge.py":
+                  continue  # imports a live MCP client; exercised by test-bridge.py
+              spec = importlib.util.spec_from_file_location(path.stem, path)
+              mod = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(mod)     # module-level code only
+              ok += 1
+              print("imported", path.name, getattr(mod, "VERSION", "(no VERSION)"))
+          if ok < 4:
+              sys.exit("expected at least 4 importable Python modules, imported %d" % ok)
+          PY

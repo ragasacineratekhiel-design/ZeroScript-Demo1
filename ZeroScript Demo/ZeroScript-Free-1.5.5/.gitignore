@@ -30,3 +30,13 @@ ZeroScript Demo/__pycache__/
 
 # Node (verification tooling only — the extension itself has no build step)
 node_modules/
+
+# 4.7.0: same gaps as the root ignore file
+.ruff_cache/
+.mypy_cache/
+.venv*/
+venv/
+*.egg-info/
+*.swp
+*~
+.DS_Store

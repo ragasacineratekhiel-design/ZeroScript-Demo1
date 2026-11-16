@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-const VERSION = "4.6.1";
+const VERSION = "4.7.0";
 const KOFI_URL = "https://ko-fi.com/sebattfg";
 const SUPPORTED_HOSTS = [
   "chat.deepseek.com", "deepseek.com", "chatgpt.com", "chat.openai.com",
@@ -38,11 +38,16 @@ function render(s) {
   const studioOff = mcpOk && s.studio === false;
   const ok = mcpOk && s.studio === true;
   dot.className = "dot " + (s.connected ? (ok ? "on" : "warn") : "");
-  state.textContent = s.connected
-    ? (ok ? "Connected · Roblox Studio ready"
-        : studioOff ? "Studio not connected · enable the MCP server in Studio"
-        : "Bridge OK · open Roblox Studio")
-    : "Bridge offline — run start.py";
+  // `note` is an explicit "this reading is not live" marker (e.g. the popup was
+  // opened as a plain file). Without it the offline branch below tells a user to
+  // run start.py when in fact the popup could never have talked to anything.
+  state.textContent = s.note
+    ? s.note
+    : s.connected
+      ? (ok ? "Connected · Roblox Studio ready"
+          : studioOff ? "Studio not connected · enable the MCP server in Studio"
+          : "Bridge OK · open Roblox Studio")
+      : "Bridge offline — run start.py";
   if (tools) tools.textContent = s.connected ? `${s.tools || 0} tools available` : "Run bridge.py (start.py)";
   if (servers) servers.textContent = s.connected
     ? list.map((x) => `${x.alive ? "●" : "○"} ${x.id} (${x.alive ? x.tools + " tools" : "down"})`).join("\n")
@@ -120,12 +125,45 @@ try {
     chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === "zs-status") render(msg); else if (msg && msg.type === "zs-team-status") { refresh(); tabControl().catch(() => {}); } });
 } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
-refresh();
-const refreshTimer=setInterval(refresh, 2000);
-window.addEventListener("pagehide",()=>clearInterval(refreshTimer),{once:true});
+// ── refresh cadence (4.7.0) ────────────────────────────────────────────────
+// 4.6.0 polled `refresh()` every 2 s unconditionally. Three problems:
+//   1. the popup already receives pushed `zs-status` frames from background.js
+//      (the listener above), so the poll usually re-fetched identical state;
+//   2. a 2 s timer kept a suspended popup doing work while it was hidden
+//      (a popup is destroyed when it closes, but not while its window is
+//      behind another one);
+//   3. the very first paint waited for the timer only if the push was missed.
+// Now: refresh once on open, then a SLOW safety poll that is skipped while the
+// document is hidden and resumes the moment it is shown again.
+const SLOW_POLL_MS = 8000;
+let refreshTimer = 0;
 
-// If opened as plain file:// HTML (not extension popup), show demo state
-try { if (location.protocol === "file:") setTimeout(() => render({ connected:false, tools:14, servers:[] }), 100); } catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
+function scheduleRefresh() {
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    refresh();
+  }, SLOW_POLL_MS);
+}
+
+refresh();
+scheduleRefresh();
+try {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();      // catch up immediately on return
+  });
+} catch (_e) { globalThis.ZSSafe?.seen?.("popup.visibility", _e); }
+window.addEventListener("pagehide", () => clearInterval(refreshTimer), { once: true });
+
+// Opened as plain file:// HTML (not an extension popup) there is no `chrome`
+// runtime, so nothing can be measured. 4.6.0 rendered `tools: 14` here — a
+// fabricated number in a diagnostic panel, which is worse than showing nothing
+// because it looks like a real reading. Show an explicit not-connected state.
+try {
+  if (location.protocol === "file:") {
+    render({ connected: false, tools: 0, servers: [], demo: false, note: "opened outside the extension — no live status available" });
+  }
+} catch (_e) { globalThis.ZSSafe?.seen?.("popup.bind", _e); }
 
 async function teamAction(type) {
   const result=document.getElementById('team-result');

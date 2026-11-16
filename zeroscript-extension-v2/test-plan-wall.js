@@ -90,8 +90,81 @@ W.send("coder", "__all", { type: "code_ready" }, "wall");
 check("local send is immediate", W.getWallLog().length === before + 1);
 
 
-check("plan_wall VERSION is 4.6.0", W.VERSION === "4.6.0", W.VERSION);
+check("plan_wall VERSION is 4.6.0", W.VERSION === "4.7.0", W.VERSION);
 check("close() releases resources cleanly", typeof W.close === "function" && (W.close(), true));
+
+// ── 4.7.0: role defaults must survive the peer wall's own audit ────────────
+// 4.6.0 gave EVERY unassigned role AI_PROVIDERS[0], so a fresh 3-role plan was
+// "all three roles are DeepSeek" — which peer_wall.auditPlan() explicitly
+// rejects ("a model cannot review itself"). The extension could therefore start
+// a run its own auditor called invalid.
+//
+// The plan under test must be the THREE-role one: `direct` has a single role,
+// where "distinct" is true by construction and the old bug is invisible (my
+// first version of this test did exactly that and proved nothing).
+{
+  const MULTI = "agent";
+  check("the multi-role plan exists and needs three roles",
+    !!ZSPlanWall.PLANS[MULTI] && (ZSPlanWall.PLANS[MULTI].roles || []).length === 3,
+    JSON.stringify(ZSPlanWall.PLANS[MULTI] && ZSPlanWall.PLANS[MULTI].roles));
+
+  ZSPlanWall.setPlan(MULTI);                      // no explicit roles: all defaults
+  let roles = ZSPlanWall.getPlan().roles;
+  const needed = ZSPlanWall.PLANS[MULTI].roles;
+  const assigned = needed.map((r) => roles[r]).filter(Boolean);
+  check("every needed role receives a default provider", assigned.length === needed.length, JSON.stringify(roles));
+  check("default providers are DISTINCT (auditPlan forbids a model reviewing itself)",
+    new Set(assigned.map((v) => String(v).toLowerCase())).size === assigned.length, JSON.stringify(roles));
+
+  // An explicit assignment must win, and the defaults must route AROUND it —
+  // this is the case my first attempt missed: the loop consumed "Claude" for an
+  // earlier role before it ever saw the pinned one.
+  ZSPlanWall.setPlan(MULTI, { planner: "Claude" });
+  roles = ZSPlanWall.getPlan().roles;
+  check("an explicit role assignment survives setPlan", roles.planner === "Claude", JSON.stringify(roles));
+  const collided = needed.filter((r) => r !== "planner" && String(roles[r] || "").toLowerCase() === "claude");
+  check("defaults do not collide with an explicitly pinned provider", collided.length === 0, JSON.stringify(roles));
+  check("all three roles are still covered after pinning",
+    needed.every((r) => !!roles[r]), JSON.stringify(roles));
+
+  // A plan cannot promise what it cannot fill: with a pin the defaults must
+  // still be distinct across the other roles.
+  const others = needed.filter((r) => r !== "planner").map((r) => String(roles[r]).toLowerCase());
+  check("the non-pinned defaults are distinct from each other",
+    new Set(others).size === others.length, JSON.stringify(roles));
+}
+
+// ── 4.7.0: EVERY plan state must survive the wall's own auditor ────────────
+// Exhaustive, not illustrative: every plan × every pin × every provider. My
+// first attempt at the duplicate-healing pass produced 5 still-rejected states
+// out of 72, and the two hand-written assertions above did not notice because
+// they only walked one path. This sweep is what found it.
+{
+  let peer = null;
+  try { peer = require("./core/peer_wall.js"); } catch (_e) { peer = null; }
+  peer = peer || global.ZSPeerWall || (global.window && global.window.ZSPeerWall) || null;
+  if (!peer || typeof peer.auditPlan !== "function") {
+    check("peer_wall.auditPlan is reachable from this suite", false, "cannot audit plan states");
+  } else {
+    let rejected = 0, states = 0;
+    const firstBad = [];
+    for (const planId of Object.keys(ZSPlanWall.PLANS)) {
+      const need = ZSPlanWall.PLANS[planId].roles || [];
+      if (need.length < 2) continue;               // single-role plans cannot collide
+      for (const pinRole of [null, ...need]) {
+        for (const provider of ZSPlanWall.AI_PROVIDERS) {
+          ZSPlanWall.setPlan(planId, pinRole ? { [pinRole]: provider } : undefined);
+          const roles = ZSPlanWall.getPlan().roles;
+          const audit = peer.auditPlan("self", roles, need);
+          states++;
+          if (!audit.ok) { rejected++; if (firstBad.length < 3) firstBad.push(planId + " " + JSON.stringify(roles)); }
+        }
+      }
+    }
+    check(`all ${states} multi-role plan states pass peer_wall.auditPlan`,
+      rejected === 0, rejected + " rejected: " + firstBad.join(" | "));
+  }
+}
 
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

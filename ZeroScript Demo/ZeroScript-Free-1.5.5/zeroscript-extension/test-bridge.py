@@ -13,6 +13,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 _TEST_DATA=tempfile.TemporaryDirectory(prefix="zs-lifecycle-")
 os.environ["ZS_DATA_DIR"]=_TEST_DATA.name
 
@@ -215,6 +217,67 @@ r_block_k = bridge.safe_call("multi_edit", {"edits": []}, member_id="tb-checker"
 check("safe_call blocks checker from multi_edit", r_block_k.get("ok") is False and r_block_k.get("kind") == "role_violation")
 r_vf = bridge.safe_call("verify_fact", {"path": "game.Workspace", "tool": "inspect_instance"})
 check("verify_fact returns deterministic Studio ground-truth status", "verified" in r_vf or "error" in r_vf)
+# ── 4.7.0: studio_full_tree fans out instead of serialising ────────────────
+# 4.6.0 issued 27 serial inspect_instance calls at 4 s each (108 s worst case).
+class _FakeMgr:
+    def __init__(self, delay=0.02):
+        self.delay = delay; self.calls = 0; self.peak = 0; self.live = 0
+        self.lock = threading.Lock()
+    def call(self, name, arguments, timeout):
+        with self.lock:
+            self.calls += 1; self.live += 1; self.peak = max(self.peak, self.live)
+        try:
+            time.sleep(self.delay)
+            return {"text": '{"path":"%s"}' % arguments.get("path"), "images": []}
+        finally:
+            with self.lock: self.live -= 1
+
+_real_mgr = bridge.mgr
+_fake = _FakeMgr()
+bridge.mgr = _fake
+_t0 = time.monotonic()
+_tree = bridge.studio_full_tree(2)
+_elapsed = time.monotonic() - _t0
+_serial = _fake.calls * _fake.delay
+check("studio_full_tree returns every service summary",
+      _tree.get("ok") is True and len(_tree.get("services", {})) > 20, len(_tree.get("services", {})))
+check("studio_full_tree runs concurrently, not serially",
+      _elapsed < _serial * 0.6 and _fake.peak > 1,
+      "%.2fs vs %.2fs serial, peak=%d" % (_elapsed, _serial, _fake.peak))
+check("studio_full_tree reports its own elapsed_ms", isinstance(_tree.get("elapsed_ms"), int))
+bridge.mgr = _real_mgr
+
+# ── 4.7.0: the Studio probe caches a NEGATIVE answer and coalesces callers ──
+_calls = []
+def _fake_probe():
+    _calls.append(1); time.sleep(0.02); return {"app": None, "place": None}
+_real_probe = bridge.probe_studio
+bridge.probe_studio = _fake_probe
+bridge._probe_cache.update({"at": 0.0, "val": None, "busy": False, "done": None})
+bridge.probe_studio_cached()
+bridge.probe_studio_cached()
+check("probe_studio_cached caches a negative answer (4.6.0 re-probed every time)", len(_calls) == 1, len(_calls))
+bridge._probe_cache.update({"at": 0.0, "val": None, "busy": False, "done": None})
+_calls.clear()
+_ts = [threading.Thread(target=bridge.probe_studio_cached) for _ in range(8)]
+[t.start() for t in _ts]; [t.join() for t in _ts]
+check("probe_studio_cached is single-flight for concurrent callers", len(_calls) == 1, len(_calls))
+bridge.probe_studio = _real_probe
+
+# ── 4.7.0: agent temp store evicts in FIFO order, O(1) ────────────────────
+_prev_max = bridge._AGENT_TEMP_MAX
+bridge._AGENT_TEMP_MAX = 3
+bridge._AGENT_TEMP.clear()
+for _i in range(6):
+    bridge._agent_temp_set("k%d" % _i, _i)
+check("agent temp store keeps the newest entries", list(bridge._AGENT_TEMP) == ["k3", "k4", "k5"], list(bridge._AGENT_TEMP))
+bridge._agent_temp_set("k4", 40)
+check("re-setting a key moves it to the end", list(bridge._AGENT_TEMP)[-1] == "k4", list(bridge._AGENT_TEMP))
+bridge._AGENT_TEMP_MAX = _prev_max
+bridge._AGENT_TEMP.clear()
+
+check("bridge version is 4.7.0", bridge.BRIDGE_VERSION == "4.7.0", bridge.BRIDGE_VERSION)
+
 bridge.TEAM_HUB.stop("tb-room")
 
 print("\n%d passed, %d failed" % (pass_n, fail_n))

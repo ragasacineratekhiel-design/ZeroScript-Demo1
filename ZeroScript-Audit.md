@@ -564,11 +564,11 @@ describing it.
 
 ---
 
-## 12. Remediation pass — 4.6.0 (Bridge Teams, Strict Role Enforcement, `/truth` Verification & Post-Return Dead Code)
+## 12. Remediation pass — 4.7.0 (Bridge Teams, Strict Role Enforcement, `/truth` Verification & Post-Return Dead Code)
 
 User-reported production failures investigated line-by-line across every canonical file:
 
-| # | Sev | Area | Exact root cause | 4.6.0 fix & regression test |
+| # | Sev | Area | Exact root cause | 4.7.0 fix & regression test |
 |---|---|---|---|---|
 | 44 | 🔴 P0 | `core/main.js`, `core/prompt_enhancer.js`, `providers/claude-connector.js` | `submitAndGetBase` computed `expectedPrefix` *before* `ZSMemoryWall.buildTrimmedContext` and `ZSPromptEnhancer.wrapTypeAndSend` rewrote outgoing prompts. On team startup (`ZS.buildTeamPrompt`) and inbox delivery (`Bridge team inbox`), the enhancer rewrote the role prompt into a Tap Simulator spec, breaking `landed()` so `team_ready` and `team_ack` never fired in real Chrome. | Hoisted context/enhancement before `expectedPrefix`, added `isInternalPrompt()` + `__zsTeamActive` / `__zsSkipEnhance` guards, removed duplicate `wrapTypeAndSend` in `claude-connector.js`. Covered by `tests/test-team-dom.js` (now loading real `memory_wall.js` + `prompt_enhancer.js`) and `test-composer.js`. |
 | 45 | 🔴 P0 | `core/main.js` (`P.conversationKey`, `startTeam`, `syncSessionState`) | `main.js:18` prefixes `P.conversationKey()` with `location.hostname` (`"claude.ai/new"`). When Claude, DeepSeek or generic sites redirected from `/new` to `/chat/<uuid>` on the first send, `syncSessionState` saw `key !== "claude.ai/new"` and immediately fired `team_leave` and `loop.abandonedNewChat`. | Added hostname-stripping `isLandingKey()` in `startTeam`, `syncSessionState`, `A.startingKey` and `A.loopKey`, plus `pendingWake` post-`loop.end` inbox drain, WS-first `team_*` actions and `threading.Condition` 0 ms long-poll (`?wait=1`). Covered by `tests/test-team-dom.js` (`/new` → `/chat/test`) and `tests/test_bridge_team.py`. |
