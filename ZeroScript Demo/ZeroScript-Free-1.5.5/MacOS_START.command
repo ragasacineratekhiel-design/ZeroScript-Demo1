@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# MacOS_START.command (v4.6.0)
+# MacOS_START.command (v4.7.0)
 # ---------------------------------------------------------------------------
-#  Self-contained macOS/Linux launcher for the ZeroScript 4.6.0 bridge.
+#  Self-contained macOS/Linux launcher for the ZeroScript 4.7.0 bridge.
 #  Double-clickable in Finder (.command opens Terminal; .sh opens an editor).
 #  Supports `--check` for non-interactive dependency & syntax validation.
 # ---------------------------------------------------------------------------
@@ -38,10 +38,10 @@ pause_and_exit() {
 }
 
 echo
-echo "  === ZeroScript Bridge v4.6.0 Team ==="
+echo "  === ZeroScript Bridge v4.7.0 Team ==="
 echo "  WS 127.0.0.1:$BRIDGE_PORT + HTTP 127.0.0.1:$BRIDGE_HTTP_PORT | Authenticated Team Mailboxes & Studio MCP"
 echo
-log "===== MacOS_START.command v4.6.0 launched (check=$CHECK_ONLY) ====="
+log "===== MacOS_START.command v4.7.0 launched (check=$CHECK_ONLY) ====="
 
 if [ ! -f "bridge.py" ]; then
     echo "  ERROR: bridge.py was not found next to this launcher."
@@ -70,6 +70,12 @@ else
 fi
 
 if [ -z "$PY" ]; then
+    # A .venv that exists but fails py_ok silently fell through to system Python
+    # above, which is where "I have 3.12 installed, why is it saying 3.9" starts.
+    if [ -e ".venv/bin/python" ] || [ -e "../../.venv/bin/python" ]; then
+        echo "  NOTE: a local .venv exists but is not a working Python 3.9+ interpreter."
+        echo "        Recreate it with: rm -rf .venv && python3 -m venv .venv"
+    fi
     echo "  ERROR: Python 3.9 or newer was not found."
     echo "  Install it from https://www.python.org/downloads/ then run this again."
     log "FATAL: no Python 3.9+ found."
@@ -100,6 +106,27 @@ if ! "$PY" -c "import websockets" >/dev/null 2>&1; then
 fi
 echo "        websockets OK"
 log "deps OK."
+
+# 4.7.0: the launcher never looked at the ports, so the banner cheerfully printed
+# "WS 127.0.0.1:17613" even when something else already owned it. macOS ships
+# `lsof`; on Linux fall back to `ss`, and stay silent if neither exists.
+port_busy() {
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltn "sport = :$1" 2>/dev/null | grep -q LISTEN
+    else
+        return 1
+    fi
+}
+for _port in "$BRIDGE_PORT" "$BRIDGE_HTTP_PORT"; do
+    if port_busy "$_port"; then
+        echo "  NOTE: port $_port is already in use."
+        echo "        If that is a bridge you left running, close it. Otherwise set"
+        echo "        ZS_BRIDGE_PORT to another port in BOTH the shell and the extension."
+        log "port $_port already in use"
+    fi
+done
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
     echo "  [3/3] Preflight check passed."

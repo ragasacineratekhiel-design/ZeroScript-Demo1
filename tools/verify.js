@@ -407,19 +407,12 @@ function selfTestScopeChecker() {
     if (caught2.length) ok("scope", `self-test caught the undefined call inside a nested function (${caught2.length})`);
     else fail("scope", "the checker did NOT catch an undefined call inside a nested function body — it is blind again");
   }
-  const realExt = EXT;
-  // temporarily point the walker at the fixtures dir only
+  // `before`/`savedRoot` are load-bearing: the self-test below must NOT append to
+  // the real failure list (line ~462 restores it). 4.7.0 removed only what was
+  // genuinely dead here: `realExt`, the console mute/restore pair, and a parse of
+  // the fixture into a variable that was immediately discarded via `void ast`.
   const savedRoot = ROOT;
   const before = failures.length;
-  const quiet = console.log;
-  console.log = () => {};
-  try {
-    const src = fs.readFileSync(fixture, "utf8");
-    const ast = ACORN.parse(src, { ecmaVersion: "latest", locations: true });
-    void ast;
-  } catch {}
-  console.log = quiet;
-  // Simplest reliable self-test: run the same resolution logic over the fixture.
   const caught = (function () {
     let n = 0;
     const src = fs.readFileSync(fixture, "utf8");
@@ -468,7 +461,7 @@ function selfTestScopeChecker() {
     }
     return n;
   })();
-  failures.length = before;
+  failures.length = before;   // self-test must not pollute the real failure list
   void savedRoot;
   if (caught > 0) ok("scope", `self-test caught the trapped declaration in the fixture (${caught} read(s))`);
   else fail("scope", "self-test FAILED: the fixture's ReferenceError was not detected — the check protects nothing");

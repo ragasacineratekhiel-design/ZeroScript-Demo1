@@ -17,3 +17,18 @@ config.json.tmp
 logs/
 ZeroScript Demo/config.json
 Unselected files/
+
+# 4.7.0: modern Python tooling leaves these behind; none of them are ever needed
+# to run the bridge, and .ruff_cache/.mypy_cache can hold absolute paths.
+.ruff_cache/
+.mypy_cache/
+.venv*/
+venv/
+*.egg-info/
+build/
+dist/
+# OS/editor artifacts outside the macOS case the block above covers
+*.swp
+*~
+.vscode/
+.idea/

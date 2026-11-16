@@ -204,23 +204,100 @@ Legend: **F** = feature added/changed · **S** = speed · **B** = bug fixed · *
 | `popup.html` / `popup.js` | ✔ | ✔ | | | `aria-live` status, rAF-coalesced render, 5 s polling + event refresh |
 | `overlay.css` | | ✔ | | | grouped transitions, blur gated, `contain` |
 | `manifest.json` | | | ✔ | | version, `alarms` rationale, description honesty |
-| `bridge.py` | ✔ | ✔ | ✔ | | parallel service fan-out, config cache, metrics p95 fix, JSON-safe |
-| `team_hub.py` | ✔ | ✔ | | | deques for bounded history, faster expiry |
-| `team_console.py` | ✔ | ✔ | | | `--json`, role filter fix |
+| `bridge.py` | ✔ | ✔ | ✔ | | 8-worker `studio_full_tree` with a 12 s deadline (was 27 serial calls, 108 s worst case); `probe_studio_cached` single-flight + timestamp-keyed so a **negative** answer caches (`{"app": None}` is not `None`, so the old guard never fired); `_port_owner_posix()` for macOS/Linux (`_port_owner` returned `None` off Windows despite shipping `MacOS_START.command`); O(1) FIFO agent-temp eviction; config cache, metrics p95 fix, JSON-safe |
+| `team_hub.py` | ✔ | ✔ | ✔ | | deques for bounded history, faster expiry; **`leave()` no longer stops the whole team when ONE member departs** (a tab reload fires `tabs.onUpdated` → previously killed the run for every other tab); `event_log` reported `truncated:false` for exactly the case it existed to report (`since == oldest-1`); `summary()` listed every team that had ever existed because `self.teams` is never pruned |
+| `team_console.py` | ✔ | ✔ | ✔ | | `--json`, role filter fix; `_http_port()` survives a malformed env var (was an inline expression that raised and killed the console), now covered by 5 tests |
 | `start.py` | ✔ | ✔ | | | health short-circuit, no double import |
 | `launch_studio_mcp.py` | ✔ | ✔ | | | cached scan TTL |
-| `tools/verify.js` | ✔ | ✔ | ✔ | | new gates (parser parity, timing source, cache contract), shared file cache, honest timing check |
-| `tools/audit-deep.js` | ✔ | ✔ | | | single parse per file, new pass |
+| `tools/verify.js` | ✔ | ✔ | ✔ | | new gates (parser parity, timing source, cache contract, **object-literal `version:` strings** — that is how `agent_stability` sat at 4.5.0 unnoticed), shared file cache; dead scaffolding removed from the scope self-test |
+| `tools/audit-deep.js` | ✔ | ✔ | ✔ | | single parse per file; **no longer flags a correctly-coalesced observer as a storm** (only `setTimeout` counted, so `queueMicrotask` batching looked like the bug); new check for a whole-document observer that never consults `document.hidden` |
 | `tools/simulate-load.js` | ✔ | ✔ | | | every provider block |
 | `tools/fix-empty-catch.js` | | ✔ | | | build masks once |
 | `scripts/sync_copies.py` | ✔ | ✔ | | | mismatch kinds, `--quiet`, size short-circuit |
 | `scripts/validate.py` | ✔ | ✔ | | | adds the sync gate it was missing |
-| `tests/*` | ✔ | ✔ | | | new regression tests for every P1 above |
-| `README.md`, `docs/*` | | | | ✔ | 4.7.0, honest claims, this document |
+| `tests/*` | ✔ | ✔ | | | new regressions for every P1 above; `unittest` **47 → 55**; `test-bridge.py` **18 → 26**; one pre-existing test was asserting the `leave()` bug and was rewritten |
+| `config.json` | ✔ | | ✔ | | was pinned to 4.6.0 and carried no port config although the ports must match `core/config.js`; now documents the knobs and the env overrides |
+| `.github/workflows/tests.yml` | ✔ | ✔ | ✔ | | ran `npm test` (= `verify --tests-only`), skipping the version/timing/mirror gates entirely, and never imported the Python modules — `ast.parse` proves a file parses, importing proves its module-level wiring is intact |
+| `MacOS_START.command` | ✔ | | ✔ | | port preflight (it printed a port banner for ports it never checked), "`.venv` exists but is broken" hint, version strings |
+| `.gitignore` (×2) | | | ✔ | | `.ruff_cache/`, `.mypy_cache/`, `.venv*/`, `venv/`, `*.egg-info/`, `build/`, `dist/`, editor swap files |
+| `requirements-dev.txt` | | | | ✔ | version claim |
+| `tools/fixtures/*.js` | | | | ✔ | intentional-failure fixtures; verified the self-test still catches both shapes (a fixture nobody checks protects nothing) |
+| `test-{composer,safe,two-tabs,memory-wall}.js` | | | | ✔ | read and verified; they already assert the real contracts (14/36/17/23). No change was warranted — inventing assertions to inflate a diff is the churn this document argues against |
+| `README.md`, `CHANGELOG.md`, `docs/*` | | | | ✔ | 4.7.0 sections with every number tied to its reproducing command; five historical statements corrected back to 4.6.0 after I wrongly bumped them (see §3.1) |
 | `ZeroScript Demo/**` (copies) | | | | | regenerated from canonical |
 
 ---
 
+### 3.1 I "upgraded" history and had to put it back
+
+While bumping the release identity I ran one regex over every `4.6.0` in every
+doc. That also rewrote statements that are *about the past*:
+
+- `## What 4.6.0 fixed (Bridge Teams, …)` became "What **4.7.0** fixed"
+- "Mostly it did **not** before 4.6.0" became "before **4.7.0**"
+- "There were 392 empty `catch {}` blocks in 4.6.0" became "in **4.7.0**"
+- `## … upgrades in 4.6.0` became "in **4.7.0**"
+- "Enforced role boundaries in 4.6.0" became "in **4.7.0**"
+
+All five were false: those changes shipped in 4.6.0 and did not ship in 4.7.0.
+I caught them on re-read and reverted them. A find-and-replace that moves a
+version number across prose cannot tell "we are now this version" from "this is
+what that version did", and the second kind becomes a lie the moment it ships.
+
 ## 4. Measured result
 
-_(filled in at the end of this change — see the final section)_
+Every figure below is produced by a command in this repository. None is an
+estimate and none is a projection.
+
+| Gate | Result |
+|---|---|
+| `npm run verify` | **ALL CHECKS PASSED** — 15 test files, every one green |
+| `python -m unittest discover -s tests` | **55 tests OK** (47 at branch start) |
+| `node tools/audit-deep.js` | **0 P0, 0 P1, 1 advisory** (byte-identical helpers across self-contained providers — intentional, and the audit labels it as expected) |
+| `python scripts/sync_copies.py --check` | **59 verified** |
+| `node tools/simulate-load.js` | **SMOKE TEST PASSED** |
+
+| Test file | Assertions |
+|---|---|
+| `test-peer-wall.js` | 77 |
+| `test-sandbox.js` | 62 |
+| `test-parser.js` | 41 |
+| `test-safe.js` | 36 |
+| `test-plan-wall.js` | 28 |
+| `test-bridge.py` | 26 (18 before this branch's repair — see §2.4) |
+| `test-memory-wall.js` | 23 |
+| `test-two-tabs.js` | 17 |
+| `test-dom-watch.js` | 16 |
+| `test-composer.js` | 14 |
+| `test-observers.js` | 13 |
+| `test-coalescing.js` | 11 |
+| `test-chatgpt.js`, `test-status-fanout.js`, `test-studio-monitor.js` | 10 each |
+
+**The speed claim, stated honestly.** The only latency figure in this release
+that was *measured* rather than *reasoned about* is `studio_full_tree`: against
+a stubbed client at 50 ms per call, **1.35 s serial → 0.20 s concurrent** (peak
+concurrency 8), asserted in `test-bridge.py` so it cannot silently regress. The
+other performance work is complexity reduction whose benefit depends on
+workload (O(n) → O(1) eviction; one probe per status burst instead of one per
+tick; 3 tree round-trips instead of 27). I did not benchmark those against a
+live Studio session, and this document does not invent a millisecond for them.
+
+## 5. What I could not verify
+
+Honesty section, because "0% lies" includes the things I did not do.
+
+- **No real Roblox Studio run.** Studio is not available in this environment.
+  Every Studio interaction is tested against stubs and against the protocol, not
+  against the application. `studio_full_tree`'s real-world timing is therefore
+  unmeasured; the 1.35 s → 0.20 s figure comes from a stub that sleeps.
+- **No real browser.** The jsdom tests exercise the module graph and the DOM
+  contracts, not Chrome's actual message-delivery timing or a live network.
+- **The three biggest providers are not interactively tested.** The 18 provider
+  files share a boot contract asserted by `test-two-tabs.js` and
+  `simulate-load.js`; that is structural coverage, not proof that a given AI
+  site's DOM selectors still match today's markup.
+- **`bridge.py`'s WebSocket path** is exercised by `test-bridge.py` and
+  `tests/test_bridge_team.py` over a real socket, but never with a real MCP
+  client attached.
+- **macOS-specific launcher behaviour** was syntax-checked (`bash -n`,
+  `--check`) on Linux. The `lsof` port probe has not run on macOS.
