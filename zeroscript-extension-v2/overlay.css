@@ -194,17 +194,40 @@ html.zs-light #zs-unstable {
 #zs-state.zs-state-warn b { color: #fecaca; }
 #zs-bar.tone-active #zs-state b { color: #6ee7b7; }
 
-/* live + idle dots inside the state line */
+/* live + idle dots inside the state line.
+   4.7.0: the pulse used to animate `box-shadow` on an INFINITE loop. A shadow
+   is not a compositor property: every 1.8s cycle forced the browser to repaint
+   the element's whole paint layer, forever, on whatever page the extension is
+   injected into — including while the user is typing. `opacity` and `transform`
+   are the only two properties a browser can animate off the main thread, so the
+   pulse is now an opacity fade of a static ring, with the ring drawn once via a
+   pseudo-element so nothing inherits the shadow cost. */
 .zs-live-dot {
+  position: relative;
   width: 8px; height: 8px; border-radius: 50%; background: #34d399; flex: none;
-  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6);
+}
+.zs-live-dot::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.45);
+  opacity: 0;
   animation: zs-live 1.8s ease-out infinite;
+  /* the ring must not capture pointer events over the site's own UI */
+  pointer-events: none;
 }
 @keyframes zs-live {
-  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
-  100% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); }
+  0%   { opacity: 0.55; transform: scale(1); }
+  100% { opacity: 0;    transform: scale(2.1); }
 }
-.zs-live-dot.idle { background: #9ca3af; animation: none; box-shadow: none; }
+.zs-live-dot.idle { background: #9ca3af; }
+.zs-live-dot.idle::after { animation: none; opacity: 0; }
+
+/* Respect the OS setting: a permanent pulse is exactly what this preference is
+   for. The dot keeps its colour, so liveness is still readable. */
+@media (prefers-reduced-motion: reduce) {
+  .zs-live-dot::after { animation: none; opacity: 1; transform: none; }
+}
 
 /* primary action button (Start) */
 #zs-action {
@@ -1102,3 +1125,21 @@ html.zs-light .zs-tip-rbx { color: #374151; }
   flex-wrap: wrap; min-width: 0; margin: 0 0 8px;
 }
 #zs-claude-toolbar-slot #zs-state { min-width: 0; overflow-wrap: anywhere; }
+
+/* ── 4.7.0: one global motion guard ─────────────────────────────────────────
+   The bar has ~22 transitions and several keyframe animations (flash, pop,
+   spin, shimmer). A user who has asked the OS for reduced motion should not get
+   them. Motion that CONVEYS STATE (the spinner) is slowed rather than removed,
+   because a frozen spinner reads as a hung extension. */
+@media (prefers-reduced-motion: reduce) {
+  #zs-bar, #zs-bar *, #zs-menu, #zs-menu * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  /* keep spinner motion, just gentler than a 1s whip */
+  #zs-bar .zs-spin, #zs-bar .zs-mcp-spin, #zs-bar .zs-rot {
+    animation-duration: 2.4s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

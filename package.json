@@ -13,6 +13,7 @@
     "test:sandbox": "node zeroscript-extension-v2/test-sandbox.js",
     "test:dom": "node zeroscript-extension-v2/test-dom-watch.js",
     "test:status": "node zeroscript-extension-v2/test-status-fanout.js",
+    "test:monitor": "node zeroscript-extension-v2/test-studio-monitor.js",
     "test:wall": "node zeroscript-extension-v2/test-plan-wall.js",
     "test:memory": "node zeroscript-extension-v2/test-memory-wall.js",
     "smoke": "node tools/simulate-load.js",
