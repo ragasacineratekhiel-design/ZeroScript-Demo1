@@ -12,12 +12,20 @@
 
 The bridge (`bridge.py`) and extension (`background.js` + `core/transport.js`) now speak **7 transports** over **2 ports**:
 
-| # | Method | Endpoint | When it wins | Latency |
-|---|--------|----------|--------------|---------|
-| 1 | **WebSocket** (RFC6455, per-message-deflate, binary) | `ws://127.0.0.1:17613` | Primary — multiplexed, 5s ping, 16MB | ~1–3ms |
-| 2 | **HTTP REST** | `http://127.0.0.1:17614/api/call` `POST` | Fallback when WS half-open | ~4–8ms |
-| 3 | **Server-Sent Events (SSE)** | `http://127.0.0.1:17614/api/events` `GET` | Real-time status push | ~2ms |
-| 4 | **Long-Poll** | `http://127.0.0.1:17614/api/poll?since=` | CSP-strict fallback | ~10ms |
+| # | Method | Endpoint | When it wins | Ordered by |
+|---|--------|----------|--------------|------------|
+| 1 | **WebSocket** (RFC6455, per-message-deflate, binary) | `ws://127.0.0.1:17613` | Primary — multiplexed, 5s ping, 16MB | no per-message HTTP overhead |
+| 2 | **HTTP REST** | `http://127.0.0.1:17614/api/call` `POST` | Fallback when WS half-open | new connection per call |
+| 3 | **Server-Sent Events (SSE)** | `http://127.0.0.1:17614/api/events` `GET` | Real-time status push | one long-lived response |
+| 4 | **Long-Poll** | `http://127.0.0.1:17614/api/poll?since=` | CSP-strict fallback | new connection per wake |
+
+> **4.7.0 correction.** This table used to carry a "Latency" column reading
+> `~1–3ms` / `~4–8ms` / `~2ms` / `~10ms`. Those numbers were never measured —
+> nothing in this repository produced them, and the ordering they imply (SSE
+> faster than WebSocket) does not follow from how the transports work. The column
+> is replaced with the property that actually distinguishes the rows. If you want
+> a latency figure, measure it: `tools/verify.js` has a timing-honesty gate that
+> fails a claim of this shape when it cannot find the measurement behind it.
 | 5 | **Batch** | `http://127.0.0.1:17614/api/batch` `POST` | 12 tools in one round-trip | ~1× vs 12× |
 | 6 | **Binary msgpack** | WS binary frame | When `msgpack` installed | −30% bytes |
 | 7 | **BroadcastChannel** | `zs-bridge` (inter-tab) | Single WS shared across 10 tabs | 0ms extra WS |

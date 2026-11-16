@@ -1,6 +1,11 @@
-> **ARCHIVED (historical — superseded by ZeroScript MAX 4.6.0).** This file records pre-4.3.0 history and
+> **ARCHIVED (historical — superseded by ZeroScript MAX 4.7.0).** This file records pre-4.3.0 history and
 > contains legacy claims audited in `/ZeroScript-Audit.md` (§1–§12). Kept for historical reference only —
-> see `/README.md` and `/docs/TEAM_SETUP.md` for current 4.6.0 verified behavior.
+> see `/README.md` and `/docs/TEAM_SETUP.md` for current 4.7.0 verified behavior.
+>
+> **Every timing figure below is unverified.** These numbers were written before
+> this project had a timing-honesty gate; several were estimates presented as
+> measurements. They are preserved here as history, not as evidence. The
+> measured figures for the current release are in `/docs/UPGRADE_AUDIT_4.7.0.md` §4.
 
 # Changelog — ULTRA v2.0.0 (2026-10-26)
 

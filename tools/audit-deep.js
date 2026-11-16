@@ -803,4 +803,15 @@ if (process.argv.includes("--json")) {
   console.log("\n" + "=".repeat(70));
   console.log(`TOTAL: ${findings.length} findings`);
 }
-process.exit(bySev.P0.length ? 1 : 0);
+// 4.7.0: this used to exit 0 for everything but a P0, while the CI step that
+// runs it is literally titled "zero P0/P1/P2". A P1 regression would therefore
+// pass CI with a green tick and a printed defect. The severity gate below is the
+// one that title promises: P0 and P1 fail the build; P2 is reported and fails
+// only when ZS_AUDIT_STRICT=1, because the currently-known P2/P3 items are
+// advisory (byte-identical helpers across self-contained providers).
+const blocking = bySev.P0.length + bySev.P1.length;
+const strictP2 = process.env.ZS_AUDIT_STRICT === "1" ? bySev.P2.length : 0;
+if (blocking) console.log(`\nFAIL: ${bySev.P0.length} P0 + ${bySev.P1.length} P1 must be zero.`);
+else if (strictP2) console.log(`\nFAIL: ${strictP2} P2 under ZS_AUDIT_STRICT=1.`);
+else console.log(`\nOK: 0 P0, 0 P1${process.env.ZS_AUDIT_STRICT === "1" ? ", 0 P2" : `, ${bySev.P2.length} P2 advisory`}.`);
+process.exit(blocking + strictP2 ? 1 : 0);

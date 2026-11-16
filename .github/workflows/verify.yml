@@ -42,11 +42,23 @@ jobs:
               print("parsed", p)
           PY
 
+      # 4.7.0: this job checked that the Python files PARSE and then never ran the
+      # regression suite that exercises them. Join the two.
+      - name: Python regression suite
+        run: python -m unittest discover -s tests -p "test_*.py"
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+
       - name: Verification suite
         run: npm run verify
 
       - name: Deep AST defect audit (zero P0/P1/P2)
         run: node tools/audit-deep.js
+        env:
+          # audit-deep only blocks on P0/P1 by default because the local console
+          # treats P2/P3 as advice. CI is the place that claims "zero P0/P1/P2",
+          # so make CI enforce that claim instead of printing it.
+          ZS_AUDIT_STRICT: '1'
 
       - name: No empty catch blocks (independent of the verifier)
         run: |

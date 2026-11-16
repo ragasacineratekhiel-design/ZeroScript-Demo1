@@ -733,6 +733,37 @@ function checkTimingHonesty() {
   }
   if (hot.length) warn("timing", `sub-50ms setInterval polling: ${hot.join(", ")} — verify it is a deliberate safety net`);
   else ok("timing", "no gratuitous sub-50ms interval polling in hot paths");
+
+  // (e) 4.7.0: documentation is where invented latency lives. ULTRA.md carried a
+  //     "Latency" column of `~1–3ms` / `~2ms` figures that nothing in this tree
+  //     ever measured. Code-only checks cannot see that, so scan the prose too:
+  //     a sub-millisecond-to-few-ms claim in a markdown table must be backed by
+  //     either a measured marker or an explicit correction note.
+  const DOCS = ["README.md", "docs/UPGRADE_AUDIT_4.7.0.md",
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "ULTRA.md"),
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "CHANGELOG_ULTRA.md"),
+    path.join("ZeroScript Demo", "ZeroScript-Free-1.5.5", "CHANGELOG_STUDIO_v2.1.md")];
+  const unbacked = [];
+  for (const rel of DOCS) {
+    const abs = path.join(ROOT, rel);
+    if (!fs.existsSync(abs)) continue;
+    const lines = fs.readFileSync(abs, "utf8").split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (!/^\s*\|/.test(line)) return;                    // table rows only
+      const claim = /~\d+(?:[–-]\d+)?\s?ms|\d+(?:[–-]\d+)\s?ms\b/.exec(line);
+      if (!claim) return;
+      // A tilde (`~2ms`) or a range (`4–8ms`) is an estimate. A bare interval
+      // ("250 ms trailing", "0 ms long-poll", "10 ms busy-poll") is a configured
+      // technical value, not a latency claim, so it is not flagged.
+      if (/measured|benchmark|asserted/i.test(line)) return;  // explicitly sourced
+      unbacked.push(`${rel}:${i + 1} claims "${claim[0]}"`);
+    });
+  }
+  if (unbacked.length) {
+    warn("timing", `unmeasured latency claim(s) in docs — measure them or write the correction: ${unbacked.slice(0, 4).join("; ")}${unbacked.length > 4 ? ` (+${unbacked.length - 4} more)` : ""}`);
+  } else {
+    ok("timing", "no unmeasured millisecond claims in the documented tables");
+  }
 }
 
 // ── 6. version agreement// ── 6. version agreement ──────────────────────────────────────────────────
