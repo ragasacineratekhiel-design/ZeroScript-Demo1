@@ -191,7 +191,7 @@ Legend: **F** = feature added/changed · **S** = speed · **B** = bug fixed · *
 | `core/sandbox.js` | ✔ | ✔ | ✔ | | recursive-descent Luau parser replaces the keyword stack; line/col diagnostics; real syntax rejection only; char-code lexer + cursor-local parser (no hot-path allocation); full Luau grammar (`//=`, `..=`, `?`, multi-assign, mixed table types) |
 | `core/config.js` | ✔ | ✔ | | ✔ | `ZS.T` single timing source, memoised static prompt half, `STUDIO BUILD MODE` folded into the prompt |
 | `core/safe.js` | ✔ | ✔ | | | one-pass `describe()`, `compact()` for the popup, adaptive reporting |
-| `core/main.js` | ✔ | ✔ | ✔ | | batched + region-filtered MutationObserver, event-driven `waitFor()`, unified stop wrapper (`withStop`), **Single mode now stops after one tool** (it silently behaved like Continuous), streaming observer |
+| `core/main.js` | ✔ | ✔ | ✔ | | batched + region-filtered MutationObserver, event-driven `waitFor()`, unified stop wrapper (`withStop`), ~~**Single mode now stops after one tool**~~ — **RETRACTED, see §6**, streaming observer |
 | `background.js` | ✔ | ✔ | ✔ | | coalesced status broadcast, structured faults, tab-message fan-out helper |
 | `core/agent_hub.js` | ✔ | ✔ | | | bounded pending map used, storage fallback TTL prune, `snapshot()` |
 | `core/agent_stability.js` | ✔ | ✔ | ✔ | | bottom-scan dedupe via `Set`, keepalive→`alarms`, honest ULTRA label |
@@ -304,3 +304,67 @@ Honesty section, because "0% lies" includes the things I did not do.
   client attached.
 - **macOS-specific launcher behaviour** was syntax-checked (`bash -n`,
   `--check`) on Linux. The `lsof` port probe has not run on macOS.
+
+## 6. Correction: I broke Single mode and called it a fix
+
+This section exists because the user was right and the chart was wrong.
+
+**What I shipped.** Commit `aaf446e` added, in the tool-result branch of
+`agentLoop`:
+
+```js
+if (loopMode === "single" && !isTeamMember && !isErr) { break; }
+```
+
+with the comment *"Single means 'one command, then stop'"*. **One tool call is
+not one command.** The first tool a model reaches for is almost always a read —
+`get_studio_state`, `inspect_instance`, `search_game_tree` — so Single mode ran a
+single inspection and terminated before it could change anything. The user's
+description, quoted: *"SINGLE MODE ONLY GIVES STUDIO INSPECTION THATS IT NO
+CHANGE"*. That is an exact description of the diff.
+
+**The other half of the same mistake.** The 4.6.0 behaviour I was "fixing" was
+itself broken: it returned *every* tool result to the model, so the same request
+produced an unbounded read-only spinner (inspecting over and over, never
+editing). Both extremes were wrong, and I moved from one to the other while
+naming only the first as a bug.
+
+**Why no test caught it.** There were **zero tests for exec modes** — the whole
+feature, all three modes. Every "ALL CHECKS PASSED" I reported was honest and
+still missed this, because nothing asserted that a Single-mode request produces
+a change.
+
+**The fix (4.7.1).** The behaviour now matches the mode name, decided by one pure
+function so it can be tested without a live DOM:
+
+| Tool result | Single-mode behaviour |
+|---|---|
+| a **mutation** (`execute_luau`, `multi_edit`, `set_property`, `generate_*`, …) | stop — that is the change the user asked for |
+| an **error** | continue — the model needs it to retry |
+| a **read** | continue, and append an instruction to act on what it just read |
+| a read when `SINGLE_MAX_READS` (6) is exhausted | stop, with a banner naming the reason instead of dying silently |
+
+Team members stay exempt (`execMode()` returns `"single"` for every team member,
+so gating on the mode alone made a planner stop after its first read and never
+see the role-violation feedback).
+
+**Proof it discriminates.** `test-exec-modes.js` (24 assertions) was run against
+all three candidate rules:
+
+| Rule under test | Result |
+|---|---|
+| 4.6.0 — never stop | 3 failures: *"200 calls, stopped by null"* |
+| 4.7.0 — stop after the first tool | 3 failures: *"ran: get_studio_state — stopped after the 1st read"* |
+| 4.7.1 — stop on mutation, cap reads | **24 passed** |
+
+The middle row is the user's complaint reproduced as an assertion.
+
+**A second bug I caused while fixing this.** My nudge string contained
+`generate_*/create_*/set_property`. `test-composer.js` strips comments with a
+regex that matches `/*` … `*/` without understanding string literals, so the
+`*/` inside my string closed a comment block at the top of the file and deleted
+matching code — `test-composer.js` went from 14/14 to 4 failures. Fixed by
+rewriting the string; the fragility in the stripper is pre-existing and is
+called out here rather than silently worked around.
+
+---

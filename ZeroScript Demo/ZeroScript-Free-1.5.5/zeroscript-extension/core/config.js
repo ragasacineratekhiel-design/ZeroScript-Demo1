@@ -8,7 +8,7 @@ const ZS = (() => {
 
   // ZeroScript MAX 4.7.0 — verified loop + real Luau parser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.7.0";
+  const APP_VERSION = "4.7.1";
 
   // ── STUDIO BUILD MODE (adopted from the 4.6.1 nested copy) ───────────────
   // The nested compatibility copy had already shipped this anti-"static text"

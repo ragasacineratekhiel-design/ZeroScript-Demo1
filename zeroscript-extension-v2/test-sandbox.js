@@ -156,7 +156,7 @@ for (const [label, src] of Object.entries(STILL_INVALID_4_7)) {
 }
 
 // ── 4.6.0 version + memoized static analysis immutability ──────────────────
-check("sandbox version is 4.7.0", S.version === "4.7.0", S.version);
+check("sandbox version is 4.7.1", S.version === "4.7.1", S.version);
 const c1 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
 c1.warnings.push("mutated-by-caller");
 const c2 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");

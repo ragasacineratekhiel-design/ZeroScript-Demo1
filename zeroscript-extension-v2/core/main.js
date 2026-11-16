@@ -1334,6 +1334,30 @@
     if (bare === "list_commands" || bare === "list_tools" || bare === "list_mcp_servers" || bare === "verify_fact") return true;
     try { return ZS.toolCategory(bare) === "read"; } catch (_e) { globalThis.ZSSafe?.seen?.("main.isReadTool", _e); return false; }
   }
+  // ── 4.7.1: what should happen after a tool call in Single mode? ───────────
+  // Two equally wrong behaviours shipped before this:
+  //   4.6.0: return EVERY result to the model. "Make the part red" led to
+  //          get_studio_state → inspect_instance → search_game_tree → … an
+  //          unbounded read-only spinner that burned tokens and never edited.
+  //   4.7.0: stop after ONE tool (commit aaf446e). The first tool a model picks
+  //          is nearly always a read, so Single ran inspect_instance and died
+  //          before it could "make the part red". I called that a fix in the
+  //          audit chart. It was a regression with a nicer comment.
+  //
+  // The rule that actually matches the mode name:
+  //   - a MUTATION ends the turn (Single = one change, then show me);
+  //   - an ERROR goes back so the model can retry;
+  //   - a READ goes back, because a read is a step towards the change — but the
+  //     run is capped at `maxReads` so a model that only ever reads cannot spin.
+  // Returns "stop" | "continue". Pure: no closure state, so it is unit-testable.
+  function singleToolDecision({ isMutating, isError, readCount, maxReads }) {
+    if (isMutating) return { action: "stop", reason: "mutation" };
+    if (isError) return { action: "continue", reason: "error-retry" };
+    if (readCount >= maxReads) return { action: "stop", reason: "read-cap" };
+    return { action: "continue", reason: "read-then-act" };
+  }
+  const SINGLE_MAX_READS = 6;
+
   function truthDigest(str) {
     let h = 2166136261;
     const s2 = String(str || "");
@@ -1799,8 +1823,12 @@
     let truncCount = 0;
     const MAX_TRUNC = 6;
     // Exec-mode budget (HONEST: bounded, so a stuck model can never spin forever).
-    const EXEC_MAX_TURNS = { single: 1, continuous: 24, loop: 40 };
+    // `single` is not a turn budget: in Single mode the loop ends when the model
+    // mutates Studio, replies, or exhausts SINGLE_MAX_READS. It was `single: 1`,
+    // which is what produced the "one inspection then nothing" behaviour.
+    const EXEC_MAX_TURNS = { continuous: 24, loop: 40 };
     let execTurns = 0;
+    let singleReads = 0;   // read-only tool calls spent in THIS single-mode run
     // 4.7.0 — Single mode was only honoured in the TEXT branch, so a tool result
     // was always fed back to the model and Single behaved exactly like
     // Continuous. Computed once per loop (the mode cannot change mid-turn
@@ -2138,22 +2166,35 @@
             id: P.lastAssistantId ? P.lastAssistantId() : undefined,
           };
 
-          // ── Single-mode fix (and the trap in it) ────────────────────────
-          // Single means "one command, then stop": returning the result to the
-          // model silently turned Single into Continuous. Break here — after
-          // decoration, so the user still sees what ran.
+          // ── Single mode: one CHANGE, not one CALL ──────────────────────
+          // See singleToolDecision() for why both previous behaviours were
+          // wrong. A mutation ends the run; a read continues so the model can
+          // act on it, capped so it cannot spin; an error always goes back.
           //
-          // BUT execMode() also returns "single" for EVERY team member
-          // (`team.active ? "single"`), so gating this on loopMode alone made a
-          // planner/checker stop after their first read tool and never receive
-          // the ROLE VIOLATION feedback the gate sends back through the turn.
-          // Caught by tests/test-team-dom.js, not by any unit test. Team mode
-          // is a conversational loop and is explicitly exempt; so is an
-          // errored call, because the model needs the error to retry.
+          // execMode() also returns "single" for EVERY team member
+          // (`team.active ? "single"`), so team mode stays exempt entirely —
+          // it is a conversational loop, not a one-shot build.
           const isTeamMember = typeof team !== "undefined" && team && team.active;
-          if (loopMode === "single" && !isTeamMember && !isErr) {
-            diag("exec.single.toolDone", { tool: call.tool });
-            break;
+          // Hoisted: the feedback builder below needs the same answer, and
+          // calling isMutatingTool twice on the same name invites divergence.
+          let mutatesNow = false;
+          try { mutatesNow = ZS.isMutatingTool(call.tool); }
+          catch (_e) { globalThis.ZSSafe?.seen?.("main.single.mutating", _e); }
+          if (loopMode === "single" && !isTeamMember) {
+            if (!mutatesNow && !isErr) singleReads++;
+            const verdict = singleToolDecision({
+              isMutating: mutatesNow, isError: isErr,
+              readCount: singleReads, maxReads: SINGLE_MAX_READS,
+            });
+            diag("exec.single.verdict", { tool: call.tool, mutates: mutatesNow, isErr, reads: singleReads, ...verdict });
+            if (verdict.action === "stop") {
+              if (verdict.reason === "read-cap") {
+                ui.banner("warn", "Single mode stopped after reads",
+                  `The model inspected ${singleReads} times without changing anything. ` +
+                  `Ask for the change explicitly (e.g. "make the part red"), or switch Exec mode to Continuous.`);
+              }
+              break;
+            }
           }
           if (loopMode === "single" && isTeamMember) diag("exec.single.teamContinue", { tool: call.tool });
 
@@ -2170,6 +2211,21 @@
           // without it looking like a new result to act on. Errors don't count
           // (they already restate what's wrong) and list_commands is redundant.
           let toSend = feedback;
+          // ── 4.7.1 Single mode: turn reads into action ──────────────────
+          // The cap alone stops runaway inspection, but stopping is not the
+          // goal — changing the game is. After every read in Single mode the
+          // model gets one explicit instruction to act on what it just read,
+          // escalating as it approaches the cap. Without this the model
+          // re-inspects the same path with a different tool.
+          if (loopMode === "single" && !isTeamMember && !isErr && !mutatesNow) {
+            const left = SINGLE_MAX_READS - singleReads;
+            toSend += left > 2
+              ? "\n\n[SINGLE MODE] That was a read. Now ACT: make the change the user asked for " +
+                "with execute_luau, multi_edit, set_property, or a generate_ / create_ tool. " +
+                "Do not inspect the same thing again."
+              : `\n\n[SINGLE MODE] You have ${Math.max(left, 0)} read(s) left before this run stops. ` +
+                "If you already know what to change, call execute_luau / multi_edit NOW with the full payload.";
+          }
           if (!isErr && call.tool !== "list_commands" && A.toolList.length) {
             A.toolCallsSinceReminder++;
             if (A.toolCallsSinceReminder >= REMIND_TOOLS_EVERY) {

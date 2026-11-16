@@ -1098,7 +1098,7 @@ try {
 
   return {
     id: "qwen",
-    version: "4.7.0",
+    version: "4.7.1",
     displayName: "Qwen",
     // DYNAMIC per selected model (see the capability section above). A getter so
     // the core always reads the CURRENT model's capability - it can change

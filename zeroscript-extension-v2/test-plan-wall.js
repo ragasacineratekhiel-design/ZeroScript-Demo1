@@ -90,7 +90,7 @@ W.send("coder", "__all", { type: "code_ready" }, "wall");
 check("local send is immediate", W.getWallLog().length === before + 1);
 
 
-check("plan_wall VERSION is 4.6.0", W.VERSION === "4.7.0", W.VERSION);
+check("plan_wall VERSION is 4.7.1", W.VERSION === "4.7.1", W.VERSION);
 check("close() releases resources cleanly", typeof W.close === "function" && (W.close(), true));
 
 // ── 4.7.0: role defaults must survive the peer wall's own audit ────────────
