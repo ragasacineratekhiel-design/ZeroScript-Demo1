@@ -757,7 +757,19 @@ function checkVersions(mf) {
       if (!v.startsWith(want)) { fail("version", `${path.relative(ROOT, f)} declares "${v}", manifest says ${want}`); bad++; }
     }
   }
-  if (!bad) ok("version", `all module versions start with ${want}`);
+  // 4.7.0: object-literal versions were invisible to this check. Several modules
+  // report themselves through `{ ..., version: "4.7.0" }` (agent_stability used
+  // to say 4.5.0 there while every other surface said 4.7.0, and nothing caught
+  // it). Match the property form too, but only on an exact dotted version so a
+  // `version: "ws"` string elsewhere is not misread.
+  for (const f of files) {
+    const src = fs.readFileSync(f, "utf8");
+    for (const m of src.matchAll(/\bversion\s*:\s*"((?:\d+\.)+\d+)"/g)) {
+      const v = m[1];
+      if (!v.startsWith(want)) { fail("version", `${path.relative(ROOT, f)} exposes version "${v}", manifest says ${want}`); bad++; }
+    }
+  }
+  if (!bad) ok("version", `all module versions start with ${want} (const and object-literal forms)`);
 }
 
 // ── 7. assertion tests ────────────────────────────────────────────────────

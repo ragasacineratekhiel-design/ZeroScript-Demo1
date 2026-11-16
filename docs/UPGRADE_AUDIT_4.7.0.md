@@ -136,6 +136,49 @@ at it is not a change that works.
 | 2.3b | Extracted the DOM observer out of `main.js` into `core/dom_watch.js`; the module read the bare `MutationObserver` global. | The *new* `test-dom-watch.js` under jsdom: `stats().observing === false` and every waiter fell through to its timeout. In an extension content script the global exists, so this would have shipped silently. | Resolve the constructor explicitly (bare global → `window` → `globalThis`), per call, so a later polyfill wins. |
 | 2.3c | Replacing `waitFor`/`waitForDOMChange` with delegation left a `_mo` reference in `main.js`'s pagehide handler after `_mo` moved into the new module. | `tools/verify.js` scope check: *"reads `_mo` which is declared NOWHERE … ReferenceError the moment that line runs"*. | Removed the dead disconnect; the module releases its own observer. |
 
+### 2.4 The worst mistake of this session: I reported work that had been erased
+
+This is the entry I would want to read if I were handed this document, so it goes
+in the main chart, not a footnote.
+
+**What happened.** For one stretch I ran every edit with `cd "ZeroScript
+Demo/ZeroScript-Free-1.5.5"` (the canonical tree) but wrote the *test* changes to
+`zeroscript-extension-v2/test-bridge.py`. Then I ran
+`scripts/sync_copies.py --write`, which copies canonical → bundle for the whole
+extension tree. That is correct behaviour for the tool, but it reverted the test
+file I had just edited, and — because several of my earlier Python edits had been
+made while my shell was in the bundle mirror — it also overwrote those.
+
+**What that cost, precisely.** Three commits (`aaf446e`, `3064f1e`, and the
+bridge portion of the sync) carried messages describing `bridge.py` changes
+(parallel `studio_full_tree`, single-flight probe, POSIX port lookup, FIFO
+agent-temp eviction) and `team_hub.py` changes (`leave()` keeping the team alive,
+the `event_log` off-by-one) **that were not present in the tree**. `test-bridge.py`
+reported 26 assertions in my transcript while the file on disk still had 18. The
+suite was green because it was testing the old code.
+
+**How I caught it.** Not by re-reading my own summary — by grepping the *source*
+for the identifiers the commit messages named
+(`_port_owner_posix`, `_PROBE_NEG_TTL`, `_TREE_WORKERS`, `as_completed`) and
+getting `0`. A sha1 of `bridge.py` before and after the sync showed it was
+byte-identical to the pre-change file.
+
+**What I changed so it cannot silently happen again.**
+1. Every claim below is now backed by a grep of a unique identifier *in the
+   canonical file* plus a sha1 before/after the sync, recorded in the transcript.
+2. `scripts/sync_copies.py --check` was run after every edit batch, and it now
+   prints the count it verified (`59 verified`) so "clean" is a number.
+3. The test file is the load-bearing artifact: `test-bridge.py` went 18 → 26
+   assertions, and `npm run verify` prints the per-file assertion count, so a
+   reverted test file shows up as a smaller number instead of passing silently.
+
+**The general lesson, stated plainly:** a green suite only means the files it ran
+were correct. It says nothing about whether the files you *think* you edited are
+the ones on disk. Any workflow with a copy/sync step needs the source-side
+identifier check, not just the test result.
+
+---
+
 ---
 
 ## 3. Per-file change matrix (the "everything changed" proof)
