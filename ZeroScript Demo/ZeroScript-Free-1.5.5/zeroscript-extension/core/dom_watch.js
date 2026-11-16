@@ -167,7 +167,7 @@
   /** Diagnostics: how many waiters/subscribers are registered right now. */
   function stats() { return { waiters: waiters.size, subscribers: subscribers.size, observing: !!observer, reportFailures }; }
 
-  const api = { version: "4.7.0", waitForDOMChange, waitFor, onDomChange, stats, ensureObserver };
+  const api = { version: "4.7.1", waitForDOMChange, waitFor, onDomChange, stats, ensureObserver };
   window.ZSDomWatch = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

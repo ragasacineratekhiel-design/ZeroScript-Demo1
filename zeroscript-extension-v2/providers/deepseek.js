@@ -1038,7 +1038,7 @@ try {
 
   return {
     id: "deepseek",
-    version: "4.7.0",
+    version: "4.7.1",
     displayName: "DeepSeek",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see
@@ -1058,7 +1058,7 @@ try {
       // Version beacon: stamp the loaded build onto <html> so a reload can be
       // confirmed from the page (read document.documentElement.dataset.zsDsVer).
       // BUMP DS_VER on meaningful deepseek.js changes worth verifying live.
-      try { document.documentElement.setAttribute("data-zs-ds-ver", "4.7.0"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
+      try { document.documentElement.setAttribute("data-zs-ds-ver", "4.7.1"); } catch (_e) { globalThis.ZSSafe?.seen?.("deepseek.modeWarning", _e); }
     },
     // turns
     allItems, isUserItem, isAssistantItem, itemText, classifyText,

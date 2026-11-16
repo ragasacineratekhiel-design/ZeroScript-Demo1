@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// core/parser.js - ZeroScript MAX v4.7.0 — fast, fact-checked, single-pass
+// core/parser.js - ZeroScript MAX v4.7.1 — fast, fact-checked, single-pass
 //
 // PURE string logic, zero DOM:
 // the provider extracts a turn's text from the site's DOM; everything here
@@ -36,7 +36,7 @@
 const ZSParse = (() => {
   "use strict";
 
-  const VERSION = "4.7.0";
+  const VERSION = "4.7.1";
 
   // ── O(1) fingerprint cache ────────────────────────────────────────────────
   const CACHE_MAX = 256;   // entries; bounded on purpose

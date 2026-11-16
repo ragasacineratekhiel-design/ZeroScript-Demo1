@@ -219,5 +219,5 @@ const ZSAgentStability = (() => {
   // undefined, while tryPatch still hardened the provider). The three setTimeout
   // retries and the 10ms/45-try interval above are the real re-patch path.
 
-  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.7.0" };
+  return { makeEditorHelper, makeGenerationHelper, hardenedSend, startStudioMonitor, startKeepalive, installVisibilityHandler, FALLBACKS, tryPatch, version:"4.7.1" };
 })();

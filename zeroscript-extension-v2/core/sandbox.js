@@ -29,7 +29,7 @@
 //  • results are cached by content (identical blocks are parsed once).
 (() => {
   "use strict";
-  const VERSION = "4.7.0";
+  const VERSION = "4.7.1";
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. LEXER

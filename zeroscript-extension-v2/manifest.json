@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZeroScript MAX \u00d7 Roblox Studio Agent",
-  "version": "4.7.0",
+  "version": "4.7.1",
   "description": "ZeroScript MAX 4.7.0 \u2014 real Luau parser (no false syntax rejections), single-source timings, mutation-clock reply cache, enforced planner/coder/checker roles, and verified /truth ground-truth reads over the local WS bridge.",
   "permissions": [
     "storage",
