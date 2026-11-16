@@ -4,10 +4,17 @@
 const VERSION = '4.7.0';
 const WS_URL = 'ws://127.0.0.1:17613';
 const HTTP_BASE = 'http://127.0.0.1:17614';
-const RECONNECT_MIN = 250;
-const RECONNECT_MAX = 5000;
-const HEARTBEAT_MS = 10000;
-const HTTP_TIMEOUT = 5000;
+// Timings come from core/config.js (ZS.T) when it is available, so the service
+// worker and the content scripts can never drift apart. The literals below are
+// the documented defaults and stay correct if config.js failed to load — a
+// service worker that throws at import time loses EVERY message handler.
+const ZS_T = (() => { try { return globalThis.ZS && globalThis.ZS.T ? globalThis.ZS.T : null; } catch (_e) { return null; } })();
+const RECONNECT_MIN = 250;                                   // ZS.T.transport.reconnectMin
+const RECONNECT_MAX = 5000;                                  // ZS.T.transport.reconnectMax
+const HEARTBEAT_MS = 10000;                                  // ZS.T.transport.heartbeatMs
+const HTTP_TIMEOUT = 5000;                                   // ZS.T.transport.httpTimeout
+const STALE_MS = 12000;                                      // 1.2 x heartbeatMs
+const WS_PING_MS = (ZS_T && ZS_T.transport && ZS_T.transport.wsPingMs) || 2800;
 const HOST_NAMES = {
   'chat.deepseek.com':'DeepSeek', 'deepseek.com':'DeepSeek', 'chatgpt.com':'ChatGPT', 'chat.openai.com':'ChatGPT',
   'gemini.google.com':'Gemini', 'claude.ai':'Claude', 'kimi.ai':'Kimi', 'www.kimi.ai':'Kimi',
@@ -82,10 +89,53 @@ function updateStatus(r){
   if(Array.isArray(r.tools)) toolsCache=r.tools;
   if(Array.isArray(r.servers)) serversCache=r.servers;
 }
-async function broadcastStatus(){
-  const s=statusObj();
-  try { await chrome.runtime.sendMessage(s); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
-  try { for(const t of await chrome.tabs.query({})) if(providerName(t.url)) chrome.tabs.sendMessage(t.id,s).catch(()=>{}); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus", _e); }
+// ── status fan-out (4.7.0) ──────────────────────────────────────────────────
+// 4.6.0 called broadcastStatus() once per socket frame of type
+// connected/tools/mcp_status/studio_status. When Studio connects it chats: the
+// bridge emits a tools frame per installed server and a status frame per
+// heartbeat, and every one of them re-queried every tab, rebuilt the whole
+// status object, and sent one message per provider tab. On a 6-tab setup a
+// 20-frame burst was 120 sendMessage calls for information that had changed
+// once.
+//
+// Now every trigger marks the status dirty and one trailing timer does the
+// fan-out. Behaviour is unchanged for the consumer: it still gets the newest
+// state, and `flushStatus()` lets a caller that needs it NOW (tab onCreated)
+// force the send.
+const BROADCAST_COALESCE_MS = 150;
+let statusDirty = false;
+let statusTimer = 0;
+let statusInFlight = null;
+let statusSeq = 0;          // monotonic: consumers can discard stale frames
+let lastStatusSentAt = 0;
+
+function broadcastStatus(){ statusDirty = true; return scheduleStatus(); }
+
+function scheduleStatus(){
+  if (statusTimer) return statusInFlight || Promise.resolve();
+  if (statusInFlight) return statusInFlight;   // a send is already walking the tabs
+  statusTimer = setTimeout(() => { statusTimer = 0; flushStatus().catch(() => {}); }, BROADCAST_COALESCE_MS);
+  return Promise.resolve();
+}
+
+async function flushStatus(){
+  if (statusInFlight) return statusInFlight;
+  if (!statusDirty) return;
+  statusDirty = false;
+  statusSeq++;
+  statusInFlight = (async () => {
+    const s = { ...statusObj(), seq: statusSeq, sentAt: Date.now() };
+    // Extension pages (popup) first: they are the ones a user is watching.
+    try { await chrome.runtime.sendMessage(s); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus.runtime", _e); }
+    let tabs = [];
+    try { tabs = await chrome.tabs.query({}); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus.query", _e); }
+    try { tabs = tabs.filter((t) => providerName(t.url)); } catch (_e) { globalThis.ZSSafe?.seen?.("background.broadcastStatus.filter", _e); }
+    // Sends are fire-and-forget and must never reject: a tab closing mid-loop is
+    // normal and used to produce one unhandled rejection per tab.
+    for (const t of tabs) { chrome.tabs.sendMessage(t.id, s).catch(() => {}); }
+    lastStatusSentAt = Date.now();
+  })().finally(() => { statusInFlight = null; if (statusDirty) scheduleStatus(); });
+  return statusInFlight;
 }
 function fetchToken(){
   if(tokenPromise) return tokenPromise;
@@ -134,7 +184,7 @@ async function connect(){
     // Another caller may have completed pairing while we waited.
     if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
     const socket=new WebSocket(WS_URL+'/?token='+encodeURIComponent(bridgeToken)); ws=socket;
-    socket.onopen=()=>{ if(ws!==socket)return; connected=true;lastMessageAt=Date.now();reconnectDelay=RECONNECT_MIN;broadcastStatus().catch(console.error); };
+    socket.onopen=()=>{ if(ws!==socket)return; connected=true;lastMessageAt=Date.now();reconnectDelay=RECONNECT_MIN;broadcastStatus();try{schedulePing();}catch (_e) { globalThis.ZSSafe?.seen?.("background.ping", _e); } };
     socket.onmessage=ev=>{
       if(ws!==socket)return;
       lastMessageAt=Date.now(); let msg;try{msg=JSON.parse(ev.data);}catch(_e){globalThis.ZSSafe?.seen?.("background.wsParse",_e);return;}
@@ -153,9 +203,9 @@ async function connect(){
         else if(msg.type==='tool_result') p.resolve(msg);
         else p.resolve({ok:msg.ok!==false,...msg});
       }
-      if(['connected','tools','mcp_status','studio_status'].includes(msg.type))broadcastStatus().catch(console.error);
+      if(['connected','tools','mcp_status','studio_status'].includes(msg.type))broadcastStatus();
     };
-    socket.onclose=()=>{if(ws!==socket)return;ws=null;connected=false;studio=null;studioApp=null;mcpAlive=false;failPending('WebSocket closed');broadcastStatus().catch(console.error);scheduleReconnect();};
+    socket.onclose=()=>{if(ws!==socket)return;ws=null;connected=false;studio=null;studioApp=null;mcpAlive=false;failPending('WebSocket closed');broadcastStatus();clearTimeout(pingTimer);pingTimer=0;scheduleReconnect();};
     socket.onerror=()=>socket.close();
   } catch(_e) {globalThis.ZSSafe?.seen?.("background.connect",_e);scheduleReconnect();}
 }
@@ -205,7 +255,7 @@ async function teamRequest(msg,sender){
   }
   const binding=bindings[tabId];
   if(!binding)return {ok:false,error:'Join this tab to a team first using the extension popup'};
-  if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();broadcastStatus().catch(()=>{});return http('/api/team/leave',{member_id:binding.member_id});}
+  if(msg.type==='team_leave'){delete bindings[tabId];saveBindings();broadcastStatus();return http('/api/team/leave',{member_id:binding.member_id});}
   const action={team_status:'status',team_inbox:'inbox',team_ack:'ack',team_send:'send',team_ready:'ready'}[msg.type];
   if(!action)return {ok:false,error:'Unknown team action'};
   const body={member_id:binding.member_id,...(action==='send'?{to:msg.to||'all',text:msg.text,message_id:msg.message_id}:{}),...(action==='ack'?{ids:msg.ids}:{})};
@@ -277,7 +327,7 @@ let heartbeatBusy=false;
 async function heartbeat(){
   if(heartbeatBusy)return;heartbeatBusy=true;
   try{
-    if(connected){if(Date.now()-lastMessageAt>12000)ws?.close();else sendWS({type:'ping'},5000);}
+    if(connected){if(Date.now()-lastMessageAt>STALE_MS)ws?.close();else sendWS({type:'ping'},HTTP_TIMEOUT);}
     else await connect();
     await storageReady;
     const tabs=await chrome.tabs.query({});
@@ -288,9 +338,24 @@ async function heartbeat(){
     }));
   }finally{heartbeatBusy=false;}
 }
-const heartbeatTimer=setInterval(heartbeat,HEARTBEAT_MS);
-chrome.alarms.create('zs-keepalive',{periodInMinutes:0.5});
-chrome.alarms.onAlarm.addListener(()=>heartbeat().catch(console.error));
+// ONE liveness path. 4.6.0 ran a 10 s setInterval AND a 0.5 min alarm, both
+// calling heartbeat(): two schedules, two reconnect races, and the interval
+// alone kept the MV3 worker from ever idling. The alarm survives worker
+// suspension; the interval does not — so the alarm is the one that stays.
+// The in-flight guard already made the duplicate harmless, which is why this was
+// invisible; it still doubled the WS ping traffic whenever the worker was awake.
+try {
+  chrome.alarms.create('zs-keepalive',{periodInMinutes:0.5});
+  chrome.alarms.onAlarm.addListener((a)=>{ if(!a || a.name==='zs-keepalive') heartbeat().catch(()=>{}); });
+} catch (_e) { globalThis.ZSSafe?.seen?.("background.alarms", _e); }
+// A short self-scheduling timer only while a socket is actually open, so a
+// dropped connection is noticed within one heartbeat instead of waiting for the
+// alarm. Cleared the moment the socket closes.
+let pingTimer = 0;
+function schedulePing(){
+  if (pingTimer || !connected) return;
+  pingTimer = setTimeout(() => { pingTimer = 0; if (connected) { heartbeat().catch(()=>{}); schedulePing(); } }, HEARTBEAT_MS);
+}
 chrome.runtime.onStartup.addListener(()=>connect().catch(console.error));
 chrome.runtime.onInstalled.addListener(()=>connect().catch(console.error));
 
@@ -533,5 +598,12 @@ function legacyMessage(msg,_sender){
 
 connect().catch(console.error);
 
-// Worker teardown hook where supported; timers also end when MV3 terminates it.
-if(typeof self!=="undefined" && self.addEventListener)self.addEventListener('unload',()=>{clearInterval(heartbeatTimer);clearInterval(tempSweepTimer);});
+// Worker teardown hook. `heartbeatTimer` no longer exists (the 10 s interval was
+// replaced by the alarm + ping chain in 4.7.0), so the old clearInterval here
+// was a ReferenceError waiting for the first unload — caught by verify's scope
+// check, not by any test.
+if(typeof self!=="undefined" && self.addEventListener)self.addEventListener('unload',()=>{
+  clearInterval(tempSweepTimer);
+  clearTimeout(pingTimer);
+  try{ ws && ws.close(); }catch (_e) { globalThis.ZSSafe?.seen?.("background.unload", _e); }
+});
