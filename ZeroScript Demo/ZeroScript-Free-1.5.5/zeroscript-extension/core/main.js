@@ -2138,15 +2138,24 @@
             id: P.lastAssistantId ? P.lastAssistantId() : undefined,
           };
 
-          // ── 4.7.0 Single-mode fix ───────────────────────────────────────
-          // Single means "one command, then stop". The tool has now run and its
-          // chip is painted with the real outcome, so returning the result to
-          // the model would silently turn Single into Continuous. Break here —
-          // after decoration, so the user still sees what ran.
-          if (loopMode === "single") {
+          // ── Single-mode fix (and the trap in it) ────────────────────────
+          // Single means "one command, then stop": returning the result to the
+          // model silently turned Single into Continuous. Break here — after
+          // decoration, so the user still sees what ran.
+          //
+          // BUT execMode() also returns "single" for EVERY team member
+          // (`team.active ? "single"`), so gating this on loopMode alone made a
+          // planner/checker stop after their first read tool and never receive
+          // the ROLE VIOLATION feedback the gate sends back through the turn.
+          // Caught by tests/test-team-dom.js, not by any unit test. Team mode
+          // is a conversational loop and is explicitly exempt; so is an
+          // errored call, because the model needs the error to retry.
+          const isTeamMember = typeof team !== "undefined" && team && team.active;
+          if (loopMode === "single" && !isTeamMember && !isErr) {
             diag("exec.single.toolDone", { tool: call.tool });
             break;
           }
+          if (loopMode === "single" && isTeamMember) diag("exec.single.teamContinue", { tool: call.tool });
 
           // Continuous/Loop exec mode: honor deferred stop at progress boundary (no half-coded blocks)
           if (A.pendingStop && isProgress) {

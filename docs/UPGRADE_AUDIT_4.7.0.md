@@ -125,6 +125,17 @@ Every row is a script that the 4.7.0-dev analyser **rejected**, and `main.js` bl
 operator, so a bare expression statement cannot have two expressions. My first
 "false positive" report for it was wrong; the corpus now asserts the real grammar.
 
+### 2.3 Bugs I introduced and then caught
+
+Recorded for the same reason as 2.1: a change that "works" because no test looks
+at it is not a change that works.
+
+| # | What I broke | How it surfaced | Fix |
+|---|---|---|---|
+| 2.3a | Single exec mode was supposed to stop after one tool call. I gated the new `break` on `loopMode === "single"` — but `execMode()` also returns `"single"` for **every team member** (`team.active ? "single"`). Planner and checker therefore stopped after their first tool and never received the ROLE VIOLATION feedback that `safe_call` sends back as a turn. | `npm run test:team` → `tests/test-team-dom.js`: "planner receives explicit ROLE VIOLATION feedback". Confirmed against `37fb5f4` in a separate worktree that the test passed before my commit, so it was mine, not pre-existing. | Team mode and errored calls are exempt from the break. Both scenarios plus the checker scenario and the background-tab scenario pass again (96 assertions in the team suite). |
+| 2.3b | Extracted the DOM observer out of `main.js` into `core/dom_watch.js`; the module read the bare `MutationObserver` global. | The *new* `test-dom-watch.js` under jsdom: `stats().observing === false` and every waiter fell through to its timeout. In an extension content script the global exists, so this would have shipped silently. | Resolve the constructor explicitly (bare global → `window` → `globalThis`), per call, so a later polyfill wins. |
+| 2.3c | Replacing `waitFor`/`waitForDOMChange` with delegation left a `_mo` reference in `main.js`'s pagehide handler after `_mo` moved into the new module. | `tools/verify.js` scope check: *"reads `_mo` which is declared NOWHERE … ReferenceError the moment that line runs"*. | Removed the dead disconnect; the module releases its own observer. |
+
 ---
 
 ## 3. Per-file change matrix (the "everything changed" proof)
