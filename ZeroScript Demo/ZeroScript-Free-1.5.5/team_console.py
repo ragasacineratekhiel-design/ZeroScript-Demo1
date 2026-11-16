@@ -9,6 +9,9 @@ No synthetic AI conversation is generated here. 'message' means an AI tab used
 team_send. 'delivered' means the extension acknowledged chat submission, not
 that a model read it. Closing this viewer does not stop the bridge.
 """
+# Terminal viewer for real bridge team events.
+VERSION = "4.7.0"
+
 import argparse
 import json
 import os
@@ -84,6 +87,34 @@ def tail_count(value):
     return number
 
 
+def _http_port():
+    """Bridge HTTP port: ZS_BRIDGE_HTTP_PORT, else ZS_BRIDGE_PORT + 1, else 17614.
+
+    Identical rules to start.py's http_port(); duplicated here on purpose because
+    this file is also shipped standalone and must not import the launcher. The
+    4.6.0 inline expression raised on a malformed ZS_BRIDGE_PORT instead of
+    falling back, which killed the console with a traceback.
+    """
+    raw = os.environ.get("ZS_BRIDGE_HTTP_PORT")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    try:
+        return int(os.environ.get("ZS_BRIDGE_PORT", "17613")) + 1
+    except ValueError:
+        return 17614
+
+
+def _read_token(root):
+    """The pairing token, or "" when it does not exist yet (bridge not started)."""
+    try:
+        return (root / ".zs_token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Print available events and exit")
@@ -101,7 +132,7 @@ def main(argv=None):
     except AttributeError:
         pass
     root = Path(os.environ.get("ZS_DATA_DIR", Path(__file__).resolve().parent))
-    port = int(os.environ.get("ZS_BRIDGE_HTTP_PORT", str(int(os.environ.get("ZS_BRIDGE_PORT", "17613")) + 1)))
+    port = _http_port()
     color=not args.no_color and enable_colors()
     initial=True
     cursor = 0
@@ -111,9 +142,9 @@ def main(argv=None):
     print("ZeroScript Team Console — real bridge events, UTC timestamps", flush=True)
     print("Join planner, coder, checker in the extension popup, then Start team.")
     print("No model APIs are called. A registered tab is not proof of communication.\n", flush=True)
+    token = _read_token(root)      # re-read only when the bridge reports a reset
     while True:
         try:
-            token = (root / ".zs_token").read_text(encoding="utf-8").strip()
             wait_qs = "" if (args.once or args.status or initial) else "&wait=1"
             request = urllib.request.Request(f"http://127.0.0.1:{port}/api/team/events?since={cursor}{wait_qs}", headers={"X-ZS-Token": token})
             with urllib.request.urlopen(request, timeout=8) as response:
@@ -121,6 +152,9 @@ def main(argv=None):
             backoff = args.interval
             if result.get("reset"):
                 cursor = 0
+                # A restarted bridge issues a new pairing token; keeping the old
+                # one would 401 forever while the console said "reconnecting".
+                token = _read_token(root)
                 print("[Bridge restarted; reconnecting to the new event stream]", flush=True)
                 continue
             if result.get("truncated"):

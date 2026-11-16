@@ -17,6 +17,9 @@ it does not prove that the model read or understood the message.
   every call — faster under heartbeat load.
 - inbox() reports total pending so callers know when more is queued.
 """
+# Team relay: roles, mailboxes, introduction turns, run lifecycle.
+VERSION = "4.7.0"
+
 import collections
 import datetime
 import secrets

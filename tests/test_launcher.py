@@ -88,5 +88,39 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(launcher.entrypoint(),0)
             call.assert_called_once()
 
-    def test_launcher_version_is_4_6_0(self):
+    def test_launcher_version_is_4_7_0(self):
         self.assertEqual(launcher.VERSION, '4.7.0')
+
+    # ── 4.7.0: one port helper, three call sites ──────────────────────────
+    def test_http_port_defaults_to_ws_plus_one(self):
+        with patch.dict(launcher.os.environ, {}, clear=False):
+            launcher.os.environ.pop('ZS_BRIDGE_HTTP_PORT', None)
+            launcher.os.environ.pop('ZS_BRIDGE_PORT', None)
+            self.assertEqual(launcher.http_port(), 17614)
+
+    def test_http_port_follows_ws_port(self):
+        with patch.dict(launcher.os.environ, {'ZS_BRIDGE_PORT': '9000'}):
+            launcher.os.environ.pop('ZS_BRIDGE_HTTP_PORT', None)
+            self.assertEqual(launcher.http_port(), 9001)
+
+    def test_http_port_explicit_wins(self):
+        with patch.dict(launcher.os.environ, {'ZS_BRIDGE_HTTP_PORT': '1234', 'ZS_BRIDGE_PORT': '9000'}):
+            self.assertEqual(launcher.http_port(), 1234)
+
+    def test_http_port_survives_a_malformed_env(self):
+        """4.6.0 raised inside its own fallback and lost the port entirely."""
+        with patch.dict(launcher.os.environ, {'ZS_BRIDGE_PORT': 'not-a-number'}):
+            launcher.os.environ.pop('ZS_BRIDGE_HTTP_PORT', None)
+            self.assertEqual(launcher.http_port(), 17614)
+
+    def test_install_dependencies_skips_pip_when_satisfied(self):
+        with patch.object(launcher, 'local_python', return_value=Path('/nonexistent/python')), \
+             patch.object(launcher, '_venv_has_websockets', return_value=True), \
+             patch.object(launcher.Path, 'is_file', return_value=True), \
+             patch.object(launcher.subprocess, 'run') as run:
+            self.assertEqual(launcher.install_dependencies(), 0)
+            run.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()
