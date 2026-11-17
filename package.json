@@ -18,7 +18,9 @@
     "test:memory": "node zeroscript-extension-v2/test-memory-wall.js",
     "smoke": "node tools/simulate-load.js",
     "test:team": "node tests/test-extension.js && node tests/test-team-dom.js && node tests/test-claude-dom.js && node tests/test-provider-startup.js && node tests/test-popup.js && node zeroscript-extension-v2/test-parser.js && node zeroscript-extension-v2/test-chatgpt.js",
-    "test:exec": "node zeroscript-extension-v2/test-exec-modes.js"
+    "test:exec": "node zeroscript-extension-v2/test-exec-modes.js",
+    "test:prompt": "node zeroscript-extension-v2/test-prompt.js",
+    "test:enhancer": "node zeroscript-extension-v2/test-enhancer.js"
   },
   "engines": {
     "node": ">=18"

@@ -261,6 +261,10 @@
     truthPending: false,
     truthReads: 0,
     truthRetries: 0,
+    // 4.8.0 static Luau auto-repair: how many blocks were closed mechanically,
+    // and the note to append to the NEXT feedback so the model learns what changed.
+    sandboxRepairs: 0,
+    sandboxRepairNote: "",
     toolList: [],
     toolNames: new Set(),
     // Successful tool calls since the last command-list reminder. DeepSeek (and
@@ -1538,7 +1542,22 @@
         const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
         if(!dry.ok && dry.kind==="syntax"){
           diag("sandbox.block", { name, error: dry.error });
-          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
+          // 4.8.0: when the analyser could only fail because the block was
+          // TRUNCATED (a cut-off reply), say that instead of sending the model on
+          // a syntax hunt. It is the commonest real cause and the model cannot
+          // see that its own output was clipped.
+          const truncated = /end of input|never closed|unterminated/i.test(String(dry.error||""));
+          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n${truncated ? "(the block ends mid-code — if your previous reply was cut off by a length limit, re-send ONLY the missing tail; otherwise add the missing closer)\n" : ""}(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
+        }
+        // 4.8.0 AUTO-REPAIR: a mechanically-closable block (missing final `end`,
+        // unclosed paren/table) is sent as repaired instead of being bounced back.
+        // The model is told exactly what changed so it never "learns" that its
+        // unfinished code was correct.
+        if(dry.ok && dry.repair && dry.repaired){
+          diag("sandbox.repaired", { name, repair: dry.repair });
+          args.code = dry.repaired;
+          A.sandboxRepairs = (A.sandboxRepairs||0)+1;
+          A.sandboxRepairNote = `Auto-repaired your Luau before sending it: ${dry.repair}. The rest of the code was NOT changed — if the repair was not what you meant, re-send the block completed.`;
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
       }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
@@ -1624,7 +1643,12 @@
         A.truthReads++;
         return `Output of '${name}':\n${text}\n[VERIFIED via ${bareName} digest:${truthDigest(text)}]`;
       }
-      return `Output of '${name}':\n${text}`;
+      // 4.8.0: surface the auto-repair on the RESULT, once. The model must know
+      // that what Studio ran is not byte-identical to what it wrote, otherwise
+      // it "learns" that an unfinished block was accepted.
+      let note = "";
+      if (A.sandboxRepairNote) { note = `\n[${A.sandboxRepairNote}]`; A.sandboxRepairNote = ""; }
+      return `Output of '${name}':\n${text}${note}`;
     }
     // Orphaned content script - a page reload is the only cure, so say exactly
     // that instead of blaming the bridge (see bg / isContextInvalidated).
@@ -2504,11 +2528,16 @@
         if(full && stats && stats.wallLen > 400) wallDigest = full.slice(0, 1400);
       }
     }catch (_e) { globalThis.ZSSafe?.seen?.("main.systemPrompt", _e); }
+    // 4.8.0: the prompt is BUDGETED per provider. sendCharBudget is the real
+    // limit we know the composer/model accepts; promptBudgetFor turns it into a
+    // character budget for the prompt so a large custom prompt or memory digest
+    // truncates the LOWEST-tier prose instead of the command protocol.
     return ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
       providerNotes: P.promptExtra || "",
       memoryDigest: wallDigest,
+      budget: ZS.promptBudgetFor ? ZS.promptBudgetFor(P) : undefined,
     });
   }
 

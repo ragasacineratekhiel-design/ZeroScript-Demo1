@@ -811,6 +811,19 @@ if (process.argv.includes("--json")) {
 // advisory (byte-identical helpers across self-contained providers).
 const blocking = bySev.P0.length + bySev.P1.length;
 const strictP2 = process.env.ZS_AUDIT_STRICT === "1" ? bySev.P2.length : 0;
+// 4.8.0: under --json, stdout is a MACHINE-READABLE document and nothing else.
+// The summary used to be printed after the JSON array, so `JSON.parse` in
+// tools/verify.js threw "Unexpected non-whitespace character after JSON" and the
+// deep-audit section of `npm run verify` silently degraded to a warning — the
+// gate that is supposed to catch dead code and unhandled async never ran there.
+// The summary now goes to STDERR (still visible to a human, out of the pipe),
+// and an explicit JSON envelope carries the severity counts so a caller does not
+// have to re-derive them.
+if (process.argv.includes("--json")) {
+  console.error(`OK: ${bySev.P0.length} P0, ${bySev.P1.length} P1${process.env.ZS_AUDIT_STRICT === "1" ? ", " + bySev.P2.length + " P2 (strict)" : `, ${bySev.P2.length} P2 advisory`}.`);
+  console.error(`counts: ${JSON.stringify({ P0: bySev.P0.length, P1: bySev.P1.length, P2: bySev.P2.length, P3: bySev.P3.length })}`);
+  process.exit(blocking + strictP2 ? 1 : 0);
+}
 if (blocking) console.log(`\nFAIL: ${bySev.P0.length} P0 + ${bySev.P1.length} P1 must be zero.`);
 else if (strictP2) console.log(`\nFAIL: ${strictP2} P2 under ZS_AUDIT_STRICT=1.`);
 else console.log(`\nOK: 0 P0, 0 P1${process.env.ZS_AUDIT_STRICT === "1" ? ", 0 P2" : `, ${bySev.P2.length} P2 advisory`}.`);

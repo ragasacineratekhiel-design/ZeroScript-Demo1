@@ -10,6 +10,25 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ---
 
+## 4.8.0 — three reported problems, fixed with measured evidence
+
+This release changes exactly three things, because these are the three defects that
+were reported. Every number is reproducible; the full account with the before/after
+tables is in [`docs/REPAIR_NOTES_4.8.0.md`](docs/REPAIR_NOTES_4.8.0.md).
+
+| Report | What was actually wrong | Fix | Verified by |
+|---|---|---|---|
+| **"External prompts don't give better results and the claims are fake"** | Both halves were true. The claims were invented (`~35-40% closer to Pro`, `~30%`, `syntax -28%`) — there is no eval harness in this repo that could measure them. And the enhancer *did* make things worse: `isBadPrompt()` treated any ≤4-word message as vague, so `"thanks"` got **+5,400 chars** of simulator spec, and `isBadPrompt()` was also the only gate on the spec path, so **`"why"` got +5,397 chars** too. | Every percentage deleted. Noise prompts, one-word questions and clear short requests now return `changed:false` — byte-identical on the wire. `needsSpec()` is a separate predicate that fires only on a bare BUILD ask. The `detailed` path no longer re-appends the protocol. | `test-enhancer.js` — **114 assertions** |
+| **"The built-in syntax checker is garbage"** | 5 of 64 valid Luau snippets were rejected, including `if type(x) ~= "string" then return end` — *the* standard Roblox guard, and exactly the anti-exploit validation the prompt asks for. Meanwhile truncated code (`type A =`) was reported **valid**. `main.js` blocks `execute_luau` on a syntax verdict, so every false positive silently destroyed a correct reply. | 8 grammar defects fixed (contextual `type`/`typeof`, string-literal unions, keyword field names, `<const>`, indexed access types, type packs, `typeof(...)` types, `\z` escapes). Truncated input is now an error. Added `repairLuau()`: a bounded, provable auto-repair that only closes a block the open-block ledger names, and tells the model what it changed. | `test-sandbox.js` — **89 assertions**, 64/64 valid accepted, 15/15 broken rejected, plus a measured ms/run ceiling |
+| **"The startup command is so long it will cause hallucination"** | Measured: **37,983 chars ≈ 9,500 tokens** before the user types anything — 16 accreted sections, the 4.2 KB simulator blueprint in *every* prompt, the self-heal loop printed **3×**, `Ready — ZeroScript MAX 4.3.0` (three releases stale), invented latencies, and `Measured … +40-50% Pro proximity` three lines above "we quote no percentage". | Rebuilt as ranked tiers with a hard budget: **6,656 chars (−82.5%)**, ≈1,664 tokens, 9 sections, every rule stated exactly once, a numbered priority order for conflicts, and honest latency text. `promptBudgetFor(provider)` derives the budget from the provider's real `sendCharBudget`; the lowest tier truncates first and the command format never does. | `test-prompt.js` — **78 assertions** pinning size, budget, non-duplication, honesty and tier ordering |
+
+Nothing else was changed. `bridge.py`, `team_hub.py`, `team_console.py` and
+`start.py` were read and exercised (55 Python tests + 26 bridge-lifecycle
+assertions) but contain none of the three defects, and inventing edits to correct
+files would be the dishonesty this release is about.
+
+---
+
 ## Existing MAX features (retained from main)
 
 # ZeroScript MAX 4.7.0 × Roblox Studio Agent

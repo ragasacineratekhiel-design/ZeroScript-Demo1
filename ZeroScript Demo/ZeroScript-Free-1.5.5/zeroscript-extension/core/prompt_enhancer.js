@@ -41,11 +41,18 @@
   // recorded run in this repo to support either number, so they are gone. What the
   // mechanism does is concrete (checklists, trimmed context, static syntax gate) and
   // that is what the prompt now claims.
-  const PRO_BOOST_LIGHT = `\n\n[INTELLIGENCE AMPLIFIER v4 (internal+external+runtime, FACT-CHECKED): Decompose into phases (Discovery→Foundation→Core→Polish→Verify), inject TEST_CONTRACT if found, verify statically (Luau syntax pre-check; runtime still needs Studio) + inspect before mutate. Uses trimmed wallCtx to stay lean. Helps Flash act ~35-40% closer to Pro via scaffolding, not weights.]`;
+  // HONEST CLAIM (4.8.0). Earlier releases appended text like "helps Flash act
+  // ~35-40% closer to Pro" to every prompt. The repo has never contained an eval
+  // harness, a dataset, or a recorded run that supports a percentage, so all of
+  // them are gone — including the "~30%" in /smart. What is actually true and
+  // testable is narrow: the extension inserts a phase checklist, reminds the model
+  // to inspect before mutating, and runs a real Luau grammar before Studio sees
+  // the code. Those reduce avoidable failed tool calls. They do not change weights.
+  const PRO_BOOST_LIGHT = `\n\n[ZeroScript protocol reminder: work in phases (Discovery → Foundation → Core → Polish → Verify); inspect_instance / script_read BEFORE you mutate; Luau is parsed by a real grammar before Studio sees it (syntax only — runtime still needs Play).]`;
 
   const PRO_REASONING_FULL = `━━━ FACT-CHECKED INTELLIGENCE PROTOCOL v4 — INTERNAL+EXTERNAL+RUNTIME — HOW WE HELP FLASH/Sonnet/Mini ━━━
-TRUTH: Prompt alone does NOT make Gemini Flash = Gemini 3.1 Pro (or Sonnet=Opus, Mini=Astra). Weights fixed. Tested: prompt-only ~10-15% fewer hallucinations, not Pro reasoning.
-WHAT ACTUALLY WORKS (v4 telemetry, model-agnostic, tested):
+TRUTH: Prompting does NOT make Gemini Flash = Gemini 3.1 Pro (or Sonnet=Opus, Mini=Astra). Weights are fixed. No percentage is claimed here: this repo has no eval harness that could measure one.
+WHAT THIS ACTUALLY DOES (mechanical, model-agnostic):
 1. INTERNAL PLANNER (JS, upstream): before your call, extension decomposed task into 5-7 phases with concrete paths + upstreamed TEST_CONTRACT (hidden) — follow it.
 2. DYNAMIC TREE-TRIMMING: wallCtx is now trimmed by importance-weighting (relevant sections only) — keeps context lean, avoids hallucination from clutter.
 3. STATIC LUAU ANALYSIS (not execution): after you output Luau, a real tokenizer checks block balance, unterminated strings/comments and obvious shape errors, and rejects only hard syntax failures before they cost a Studio round trip. There is NO Luau VM in the extension, so runtime TypeErrors cannot be caught here — they surface in Studio. Do not rely on this for behavioural correctness.
@@ -155,19 +162,19 @@ FORCE EXECUTE NOW — use ALL powers, no excuses, deliver best result forcefully
     },
     smart: {
       name: "SMART AMPLIFIER",
-      desc: "Fact-checked smart boost — internal planner + external verifier, helps Flash/Sonnet/Mini ~30% (not magic Pro)",
+      desc: "Adds a phase checklist + verification loop + Luau syntax gate — structure, not model weights",
       template: (raw, theme, wallCtx, placeInfo) => `━━━ /smart — FACT-CHECKED SMART AMPLIFIER — TESTED INTERNAL+EXTERNAL ━━━
 User smart request: "${raw.slice(0,400)}"
 ${PRO_REASONING_FULL}
 SMART RULES (honest, 1 prompt = 1 response):
-- This is AMPLIFIER, not weight upgrade: use internal checklist (planner gave phases) + external verification to reach ~30% Pro-like quality on Flash/Sonnet/Mini.
+- This is STRUCTURE, not a weight upgrade: use the phase checklist + verify every step with tools. It cannot make a small model reason like a large one; it reduces avoidable mistakes.
 - For vague "make sim", infer full spec (leaderstats, save, UI, pets, economy, polish) — decide and ship, don't ask.
 - For bug fixes: read error → script_read → diagnose root → minimal fix → verify via return → mock play test. Never guess.
 - Use tokens wisely: reasoning + bulk builds + verification proofs. Thorough > lazy one-liner.
 - Output: commented, modular, exploiter-safe, Tween/Sound polish, mobile-ready — best Flash CAN do, honestly not full Pro.
 Theme: ${theme.name} — Systems: ${theme.systems.join(", ")}
 ${wallCtx ? `MemoryWall:\n${wallCtx}\n` : ""}${placeInfo?`Place:\n${placeInfo}\n`:""}
-APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smarter, honestly tested.
+APPLY THE CHECKLIST NOW — phases + tool verification. No quality percentage is claimed.
 ━━━ END /smart ━━━`
     }
   };
@@ -237,18 +244,64 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
     return THEMES.generic;
   }
 
+  // ── 4.8.0: "vague" means VAGUE, not SHORT ────────────────────────────────
+  // The 4.7 rule `wordCount <= 4 → bad` fired on "thanks", "yes", "ok", "2+2?"
+  // and "fix the bug", and each one then had the ~5,400-char auto-spec and the
+  // full reasoning protocol bolted onto it. That is why external prompt rewriting
+  // "made results worse": it drowned short, perfectly clear instructions in
+  // boilerplate and invited the model to BUILD A GAME when the user said "thanks".
+  // A short prompt is now only rewritten when it is genuinely underspecified —
+  // an explicit game/simulator request with no theme, or a pure greeting.
+  const BUILD_ASK_RE = /\b(make|build|create|design|code|give)\b[^.?!]{0,40}\b(game|simulator|sim|obby|tycoon|rpg|experience)\b/i;
+  // 4.8.0: a SET, not a regex. `/^(hi|thanks)[.!?]*$/` backtracks into its own
+  // alternatives ("thank" + "s" is not a match), which is how "thanks" kept
+  // getting the 5 KB auto-spec bolted on. Normalised exact membership has no such
+  // failure mode and is trivially readable.
+  const NOISE = new Set(["hi", "hey", "hello", "yo", "test", "testing", "help", "idk", "thanks", "thank you",
+    "thx", "ty", "ok", "okay", "k", "yes", "yes please", "no", "nope", "sure", "cool", "nice", "great",
+    "perfect", "lgtm", "continue", "go on", "make something", "do something", "anything",
+    "surprise me", "yep", "yeah", "nah", "alright", "done", "got it", "sounds good", "lets go",
+    "let s go", "wow", "amazing", "awesome", "good", "fine", "maybe", "hmm"]);
+  function isNoisePrompt(s) {
+    const t = String(s || "").toLowerCase().replace(/[.!?,;:]+/g, " ").replace(/\s+/g, " ").trim();
+    return !!t && NOISE.has(t);
+  }
+  // CONCRETE DETAIL = something you could act on: a digit, a code/identifier
+  // shape, or a NAMED Roblox thing. Deliberately NOT bare words like "bug",
+  // "error", "script", "game" — those appear in one-word questions ("bug?"), and
+  // treating them as detail sent a 5 KB simulator spec back for the word "bug".
+  const DETAIL_RE = /[`_/\\]|\b(part|model|remote|remoteevent|datastore|leaderstats|pet|egg|shop|coin|gem|gui|hud|animation|sound|lighting|terrain|module|function|workspace|replicatedstorage|startergui|line \d)\b/i;
+
+  // 4.8.0: "not well-formed" and "needs the simulator spec" are DIFFERENT
+  // questions with DIFFERENT remedies, and 4.7 conflated them: isBadPrompt() was
+  // the only gate on the spec path, so every one-word question ("why", "bug",
+  // "error") got a 5 KB game blueprint. `needsSpec` is the spec gate; isBadPrompt
+  // stays the (unchanged in spirit) malformed-request gate.
+  function needsSpec(s){
+    const t=String(s||"").trim();
+    if(!t) return false;
+    if(isNoisePrompt(t)) return false;                         // never spec "thanks"
+    if(!BUILD_ASK_RE.test(t)) return false;                    // must ASK to build
+    if(DETAIL_RE.test(t)) return false;                        // and name something concrete
+    return t.length < 48;                                       // and stay short/bare
+  }
+
   function isBadPrompt(s){
     if(!s) return true;
-    const t=s.trim();
-    if(t.length < 14) return true;
-    if(/^make (me )?a (game|simulator|sim)/i.test(t) && t.length < 45) return true;
-    if(/^(hi|hello|hey|yo|test|help|idk|make something|do something|anything|surprise me)[.!?]*$/i.test(t)) return true;
-    if(t.split(/\s+/).length <= 4 && !/[.?]/.test(t)) return true;
-    return false;
+    const t=String(s).trim();
+    if(!t) return true;
+    if(isNoisePrompt(t)) return true;                          // "thanks", "ok"
+    if(t.length < 6) return true;                              // "a b c"
+    return needsSpec(t);
   }
 
   function isVagueRequest(s){
-    const t=(s||"").toLowerCase();
+    const t=(s||"").toLowerCase().trim();
+    // Graded, not keyword-soup: a request is vague when it is a BUILD ask AND it
+    // names no concrete theme OR carries no concrete detail. "build a pet
+    // simulator with 5 eggs" is NOT vague and must be passed through untouched.
+    if(!BUILD_ASK_RE.test(t)) return false;
+    if(DETAIL_RE.test(t)) return false;
     const weak = ["make me a simulator","make a simulator","make me a game","make a game","pet sim","simulator game","obby","tycoon","horror game"];
     return weak.some(w=> t.includes(w)) || isBadPrompt(s);
   }
@@ -279,18 +332,37 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
       return { enhanced: `${body}\n\n${combined}`, changed:true, theme, spec: combined, mode };
     }
 
+    // ── 4.8.0 EARLY EXIT: social noise is not a prompt to improve ────────────
+    // "thanks", "ok", "yes", "continue" are conversation glue. 4.7 appended the
+    // ~5,400-char auto-spec and full reasoning protocol to every one of them,
+    // which is precisely the "external prompts make results worse" complaint:
+    // the model is invited to BUILD A GAME after the user said "thanks".
+    // Returning changed:false leaves the user's words byte-identical on the wire.
+    if (isNoisePrompt(raw)) {
+      return { enhanced: raw, changed: false, theme: detectTheme(raw), spec: "", mode: "none-noise" };
+    }
     const theme = detectTheme(raw);
-    const bad = isBadPrompt(raw);
+    // A genuine bare build request ("make me a game") is the ONE case the
+    // auto-spec exists for. Everything else that is merely underspecified — a
+    // one-word question, "fix it", "help me" — is passed through untouched: the
+    // AI can ask its own clarifying question, and inventing a game for "why" is
+    // the defect this release removes.
+    const bad = needsSpec(raw);
     const vague = isVagueRequest(raw);
     const words = raw.split(/\s+/).length;
     const detailed = raw.length >= 80 && words >= 10 && !vague;
     // ── PRO INTELLIGENCE DEFAULT: even plain prompts get Flash→Pro boost ──
     if(detailed && !opts.force){
+      // 4.8.0: this used to append PRO_REASONING_FULL (~2.3 KB) to every long
+      // prompt. The model already has the protocol in its system prompt; a second
+      // copy costs attention and adds no information. Only genuinely NEW context
+      // is appended now (a test contract and/or trimmed project memory).
       const wallCtx = getWallCtx(raw);
       const contract = getTestContract(raw, wallCtx, theme);
-      const footer = `\n\n${PRO_REASONING_FULL}\n${contract?"\n"+contract:""}\n${wallCtx?`\nTrimmedMemory:\n${wallCtx.slice(0,500)}` : ""}\n\n[ZeroScript MAX v4 — a Luau syntax pre-check runs on your output before it reaches Studio (syntax only; runtime needs Play) + trimmed context + TEST_CONTRACT upstream. 1 prompt = 1 response.]`;
-      if(raw.includes("MAX") || raw.includes("publish")) return { enhanced: raw + PRO_BOOST_LIGHT, changed:true, theme, spec: PRO_BOOST_LIGHT, mode:"pro-polished" };
-      return { enhanced: raw + footer, changed:true, theme, spec:"polished+pro", mode:"polished" };
+      const extraCtx = [contract, wallCtx ? `[Relevant project memory: ${wallCtx.slice(0, 500).replace(/\n/g, " | ")}]` : ""]
+        .filter(Boolean).join("\n");
+      if (!extraCtx) return { enhanced: raw, changed: false, theme, spec: "", mode: "none-needed" };
+      return { enhanced: raw + "\n\n" + extraCtx, changed: true, theme, spec: extraCtx, mode: "context-augmented" };
     }
     if(bad || vague){
       const spec = buildSpec(raw, theme, opts);
@@ -301,11 +373,28 @@ APPLY AMPLIFIER NOW — internal planner + external verifier → measurably smar
       try{ (window.__zsPromptStats||(window.__zsPromptStats={})).enhanced=(window.__zsPromptStats.enhanced||0)+1; }catch (_e) { globalThis.ZSSafe?.seen?.("prompt_enhancer.enhance", _e); }
       return { enhanced, changed:true, theme, spec: proSpec, mode:"vague+pro" };
     }
-    // Normal prompt — trimmed + contract + runtime-aware boost
+    // ── NORMAL PROMPT — 4.8.0: enhance ONLY when there is something to add ──
+    // The old path appended the full PRO_REASONING_FULL block (plus contract and
+    // wall text) to EVERY turn, including "thanks" and "yes". That is the exact
+    // "external prompts give better results" claim this release deletes: a model
+    // that already has the protocol in its system prompt gains nothing from a
+    // second copy, and loses attention to it. So the default is now a no-op, and
+    // we add text only when the extension actually knows something the prompt
+    // does not: a TEST_CONTRACT, relevant memory, or a non-Direct plan handoff.
     const wallCtx2 = getWallCtx(raw);
     const contract2 = getTestContract(raw, wallCtx2, theme);
-    const lightPlus = PRO_BOOST_LIGHT + getPlanOrchestration(raw) + (contract2?"\n"+contract2:"") + (wallCtx2?`\n[wall:${wallCtx2.slice(0,280).replace(/\n/g," | ")}]` :"") + "\n[Luau syntax pre-check runs before your output reaches Studio (syntax only); trimmed context keeps you lean; Switch Plan wall active]";
-    return { enhanced: raw + lightPlus, changed:true, theme, spec: lightPlus, mode:"pro-boost-v4" };
+    const planInfo = getPlanOrchestration(raw);
+    const pieces = [];
+    if (contract2) pieces.push(contract2);
+    if (wallCtx2) pieces.push(`[Relevant project memory: ${wallCtx2.slice(0, 280).replace(/\n/g, " | ")}]`);
+    if (planInfo && /━/.test(planInfo)) pieces.push(planInfo.trim());
+    if (!pieces.length) {
+      // Nothing new to say. Returning changed:false is the honest answer, and it
+      // keeps the user's own words byte-identical on the wire.
+      return { enhanced: raw, changed: false, theme, spec: "", mode: "none-needed" };
+    }
+    const lightPlus = "\n\n" + pieces.join("\n") + PRO_BOOST_LIGHT;
+    return { enhanced: raw + lightPlus, changed: true, theme, spec: lightPlus, mode: "context-augmented" };
   }
 
   function buildSpec(raw, theme, opts){
@@ -351,7 +440,12 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
 
   function isInternalPrompt(raw){
     const s = String(raw||"");
-    return /^\s*(?:Output of '|ERROR\b|\(System note:|# ZeroScript|ZeroScript\s+—|# Studio Wall|\[PEER MESSAGE FROM )/i.test(s) ||
+    // 4.8.0: the 4.7 regex anchored every alternative INSIDE one `^\s*(?: … )`
+    // group, so `s.includes("ZeroScript bridge team")` and the other includes were
+    // live but the PREFIXES it advertised ("Output of '", "ERROR", "(System note:")
+    // could only match at position 0 of the whole string. Feedback that begins
+    // with a newline therefore slipped through and got the enhancer bolted on.
+    return /^\s*(?:Output of '|ERROR\b|\(System note:|# ZeroScript|ZeroScript\s+—|# Studio Wall|\[PEER MESSAGE FROM )/im.test(s) ||
       s.includes("⟦ZS-") ||
       s.includes("ZeroScript bridge team") ||
       s.includes("━━━ ZeroScript MAX");
@@ -369,6 +463,8 @@ Deliver at MAX: fun in 10s, no placeholder, save working, explain test steps at 
     enhance,
     parseSlash,
     isBadPrompt,
+    needsSpec,
+    isNoisePrompt,
     isVagueRequest,
     isInternalPrompt,
     detectTheme,
