@@ -42,7 +42,16 @@ check("default prompt is under the 12,000-char budget", prompt.length <= 12000, 
 check("default prompt is under 2,000 approx-tokens (length/4)", Math.round(prompt.length / 4) < 2000, Math.round(prompt.length / 4) + " tokens");
 // The 4.7.x prompt was 37,983 chars. A regression to even half of that is a bug.
 check("default prompt is at most a fifth of the 4.7.x prompt (37,983 chars)", prompt.length < 7597, prompt.length + " chars");
-check("a 4,000-char budget produces ≤ ~4,300 chars", ZS.buildSystemPrompt({ siteName: "X", budget: 4000 }).length <= 4300);
+// 4.8.1: the floor moved 4,217 → 4,531 because T0 gained two rules that are worth
+// more than the characters they cost (NO INVENTED CONNECTION, and YOUR ROLE/SOLO).
+// T0 is NEVER truncated by design — dropping the command format to hit a number
+// would be the exact failure this whole budget exists to prevent — so this asserts
+// the measured floor, not a target. If it grows again, that is a deliberate
+// decision and this number must be re-measured, not bumped blindly.
+const t0Floor = ZS.buildSystemPrompt({ siteName: "X", budget: 4000 }).length;
+check("a 4,000-char budget is bounded by the T0 floor (~4,600), never the budget", t0Floor <= 4600, t0Floor + " chars");
+check("an impossibly small budget yields exactly the T0 floor (T0 is untruncatable)",
+  ZS.buildSystemPrompt({ siteName: "X", budget: 500 }).length === t0Floor);
 check("promptStats reports the same size it builds", ZS.promptStats({ siteName: "ChatGPT" }).chars === prompt.length);
 
 // ── 2. the protocol survives every budget ──────────────────────────────────
@@ -144,6 +153,47 @@ check("sandboxAddendum(false) describes the static check honestly",
   /syntax only/i.test(ZS.sandboxAddendum(false)));
 check("sandboxAddendum(true) tells the model a repair happened",
   /auto-closed/i.test(ZS.sandboxAddendum(true)));
+
+
+// ── 9. 4.8.1: declared role + connection honesty in the prompt ─────────────
+// A solo tab that believes it has teammates hands work to nobody and waits.
+// Observed live: "I'm connected to another agent" from a single Gemini tab.
+const soloPrompt = ZS.buildSystemPrompt({ siteName: "Gemini", role: "coder", solo: true });
+check("solo prompt declares CODER as the role", /YOUR ROLE:.*CODER/i.test(soloPrompt), "no role declaration");
+check("solo prompt states there is exactly one AI", /SOLO/i.test(soloPrompt));
+check("solo prompt forbids handing work to a teammate",
+  /no planner, no checker, no other agent is connected/i.test(soloPrompt));
+check("solo prompt carries the no-invented-connection rule",
+  /NO INVENTED CONNECTION/i.test(soloPrompt));
+check("solo prompt never claims a peer connection",
+  !/im connected to other agent/i.test(soloPrompt));
+
+const teamPrompt = ZS.buildSystemPrompt({ siteName: "Claude", role: "planner", solo: false });
+check("team prompt declares PLANNER", /YOUR ROLE:.*PLANNER/i.test(teamPrompt));
+check("team prompt does not call the tab solo", !/Your role: .*SOLO|YOU ARE SOLO/i.test(teamPrompt));
+check("planner is told it may not mutate", /may NOT mutate Studio/i.test(teamPrompt));
+
+// The role line must survive the tightest budget: it is the cheapest defence
+// against the most expensive hallucination.
+check("the role line survives an impossible budget",
+  /YOUR ROLE:/i.test(ZS.buildSystemPrompt({ siteName: "X", budget: 100, role: "coder", solo: true })));
+
+// ── 10. 4.8.1: the user's custom prompt can never be silently dropped ──────
+// Regression for a real bug: `room() > 200` was false whenever T0 alone exceeded
+// the budget, so a custom prompt was discarded with no trace on small-budget
+// providers. It must be present at EVERY budget, including one below the floor.
+for (const b of [100, 500, 4300, 6000, 20000]) {
+  const t = ZS.buildSystemPrompt({ siteName: "X", budget: b, customPrompt: "CUSTOM-RULE-MARKER" });
+  check(`custom prompt survives budget ${b}`, t.includes("CUSTOM-RULE-MARKER"));
+}
+
+// ── 11. 4.8.1: NO EDIT CAP replaces the fake "24 edits" limit ──────────────
+// The old prompt said "MAX: batch up to 24 edits per call" and NOTHING enforced
+// it. A model that believed it split work it could have done in one turn.
+check("TOOL_NOTES no longer claims a 24-edit cap", !/MAX: batch up to 24 edits/.test(ZS.TOOL_NOTES.multi_edit));
+check("TOOL_NOTES tells the model there is no edit cap", /NO EDIT CAP/i.test(ZS.TOOL_NOTES.multi_edit));
+check("TOOL_NOTES says an unparseable edit rejects the whole batch",
+  /WHOLE batch is rejected/i.test(ZS.TOOL_NOTES.multi_edit));
 
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

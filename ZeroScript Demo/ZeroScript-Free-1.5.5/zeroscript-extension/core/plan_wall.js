@@ -292,6 +292,12 @@
   // coder is planner but switched with coder same with checker — we implement BOTH honest and switched
   const MAGIC_CONNECTED = "im connected to other agent";
   const MAGIC_NOT = "im not connected to other agents no external commands";
+  // 4.8.1: Direct needs its OWN line. Neither existing constant is true for a
+  // solo run: MAGIC_CONNECTED invents a peer, MAGIC_NOT implies "waiting for
+  // tabs" (a multi-AI plan that is short of tabs) when in fact nothing is
+  // requested. Both made the model narrate a connection state the extension had
+  // never established.
+  const MAGIC_SOLO = "im solo — single AI, no other agents connected, all local commands active";
   // Per-role with provider name — honest real magic words
   function magicForRole(role, provider){
     const p = String(provider || currentRoles[role] || "other agent").toLowerCase();
@@ -345,8 +351,11 @@
     const plan = PLANS[currentPlan] || PLANS.direct;
     const need = plan.ais;
     if(need===1){
-      // Direct always connected (single AI, no wall needed)
-      return {connected:true, need, have:1, haveEffective:1, arena:0, reason:"direct single", magic:MAGIC_CONNECTED, external:true, warn:""};
+      // 4.8.1: was {connected:true, external:true, magic:MAGIC_CONNECTED}. One AI
+      // has no peers, so claiming a connection here is the same defect as
+      // getMagicForPrompt() above. "Solo" is the truthful answer and it is not a
+      // failure state: nothing is missing.
+      return { ...soloStatus(plan, need), haveEffective: 1 };
     }
     const info = await fetchTabInfo();
     const total = info.total || 1;
@@ -386,10 +395,31 @@
     try{ chrome.runtime.sendMessage({type:"wake_provider_tabs", plan:currentPlan}); }catch (_e) { globalThis.ZSSafe?.seen?.("plan_wall.broadcastStartAll", _e); }
     return st;
   }
+  // 4.8.1: THE DIRECT-MODE LIE. Direct is ONE AI with ZERO peers. It used to
+  // return MAGIC_CONNECTED ("im connected to other agent") with connected:true and
+  // external:true, so a solo Gemini/ChatGPT/Claude tab told its own model it had
+  // peers it had never spoken to — and the model then reported a connection the
+  // extension cannot possibly have made. `connected` now means what it says: a
+  // PEER is reachable. Direct is solo by definition (peers:0), and it is NOT an
+  // error — there is simply nothing to connect to.
+  function soloStatus(plan, need){
+    return {
+      magic: MAGIC_SOLO,
+      external: false,
+      connected: false,
+      solo: true,
+      peers: 0,
+      need: need || 1,
+      have: 1,
+      arena: 0,
+      warn: "",
+      reason: "solo — plan \"" + (plan && plan.id || "direct") + "\" runs one AI and has no peers",
+    };
+  }
   function getMagicForPrompt(){
     // synchronous fast check via lastTabInfo cache (if available) else assume not checked yet
     const plan = PLANS[currentPlan];
-    if(!plan || plan.ais===1) return {magic:MAGIC_CONNECTED, external:true, need:1, have:1, connected:true, warn:""};
+    if(!plan || plan.ais===1) return soloStatus(plan, plan && plan.ais);
     // if we have recent check
     if(lastTabInfo){
       const need=plan.ais; const total=lastTabInfo.total||1; const arena=lastTabInfo.arena||0;
@@ -402,7 +432,7 @@
   }
 
   // Extended API with per-role magic (brutally honest upgrade)
-  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, canMutate, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
+  const API = { VERSION, PLANS, DEFAULT_PLAN, AI_ROLES, AI_PROVIDERS, setPlan, getPlan, getPLANS, send, onMessage, getWallLog, clearWall, WALL_POLL_MS, canMutate, MAGIC_CONNECTED, MAGIC_NOT, MAGIC_SOLO, MAGIC_PLANNER: "im connected to {ai} and im the planner heres your listed commands", MAGIC_CODER: "im connected to {ai} and im the coder heres your listed commands", MAGIC_CHECKER: "im connected to {ai} and im the checker heres your listed commands", magicForRole, magicForRoleSwitched, magicForCurrentTab, fetchTabInfo, getConnectionStatus, broadcastStartAll, getMagicForPrompt, getMagicForRole: magicForRole,
     // peer_wall.js exposed a close() and nothing ever called it; plan_wall.js
     // exposed nothing at all, so its BroadcastChannel was held open for the life
     // of the document with no way to release it. One unload hook, owned here,

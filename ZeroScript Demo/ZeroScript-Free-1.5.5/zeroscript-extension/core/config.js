@@ -344,17 +344,18 @@ Bare ###LUA### targets the Edit datamodel and only works when Studio is NOT play
 
   const P_RULES = `━━━ PRIORITY ORDER — when rules conflict, the higher one wins ━━━
 1. VERIFIED FACTS. Never state a path, property, value or success you did not read back from a tool this session. "Not verified" beats a confident guess.
+1b. NO INVENTED CONNECTION. You cannot see other tabs, other AIs, logins or Studio's internals. Never claim "connected to another agent", "sent to the planner", "the checker will verify", or "Studio is open" unless a tool result in THIS conversation shows it. No result = no proof: call the tool.
 2. READ BEFORE MUTATE. inspect_instance / script_read / get_studio_state BEFORE you change anything. Guessing a path or API is the single biggest source of wasted turns.
-3. COPY EXACTLY. For multi_edit, old_string must match the file byte-for-byte (read it first; never retype quotes or dashes). Include enough context that the match is unique, or set replace_all.
+3. COPY EXACTLY. multi_edit old_string must be byte-identical to what script_read returned — never retyped. Full procedure is in the multi_edit tool notes.
 4. PLAY GATE. Before any Edit-datamodel mutation, check get_studio_state. If is_playing is true, stop it (start_stop_play {is_start:false}), verify, then mutate. Bare ###LUA### and multi_edit fail while playing.
-5. ONE COMMAND PER REPLY. Emit the command and stop. Never end a turn by announcing what you are about to do — nothing runs and the user is stuck.
+5. ONE COMMAND PER REPLY. Emit it and stop. Never end a turn announcing what you are about to do — nothing runs.
 6. RETURN, NOT PRINT. execute_luau shows only the FIRST returned value and captures nothing from print(). Return ONE table: return {ok=true, made=3}.
 7. SELF-HEAL, ≤3 TRIES. On any tool ERROR: read the message, read the file, fix, retry. Never repeat the same failing call unchanged. If the third try fails, say plainly what is blocking.
-8. IF THE RESULT IS UNKNOWN, INSPECT FIRST. A timeout or a dropped connection can mean the mutation already happened. Inspect state before retrying a write; never blind-retry a mutation.
+8. IF THE RESULT IS UNKNOWN, INSPECT FIRST. A timeout can mean the write already landed; never blind-retry a mutation.
 9. FINAL ANSWER = PLAIN TEXT. No fenced code blocks, no Markdown, no command. Say what you verified and stop.`;
 
   const P_SPEED = `━━━ SPEED — real costs, stated honestly ━━━
-Every command is a local round trip to Studio: the extension's own overhead is small, but the wall-clock time is dominated by Roblox Studio executing the call (often seconds, sometimes tens of seconds on a large place). So the speed win is never in the transport — it is in spending FEWER, BETTER commands.
+Each command is a local round trip whose wall-clock time is dominated by Studio executing it (often seconds). The speed win is FEWER, BETTER commands, not a faster transport.
 - Call list_commands once at startup for exact names and parameters; don't guess and retry.
 - Batch work into one execute_luau (a loop that creates 50 Instances beats 50 calls) and one multi_edit with many edits.
 - Read 1-3 files, not the whole tree: script_search/script_grep → script_read the hits → mutate → read back.
@@ -380,6 +381,22 @@ Defaults: egg costs 100/500/2500/10000; pet power 1/2/5/10/25/50; click payout =
   // ── T2: appended only when there is room ──────────────────────────────────
   const P_OVERFLOW = `━━━ IF THE MODEL VANISHES ━━━
 If Roblox commands start failing as if Studio is closed, run list_mcp_servers ONCE; if Studio is genuinely offline, tell the user in one sentence and wait — do not keep sending commands and do not blame your own code.`;
+  // ── 4.8.1: DECLARED ROLE LINE ──────────────────────────────────────────────
+  // One line, always present, never truncated. It answers "who am I and who else
+  // is here" so the model stops guessing — the single biggest source of
+  // "I'm connected to other agent" and "sending to the checker" hallucinations in
+  // a solo run. Kept under 200 chars so it costs ~50 tokens.
+  function roleLine(role, solo) {
+    const r = String(role || "coder").toLowerCase();
+    const who = r === "planner" ? "the PLANNER (design only — you may NOT mutate Studio)"
+      : r === "checker" ? "the CHECKER (verify + report only — you may NOT mutate Studio)"
+      : r === "coder" ? "the CODER (the only role allowed to mutate Studio)"
+      : `the ${r.toUpperCase()}`;
+    return solo
+      ? `YOUR ROLE: ${who}. SOLO: one AI only — no planner, no checker, no other agent is connected or listening. Do not hand work to a teammate or say one will verify it; do it yourself.`
+      : `YOUR ROLE: ${who}. Teammates exist via the team channel; do not claim a connection until a peer message actually arrives.`;
+  }
+
   function buildPlanInfo(p) {
     const roles = (typeof window !== "undefined" && window.__zsPlanRoles) || {};
     const meta = PLANS[p] || PLANS.direct;
@@ -387,13 +404,18 @@ If Roblox commands start failing as if Studio is closed, run list_mcp_servers ON
     let wall = null;
     try { wall = (typeof window !== "undefined" && window.ZSPlanWall) ? window.ZSPlanWall.getMagicForPrompt() : null; }
     catch (_e) { globalThis.ZSSafe?.seen?.("config.planInfo", _e); }
-    const magic = wall ? wall.magic : (p === "direct" ? "im connected to other agent" : "im not connected to other agents no external commands");
+    // 4.8.1: the fallback used to say "im connected to other agent" whenever
+    // plan===direct — with no check that any peer exists. Direct IS solo, so that
+    // line told every Gemini/ChatGPT/Claude tab it had a peer it had never
+    // contacted, and the model reported a connection the extension never made.
+    // When the wall can answer, its answer is used; otherwise say what is true.
+    const magic = wall ? wall.magic : (p === "direct" ? "im solo - single AI, no other agents connected" : "im not connected to other agents no external commands");
     const tabWarn = wall && wall.warn ? ` ${wall.warn}` : (tabInfo && tabInfo.total ? ` ${tabInfo.total} tab(s) open` : "");
     const assigned = Object.keys(roles).length
       ? " (assigned: " + Object.entries(roles).map(([k, v]) => k + ":" + v).join(", ") + ")"
       : "";
     const how = {
-      direct: "You are solo Direct: one AI does everything.",
+      direct: "Direct: one AI does everything on this tab (see YOUR ROLE).",
       agent: "Agent team: Planner designs (never runs execute_luau/multi_edit — rejected for planner), Coder builds (ONLY mutator), Checker verifies with read tools and reports defects (never edits). Hand off through the team channel; a peer message arrives in your context automatically.",
       plan: "Plan: Planner outputs the spec (never mutates), Coder implements it.",
       checker: "Checker: Coder builds, Checker verifies and reports defects (never edits).",
@@ -415,6 +437,12 @@ Exec mode: ${(typeof window !== "undefined" && window.__zsExecMode) || "single"}
       memoryDigest = "",
       budget = 12000,     // characters; T0 is never truncated, lowest tiers drop first
       verbose = false,    // 4.8.0: force every tier (debugging / "full protocol" users)
+      // 4.8.1: the role THIS tab is actually running. Previously the prompt never
+      // stated it outside team mode, so a solo tab invented teammates
+      // ("I'll hand this to the coder"). DEFAULT_ROLE is coder because single
+      // mode has exactly one AI and that AI must be allowed to mutate Studio.
+      role = "coder",
+      solo = true,
     } = opts;
 
     let plan = DEFAULT_PLAN;
@@ -437,7 +465,12 @@ Exec mode: ${(typeof window !== "undefined" && window.__zsExecMode) || "single"}
       : "";
 
     // Tier 0 — always present. Ordered by how often it prevents a wasted turn.
+    // 4.8.1: roleLine() sits FIRST, before the identity paragraph. It is the
+    // cheapest possible fix for the most expensive hallucination: a solo tab that
+    // believes it has teammates will hand work to nobody and wait. Always T0, so
+    // no budget can ever drop it.
     const t0 = [
+      roleLine(role, solo),
       P_IDENTITY,
       planInfo,
       memoryInfo,
@@ -464,10 +497,18 @@ Exec mode: ${(typeof window !== "undefined" && window.__zsExecMode) || "single"}
       if (block.length + 2 <= room()) text += "\n\n" + block;
       else if (verbose) text += "\n\n" + block;
     }
-    // A custom prompt is the USER'S instruction, so it outranks our own T2 prose:
-    // if it did not fit above, spend the remaining room on it before anything else.
-    if (extra && !text.includes(extra) && room() > 200) {
-      text += "\n\n" + extra.slice(0, Math.max(200, room() - 2));
+    // A custom prompt is the USER'S instruction, so it outranks our own T2 prose.
+    // 4.8.1 BUG: the guard was `room() > 200`, and room() is NEGATIVE whenever T0
+    // alone already exceeds the budget (which it does for any budget < ~4,500).
+    // In that case the user's own instruction was silently DROPPED — the single
+    // worst thing this function could do, because the custom prompt is the only
+    // content in here the user actually wrote. Deployments on small-budget
+    // providers would have lost it without a trace.
+    // It is now always present: truncated to whatever room exists, or to a 200-char
+    // floor when there is none, and the overrun is recorded rather than hidden.
+    if (extra && !text.includes(extra)) {
+      const want = Math.max(200, room() - 2);
+      text += "\n\n" + extra.slice(0, want);
     }
     // T0 itself exceeded the budget: say so once, in the prompt, so a reader of a
     // bug report can see it — never silently pretend the prompt was trimmed.
@@ -540,7 +581,7 @@ Exec mode: ${(typeof window !== "undefined" && window.__zsExecMode) || "single"}
       "Paste old_string verbatim from script_read. (new_string may contain unicode safely - written as-is.) " +
       "Edits apply in order, each on result of previous, atomic (all succeed or none). " +
       "To CREATE script: set className (Script/LocalScript/ModuleScript) and make first edit old_string:\"\" with full initial source. " +
-      "datamodel_type must be \"Edit\" — REQUIRES Studio NOT playing. If playing, call start_stop_play {is_start:false} FIRST, verify stopped via get_studio_state, THEN multi_edit. Never multi_edit in Play. On syntax ERROR (missing end/quote/paren, bad API), STOP if needed→script_read→fix→retry ≤3. MAX: batch up to 24 edits per call. " +
+      "datamodel_type must be \"Edit\" — REQUIRES Studio NOT playing. If playing, call start_stop_play {is_start:false} FIRST, verify stopped via get_studio_state, THEN multi_edit. Never multi_edit in Play. On syntax ERROR (missing end/quote/paren, bad API), STOP if needed→script_read→fix→retry ≤3. NO EDIT CAP: put every change you need in ONE multi_edit no matter how many edits (there is no 24/20/10 limit — that was never enforced, so splitting work only costs turns). Every replacement is parsed as Luau before Studio sees it; if one edit fails to parse the WHOLE batch is rejected without applying anything, so fix the named edit and re-send the full batch. " +
       "EFFICIENT READS: search_game_tree/script_search FIRST to locate file, then script_read 1-3 hits only — never read whole Workspace. SYNTAX self-heal shares same STOP→verify→fix loop as Play.",
     inspect_instance:
       "Path dot-notation case-insensitive, e.g. 'Workspace.Model.Part'. Returns all readable properties, attributes, " +
@@ -669,6 +710,7 @@ ${initialMessages.length ? "The following coordinator invitation is already deli
     toolCategory,
     buildSystemPrompt,
     promptStats,
+    roleLine,
     promptBudgetFor,
     estimateTokens,
     PROMPT_BUDGET_DEFAULT,

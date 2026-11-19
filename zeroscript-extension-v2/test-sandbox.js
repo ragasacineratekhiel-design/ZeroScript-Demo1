@@ -256,5 +256,56 @@ check("analyseLuau reports what the repair changed", !!(repaired.repairedFrom &&
 const strictVerdict = S.analyseStrict("local function f()\n  return 1");
 check("analyseStrict still reports the RAW failure", !strictVerdict.ok && /needs 'end'/.test(String(strictVerdict.error)), strictVerdict.error);
 
+
+// ── 4.8.1: multi_edit PAYLOAD ANALYSIS ──────────────────────────────────────
+// multi_edit was the ONLY mutation path with no static check: the Luau gate ran
+// for execute_luau only, so a batch of script bodies went to Studio unparsed and
+// the whole batch failed atomically on the last bad edit, with no way for the
+// model to tell which edit was wrong.
+check("4.8.1 analyseMultiEdit is exported", typeof S.analyseMultiEdit === "function");
+check("4.8.1 multi_edit batches are declared unbounded", S.MULTI_EDIT_UNBOUNDED === true);
+
+const meOk = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "local M = {}\nfunction M.x() return 1 end\nreturn M" }],
+  { isScript: true, className: "ModuleScript" });
+check("4.8.1 a valid script creation passes", meOk.ok === true, meOk.error);
+check("4.8.1 it reports how many edits it checked", meOk.checked === 1);
+
+const meBad = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "local function f()\n  return 1" }],
+  { isScript: true });
+check("4.8.1 a broken script body is rejected", meBad.ok === false);
+check("4.8.1 the error names the offending edit index", meBad.errors[0].index === 0);
+check("4.8.1 the error explains the Luau problem", /needs 'end'/.test(String(meBad.error)), meBad.error);
+
+// The 2nd-edit case matters most: Studio would have rejected the WHOLE batch and
+// the model had no signal about which of its edits was at fault.
+const meSecond = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "return 1" }, { old_string: "", new_string: "if x then" }],
+  { isScript: true });
+check("4.8.1 a failure in edit #2 is attributed to #2", meSecond.ok === false && meSecond.errors[0].index === 1);
+check("4.8.1 the message counts the remaining failures", /and 0 more/.test(String(meSecond.error)) === false);
+
+// A non-script edit (property tweak) is not Luau: it must be skipped, never
+// guessed at, or every ordinary set_property would be falsely rejected.
+const meSkip = S.analyseMultiEdit([{ old_string: "a", new_string: "b" }], { isScript: false, className: "" });
+check("4.8.1 non-script edits are skipped, not parsed", meSkip.ok === true && meSkip.skipped === 1 && meSkip.checked === 0);
+
+// Zero edits is a no-op call that can only waste a turn.
+check("4.8.1 an empty edits[] is rejected", S.analyseMultiEdit([], {}).ok === false);
+
+// No false positives on real script shapes.
+const shapes = [
+  ["Lua", "local x = 1\nprint(x)"],
+  ["ModuleScript", "local M = {}\nfunction M.f() return 1 end\nreturn M"],
+  ["LocalScript", "local p = game.Players.LocalPlayer\nprint(p.Name)"],
+  ["generic fn", "local function id<T>(x: T): T return x end"],
+  ["guard", 'if type(x) ~= "string" then return end'],
+];
+for (const [name, src] of shapes) {
+  const r = S.analyseMultiEdit([{ old_string: "", new_string: src }], { isScript: true });
+  check("4.8.1 valid " + name + " body accepted", r.ok === true, r.error);
+}
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

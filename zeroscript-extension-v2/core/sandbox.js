@@ -1210,6 +1210,62 @@
 
   // ── Back-compat entry points (main.js calls dryRunLuau) ──────────────────
   function dryRunLuau(code) { return analyseLuau(code); }
+  // ── 4.8.1: multi_edit PAYLOAD ANALYSER ────────────────────────────────────
+  // multi_edit had NO syntax gate at all: the Luau present-check only ran for
+  // execute_luau, so a batch of script edits went to Studio unchecked. Studio then
+  // applied 24 edits atomically and failed the WHOLE batch on the last one — the
+  // model got "old_string not found" or a parse error and had no idea which of its
+  // edits was wrong. This validates each edit's NEW source as Luau (when the edit
+  // targets a script body) and reports the offending index.
+  //
+  // Honest scope: this parses the replacement text, not the resulting file. It
+  // cannot see whether old_string actually occurs (only Studio can), and it does
+  // not run the code.
+  function analyseMultiEdit(edits, opts) {
+    const o = opts || {};
+    const list = Array.isArray(edits) ? edits : [];
+    const out = { ok: true, errors: [], repaired: null, checked: 0, skipped: 0 };
+    if (!list.length) return { ...out, ok: false, errors: [{ index: -1, error: "edits[] is empty — nothing would be changed" }] };
+    const className = String(o.className || "").toLowerCase();
+    const isScriptTarget = o.isScript === true || /script/.test(className);
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i] || {};
+      const src = typeof e.new_string === "string" ? e.new_string : "";
+      // An edit that only touches a non-script property is not Luau; skip it.
+      // A create (old_string === "") carries the WHOLE script, so it always counts.
+      const isCreate = e.old_string === "" || e.old_string == null;
+      if (!isScriptTarget && !isCreate) { out.skipped++; continue; }
+      if (!src.trim()) {
+        // Deleting a script body wholesale is legal Lua (an empty script parses),
+        // but only when the edit is a full replacement, not a fragment.
+        if (isCreate) { out.checked++; continue; }
+        out.skipped++; continue;
+      }
+      out.checked++;
+      const r = analyseStrict ? analyseStrict(src) : analyseLuau(src);
+      if (!r.ok) {
+        out.ok = false;
+        out.errors.push({ index: i, line: r.line, error: r.error, hint: r.hint });
+      }
+    }
+    if (!out.ok && out.errors.length) {
+      const first = out.errors[0];
+      out.error = `multi_edit edit #${first.index + 1}${out.errors.length > 1 ? ` (and ${out.errors.length - 1} more)` : ""} does not parse as Luau: ${first.error}`;
+      out.hint = first.hint;
+    }
+    return out;
+  }
+
+  // ── 4.8.1: unbounded batches ──────────────────────────────────────────────
+  // The prompt used to say "MAX: batch up to 24 edits per call" and nothing
+  // enforced it, so the number was pure suggestion: a model that believed the cap
+  // split work it could have done in one turn, and a model that ignored the cap
+  // was not stopped because no code checked it. Batching is now genuinely
+  // unbounded (Studio applies them atomically in order); the only real limits are
+  // the provider's message size and Studio's own timeout, which are reported by
+  // the bridge rather than guessed here. This helper exists so tests and docs
+  // have one place to point at.
+  const MULTI_EDIT_UNBOUNDED = true;
   function checkLuauSyntax(code) {
     const r = analyseLuau(code);
     // legacy contract: { ok, error, hint, warning }
@@ -1300,11 +1356,12 @@
 
   const ZSSandbox = {
     version: VERSION,
-    analyseLuau, analyseStrict, dryRunLuau, checkLuauSyntax, checkJS, dryRunJS,
+    analyseLuau, analyseStrict, dryRunLuau, analyseMultiEdit, MULTI_EDIT_UNBOUNDED,
+    checkLuauSyntax, checkJS, dryRunJS,
     dryRunReply, extractPayloads, formatFixFeedback, inferTestContract, tokenize,
     repairLuau,
     // explicit capability statement, so nothing downstream can over-claim
-    capabilities: { luau: "static-only", js: "parse-only", runtimeExecution: false, autoRepair: "bracket/block closing only" },
+    capabilities: { luau: "static-only", js: "parse-only", runtimeExecution: false, autoRepair: "bracket/block closing only", multiEdit: "per-edit Luau parse, before Studio" },
   };
   try { if (typeof window !== "undefined") window.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }
   if (typeof self !== "undefined") try { self.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }

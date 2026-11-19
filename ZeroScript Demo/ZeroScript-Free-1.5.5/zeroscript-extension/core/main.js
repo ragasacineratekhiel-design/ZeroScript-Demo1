@@ -1331,7 +1331,29 @@
         }
       }
     } catch (_e) { globalThis.ZSSafe?.seen?.("main.effectiveRole", _e); }
-    return null; // direct/single-AI mode: no role gate (one AI does everything)
+    // 4.8.1: DECLARE THE ROLE. This used to `return null` for direct/single-AI
+    // mode, which was safe (no role gate) but silent: nothing in the prompt or the
+    // tool result said WHICH role was running, so a solo tab would narrate "I'll
+    // send this to the coder" / "the checker should verify" — inventing teammates
+    // that do not exist. Single mode IS the coder: it is the one role that may
+    // mutate Studio, and in a solo run the single AI must do exactly that.
+    // Returning "coder" also keeps the mutation gate closed for anyone holding a
+    // stale planner/checker assignment, because roleAllowsTool("coder", …) allows
+    // every tool the solo agent is supposed to have.
+    return "coder";
+  }
+  // Human-readable identity for the overlay/prompt: always non-empty.
+  // NOTE: never use a JSDoc-style `/**` opener in this file. Line 3 contains the
+  // literal `providers/*.js` inside a header comment, and `/*` there has no
+  // closer anywhere before it — so the first `/**` further down becomes its
+  // accidental terminator, swallowing everything in between. That silently broke
+  // test-composer.js's source slicing in 4.8.1. Plain `//` comments cannot do it.
+  function declaredRole() {
+    try {
+      const r = effectiveRole();
+      const teamed = typeof team !== "undefined" && (team.active || team.joined);
+      return { role: r || "coder", assigned: !!teamed, solo: !teamed };
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.declaredRole", _e); return { role: "coder", assigned: false, solo: true }; }
   }
   function isReadTool(name) {
     const bare = String(name || "").split("/").pop();
@@ -1561,6 +1583,30 @@
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
       }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
+    }
+    // ── 4.8.1: multi_edit PAYLOAD GATE ────────────────────────────────────────
+    // multi_edit was the ONE mutation path with no static check: the Luau gate
+    // above only covers execute_luau, so a batch of script bodies went to Studio
+    // unparsed and the WHOLE batch failed atomically on the last bad edit. The
+    // model saw a generic studio error with no indication which edit was wrong.
+    // Now each replacement is parsed before the round trip and the offender is
+    // named by index. Non-script edits are skipped, never guessed at.
+    if (bareName === "multi_edit" && typeof window.ZSSandbox !== "undefined" && window.ZSSandbox.analyseMultiEdit) {
+      try {
+        const me = window.ZSSandbox.analyseMultiEdit(args.edits, {
+          className: args.className || args.class_name || "",
+          isScript: !!args.is_script,
+          target: args.target_file || args.file_path || args.path || "",
+        });
+        if (!me.ok) {
+          diag("sandbox.multiEditBlock", { errors: me.errors.length, first: me.error });
+          const li = me.errors[0] && typeof me.errors[0].index === "number" ? me.errors[0].index : -1;
+          return `ERROR in multi_edit: ${me.error}\nHint: ${me.hint || "fix the Luau in that edit before re-sending."}\n` +
+            `Nothing was sent to Studio, so NO edit in this batch was applied — re-send the full corrected batch. ` +
+            `(edit index is 0-based: #${li + 1} of ${(args.edits || []).length})`;
+        }
+        if (me.checked) diag("sandbox.multiEditOk", { checked: me.checked, skipped: me.skipped });
+      } catch (e) { try { diag("sandbox.multiEditErr", { e: String(e) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.multiEdit", _e); } }
     }
     // The player-input tools only run against the Client datamodel (play mode) and
     // "Client" is the sole allowed value, so default it when the model omits it -
@@ -2532,12 +2578,17 @@
     // limit we know the composer/model accepts; promptBudgetFor turns it into a
     // character budget for the prompt so a large custom prompt or memory digest
     // truncates the LOWEST-tier prose instead of the command protocol.
+    // 4.8.1: state the role THIS tab is running, and whether a peer actually
+    // exists. `solo` is derived from live state (team.active), never assumed.
+    const dr = declaredRole();
     return ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
       providerNotes: P.promptExtra || "",
       memoryDigest: wallDigest,
       budget: ZS.promptBudgetFor ? ZS.promptBudgetFor(P) : undefined,
+      role: dr.role,
+      solo: dr.solo,
     });
   }
 
@@ -3838,7 +3889,10 @@
               if(st.need>1){
                 warnEl.hidden=false;
                 warnEl.style.background="rgba(16,185,129,0.12)"; warnEl.style.borderColor="rgba(16,185,129,0.28)"; warnEl.style.color="#a7f3d0";
-                warnEl.textContent = `✓ ${st.magic} — ${st.have} tabs ready (${st.arena?st.arena+" Arena ":""}), external ${st.external?"/code /force etc active":"blocked"}`;
+                // 4.8.1: `external` only ever meant "peers exist", not "commands
+                // work" — slash commands run locally in every mode. Saying
+                // "external blocked" for a solo run was a second false report.
+                warnEl.textContent = `✓ ${st.magic} — ${st.have} tab(s), ${st.arena?st.arena+" Arena, ":""}peers ${st.external?"connected":"none (solo)"}`;
               }
             }
             // store for prompt injection

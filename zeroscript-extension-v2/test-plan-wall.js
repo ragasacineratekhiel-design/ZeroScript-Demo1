@@ -166,5 +166,33 @@ check("close() releases resources cleanly", typeof W.close === "function" && (W.
   }
 }
 
+
+// ── 4.8.1: THE DIRECT-MODE LIE ─────────────────────────────────────────────
+// getMagicForPrompt()/getConnectionStatus() returned connected:true,
+// external:true and MAGIC_CONNECTED ("im connected to other agent") for
+// plan=direct — i.e. for ONE AI with ZERO peers. Observed live: a solo Gemini
+// tab told its model it was connected to another agent, and the model repeated
+// it to the user. `connected` must mean "a peer is reachable".
+W.setPlan("direct");
+const soloMagic = W.getMagicForPrompt();
+check("direct mode does not claim a peer connection", soloMagic.connected === false, JSON.stringify(soloMagic));
+check("direct mode reports external:false (no peers)", soloMagic.external === false);
+check("direct mode is marked solo with 0 peers", soloMagic.solo === true && soloMagic.peers === 0);
+check("direct magic line does not say 'connected to other agent'",
+  !/connected to other agent/i.test(soloMagic.magic), soloMagic.magic);
+check("direct magic line states solo truthfully", /solo/i.test(soloMagic.magic), soloMagic.magic);
+check("direct mode is not an error state (no misleading warning)", soloMagic.warn === "");
+
+// The old constant must still exist for the multi-AI case, and the new one must
+// be exported so config.js and the tests share one source of truth.
+check("MAGIC_SOLO is exported", typeof W.MAGIC_SOLO === "string" && /solo/i.test(W.MAGIC_SOLO));
+
+// A multi-AI plan short of tabs must say so — that IS a real warning.
+W.setPlan("agent");
+const agentMagic = W.getMagicForPrompt();
+check("agent mode short of tabs is not connected", agentMagic.connected === false);
+check("agent mode explains what is missing", typeof agentMagic.warn === "string" && agentMagic.warn.length > 0);
+check("agent mode never claims MAGIC_CONNECTED while short", agentMagic.magic !== W.MAGIC_CONNECTED);
+
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

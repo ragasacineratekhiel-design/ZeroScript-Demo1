@@ -10,6 +10,28 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ---
 
+## 4.8.1 — multi-edit, hallucinated connections, solo coder
+
+Four reported problems. Full accounting with reproduced evidence is in
+[`docs/REPAIR_NOTES_4.8.1.md`](docs/REPAIR_NOTES_4.8.1.md).
+
+| Report | Root cause | Fix | Verified |
+|---|---|---|---|
+| **"Support multi edit, unlimited edits"** | The prompt claimed `MAX: batch up to 24 edits per call` and **no code enforced it** — a grep found the string and nothing else. Worse, `multi_edit` had **no syntax check at all** (the Luau gate was `execute_luau`-only), so a batch went to Studio unparsed and Studio rejected **all of it** on one bad edit, with no clue which one. | `analyseMultiEdit()` parses every replacement before the round trip and **names the offending edit index**; the cap text is replaced with `NO EDIT CAP`. | `test-sandbox.js` 105 assertions |
+| **"It says it's connected to another agent"** | For `plan=direct` — one AI, zero peers — `getMagicForPrompt()` returned `connected:true`, `external:true`, `magic:"im connected to other agent"`. | `connected` now means "a peer is reachable". Solo exports `connected:false, solo:true, peers:0` and its own truthful magic line. | `test-plan-wall.js` 38 assertions |
+| **"Declare single mode as coder always"** | `effectiveRole()` returned `null` outside team mode, so nothing ever told the model which role it was — and it invented teammates. | Returns `"coder"`, surfaced as a T0 `YOUR ROLE:` line that no budget can drop. | `test-prompt.js` 96 assertions |
+| **"Hallucinating even with a clear prompt"** | No rule forbade invented *capability/connection* claims. | Rule 1b `NO INVENTED CONNECTION`: no tool result = no proof. | `test-prompt.js` |
+
+**Two latent bugs found by the tests, both real:**
+
+1. The user's custom prompt was **silently dropped** on any provider whose budget
+   was below the T0 floor (`room() > 200` is false when `room()` is negative).
+2. A `/**` comment in `main.js` became the terminator for a stray `/*` on line 3
+   (`providers/*.js`), swallowing **78,195 bytes** during comment stripping and
+   breaking `test-composer.js`'s source slicing.
+
+---
+
 ## 4.8.0 — three reported problems, fixed with measured evidence
 
 This release changes exactly three things, because these are the three defects that
