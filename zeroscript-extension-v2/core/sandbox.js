@@ -29,7 +29,7 @@
 //  • results are cached by content (identical blocks are parsed once).
 (() => {
   "use strict";
-  const VERSION = "4.7.1";
+  const VERSION = "4.8.2";
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. LEXER
@@ -193,7 +193,25 @@
         while (j < n) {
           const d = s.charCodeAt(j);
           if (d === 92) {                        // backslash
-            if (s.charCodeAt(j + 1) === 10) { line++; lineStart = j + 2; }
+            // `\z` (Luau escape-skip) swallows the following whitespace INCLUDING
+            // newlines, so `"a\z\n  b"` is ONE valid string. Without this branch the
+            // token ended at the newline and valid strings were reported
+            // unterminated — a false positive that blocked correct generated Luau.
+            if (s.charCodeAt(j + 1) === 122) {   // 'z'
+              j += 2;
+              while (j < n) {
+                const w = s.charCodeAt(j);
+                if (w === 10) { line++; lineStart = j + 1; j++; }
+                else if (w === 32 || w === 9 || w === 13 || w === 12 || w === 11) j++;
+                else break;
+              }
+              continue;
+            }
+            // `\<newline>` is a legal line continuation inside a short string.
+            if (s.charCodeAt(j + 1) === 10) { line++; lineStart = j + 2; j += 2; continue; }
+            // Any other escape must not be allowed to jump OVER a closing quote:
+            // a trailing `\` at end of input used to retire the string silently.
+            if (j + 1 >= n) { j++; break; }
             j += 2;
             continue;
           }
@@ -440,6 +458,13 @@
       if (t.type === T.STRING) { next(); return parseSuffixes(); }
       if (t.type === T.INTERP) { next(); return parseSuffixes(); }
       if (t.type === T.OP && (t.value === "nil" || t.value === "true" || t.value === "false")) { next(); return parseSuffixes(); }
+      // `type` / `typeof` are CONTEXTUAL keywords in Luau: they declare a type
+      // alias only in statement position (`type X = …`). As expressions they are
+      // ordinary globals, and `type(x) == "number"` is the standard Roblox guard.
+      // Rejecting it threw away exactly the anti-exploit validation the prompt
+      // asks models to write.
+      if (t.type === T.OP && (t.value === "type" || t.value === "typeof") &&
+          tType(1) === T.PUNC && tVal(1) === "(") { next(); return parseSuffixes(); }
       if (t.type === T.OP && t.value === "function") { parseFunctionBody(); return parseSuffixes(); }
       if (t.type === T.OP && t.value === "if") { parseIfExpression(); return parseSuffixes(); }
       if (t.type === T.PUNC && t.value === "{") { parseTable(); return parseSuffixes(); }
@@ -459,13 +484,18 @@
         const t = peek();
         if (t.type === T.PUNC && t.value === ".") {
           next();
-          if (peek().type !== T.NAME) err(`expected a field name after '.' but found ${describe(peek())}`);
+          // A field/method name is a NAME **or a keyword**. `type`, `continue`,
+          // `export` and `end` are keywords for the LEXER but perfectly legal
+          // property names (`t.type`, `t:type()`, `obj.end`), and rejecting them
+          // threw away real code. Broadening this can never accept a program
+          // Studio would reject: Luau's grammar has the same Name rule here.
+          if (peek().type !== T.NAME && peek().type !== T.OP) err(`expected a field name after '.' but found ${describe(peek())}`);
           next();
           continue;
         }
         if (t.type === T.OP && t.value === ":") {
           next();
-          if (peek().type !== T.NAME) err(`expected a method name after ':' but found ${describe(peek())}`);
+          if (peek().type !== T.NAME && peek().type !== T.OP) err(`expected a method name after ':' but found ${describe(peek())}`);
           next();
           parseCallArgs();
           continue;
@@ -573,16 +603,70 @@
       do {
         if (peek().type === T.NAME) next();
         else err(`expected a generic parameter name but found ${describe(peek())}`);
+        // type packs: `<T...>` / `<T..., U>`
+        if (isPunc("...")) next();
         if (isOp("=")) { next(); parseType(); }
       } while (isPunc(",") && next());
       expectOp(">");
     }
+    // Guards every loop that consumes tokens without a structural terminator, so
+    // a reply truncated mid-type fails ONCE with a line number instead of walking
+    // to EOF and throwing an internal TypeError the caller has to swallow.
+    function atEof() { return curType === T.EOF; }
     function expectOp(v) { if (!isOp(v)) err(`expected '${v}' but found ${describe(peek())}`); return next(); }
 
+    // Consume a balanced token run: `(`…`)`, `{`…`}` or `[`…`]`. Used where a
+    // chunk of source is a type-level payload we only have to SKIP correctly
+    // (`typeof(<expr>)`, `local x <const>` attributes).
+    function skipBalanced(open, close) {
+      if (!isPunc(open)) return false;
+      next();
+      let depthLocal = 1;
+      while (depthLocal > 0) {
+        const t = peek();
+        if (t.type === T.EOF) err(`unclosed '${open}'`);
+        if (t.type === T.PUNC || t.type === T.OP) {
+          if (t.value === open) depthLocal++;
+          else if (t.value === close) depthLocal--;
+        }
+        next();
+      }
+      return true;
+    }
+
+    // Luau variable ATTRIBUTES — `local x <const> = 1`, `local f <close> = …`.
+    // Lexed as `<` NAME `>`; before this, the parser read the `<` as a
+    // comparison operator and reported "expected an expression but found '<'".
+    function parseAttribs() {
+      while (isOp("<")) {
+        next();
+        if (peek().type !== T.NAME && peek().type !== T.OP) err(`expected an attribute name after '<' but found ${describe(peek())}`);
+        next();
+        expectOp(">");
+      }
+    }
+
+    // One type operand (no unions, no intersections). parseType() wraps it and
+    // handles `A | B` / `A & B` for EVERY operand — previously the union/intersection
+    // loop lived only inside the NAME branch, so `"Common" | "Rare" | "Legendary"`
+    // (the standard rarity alias) failed with "expected ',' or '}' … but found '|'".
     function parseType() {
       if (depth > 200) err("type annotation nested too deeply");
       depth++;
       try {
+        parseTypeOperand();
+        while (isOp("|") || isOp("&")) { next(); parseTypeOperand(); }
+      } finally {
+        depth--;
+      }
+    }
+
+    function parseTypeOperand() {
+        // A type operand that is missing entirely (`type A =`, `local x: = 1`,
+        // `return retry<T>(` cut off) used to return silently, so the statement
+        // ended "successfully" and a truncated reply was reported as valid Luau.
+        // Studio then rejected it after a round trip. Say so here instead.
+        if (curType === T.EOF) err("expected a type but found end of input (truncated code?)");
         // function types: (A, B) -> C   and   variadic (A, ...B) -> C
         if (isPunc("(")) {
           next();
@@ -601,35 +685,63 @@
           parseTypeParams();
           return;
         }
+        // `typeof(expr)` is a Luau TYPE constructor, not a call: parse it as
+        // `typeof <balanced parens>` so the runtime-expression grammar does not
+        // see a call where a type is expected.
+        if (isOp("typeof")) {
+          next();
+          if (isPunc("(")) { skipBalanced("(", ")"); return; }
+          return;
+        }
+        // a string-literal type: `"exact"` (used as a value too: `{["a"]: T}`)
         if (peek().type === T.STRING) { next(); return; }
+        // `B["key"]` / `B[1]` — indexed access types.
         if (peek().type === T.NAME) {
           next();
           while (isPunc(".") && next() && peek().type === T.NAME) next();
           // generic arguments: Array<T>
           if (isOp("<")) parseTypeArgs();
+          // index access types: `[` expr `]` (repeatable: B["a"]["b"]). The key is
+          // an EXPRESSION in Luau, so it goes through parseExpr, not parseType.
+          while (isPunc("[")) { next(); parseExpr(); expectPunc("]"); }
+          // a type PACK: `...number` is handled above, `T...` must be handled here
+          // (`function f<T...>(...: T...): (number, T...)` is the documented shape).
+          if (isPunc("...")) next();
           if (isOp("?")) next();
-          // intersection / union
-          while (isOp("|") || isOp("&")) { next(); parseType(); }
           return;
         }
         if (isOp("nil")) { next(); return; }
         return;
-      } finally {
-        depth--;
-      }
     }
 
     function parseTypeArgs() {
       expectOp("<");
       if (!isOp(">")) {
-        do { parseType(); } while (isPunc(",") && next());
+        do { parseTypeArg(); } while (isPunc(",") && next());
       }
       expectOp(">");
+    }
+
+    // Type arguments are types, EXCEPT the `{ [K]: V }` key form, whose key is an
+    // arbitrary EXPRESSION (`typeof(k)`, `k`, `1 + 1`) — Luau's own type grammar
+    // says so. Routing `\[` to the type parser made `{[typeof(k)]: any}` fail with
+    // "expected ']' but found '('", so `[` is parsed as a bracketed expression.
+    function parseTypeArg() {
+      if (isPunc("[")) {
+        next();
+        parseExpr();
+        expectPunc("]");
+        expectOp(":");
+        parseType();
+        return;
+      }
+      parseType();
     }
 
     function parseTypeTable() {
       expectPunc("{");
       if (isPunc("}")) { next(); return; }
+      if (atEof()) err("unterminated table type — missing '}'");
       // A Luau table type is a LIST of props, and the props may be MIXED:
       //   { [K]: V }        dictionary
       //   { name: T }       named fields
@@ -641,7 +753,10 @@
       while (!isPunc("}")) {
         if (peek().type === T.EOF) err("unterminated table type — missing '}'");
         if (isPunc("[")) {
-          next(); parseType(); expectPunc("]"); expectOp(":"); parseType();
+          // `[expr]: Type` — the key is an expression (`[string]`, `[typeof(k)]`,
+          // `[1]`), the value is a type. A quoted key (`["name"]: T`) is legal too
+          // and is consumed by the expression parser.
+          next(); parseExpr(); expectPunc("]"); expectOp(":"); parseType();
         } else if (curType === T.NAME && tType(1) === T.OP && tVal(1) === ":") {
           next(); next(); parseType();
         } else {
@@ -704,6 +819,8 @@
               // local <name list> [= <expr list>]   |   local name: <type> [= expr]
               if (peek().type !== T.NAME) err(`expected a local name but found ${describe(peek())}`);
               next();
+              // <const> / <close> attributes may follow any declared name.
+              parseAttribs();
               if (isOp(":")) {                       // typed single declaration
                 next(); parseType();
                 if (isOp("=")) { next(); parseExpr(); }
@@ -713,6 +830,7 @@
                 next();
                 if (peek().type !== T.NAME) err(`expected a local name but found ${describe(peek())}`);
                 next();
+                parseAttribs();
               }
               if (isOp("=")) {
                 next(); parseExpr();
@@ -793,6 +911,10 @@
             case "break": next(); return;
             case "continue": next(); return;
             case "type": {
+              // `type Name = …` is a DECLARATION; `type(x)` is a global CALL. Only
+              // the declaration form has a NAME after the keyword — anything else
+              // falls through to the expression-statement path below.
+              if (tType(1) !== T.NAME) break;
               // type Name<T> = <type>
               next();
               if (peek().type !== T.NAME) err(`expected a type name but found ${describe(peek())}`);
@@ -906,16 +1028,111 @@
     const hit = _cache.get(key);
     if (hit && hit.src === src) return clone(hit.result);
 
-    const result = analyseInner(src);
+    // 4.8.0: strict analysis first; only a hard failure pays for the bounded
+    // auto-repair pass (a clean program never runs it).
+    let result = analyseInner(src);
+    if (!result.ok) {
+      const fixed = repairLuau(src);
+      if (fixed) result = fixed;
+    }
     if (_cache.size >= _CACHE_MAX) _cache.delete(_cache.keys().next().value);
     _cache.set(key, { src, result: clone(result) });
-    return result;
+    return clone(result);
   }
 
   function clone(r) {
     const copy = { ...r };
     if (r.warnings) copy.warnings = r.warnings.slice();
     return copy;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 4.8.0 AUTO-REPAIR — keep the round trip instead of spending a whole turn
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Until now a hard syntax failure bounced the ENTIRE reply back to the model:
+  // one round trip, one more generation, one more chance to be wrong. But most
+  // real failures are mechanical:
+  //
+  //   • a missing final `end`      (the single commonest Luau truncation),
+  //   • an unbalanced `)` / `}` / `]` at the very end of the block,
+  //   • a stray extra `end` at the end,
+  //   • a reply cut off mid-expression (`return retry<T>(`).
+  //
+  // This stage applies a SMALL, FIXED set of candidates and accepts one ONLY if
+  // the candidate parses cleanly — it can never invent logic or "make the code
+  // run", it can only close a block that the open-block ledger says is open. The
+  // original text is never mutated (callers may still show the model exactly what
+  // it wrote), and every accepted repair is reported with `repairedFrom`, so a
+  // caller can (and main.js does) tell the model what was changed.
+  //
+  // Budget: at most 4 extra parses, each ~0.5–3 ms on real replies, and only on
+  // code that was ALREADY about to be rejected. Cache hits are unaffected.
+  const _REPAIR_MAX = 4;
+
+  function _openBlockNeeds(src) {
+    const m = /(\d+) block\(s\) never closed[\s\S]{0,200}?needs '(end|until)'/.exec(src || "");
+    if (!m) return null;
+    const n = Math.min(parseInt(m[1], 10) || 1, 12);
+    return { count: n, closer: m[2] };
+  }
+
+  function repairLuau(code) {
+    const src = String(code == null ? "" : code);
+    let first;
+    try { first = analyseInner(src); } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.repairProbe", _e); return null; }
+    if (first.ok) return null;                       // nothing to repair
+    const errMsg = String(first.error || "");
+    const candidates = [];
+    const add = (text, note) => { if (text !== src) candidates.push({ text, note }); };
+
+    // (1) unclosed blocks — close them in the order the ledger names them
+    const need = _openBlockNeeds(errMsg);
+    if (need) {
+      add(src.replace(/\s*$/, "\n") + Array.from({ length: need.count }, () => need.closer).join("\n"),
+          "closed " + need.count + " unclosed block(s) with '" + need.closer + "'");
+    }
+
+    // (2) one unbalanced bracket at the end of the block
+    const tail = (errMsg.match(/expected '([)}])'/) || [])[1];
+    if (tail) {
+      const flat = src.replace(/\s*$/, "");
+      add(flat + tail, "closed the trailing '" + (tail === ")" ? "(" : "{") + "' with '" + tail + "'");
+    }
+    // (2b) a table/table-type that ran out of input right before its `}`
+    if (/in (?:the )?table(?: type)? but found end of input/.test(errMsg)) {
+      add(src.replace(/\s*$/, "") + "}", "closed the trailing '{' with '}'");
+    }
+    // (2c) an index/call that ran out of input before `]` (the ')' case is above)
+    if (/expected '\]'/.test(errMsg) && /end of input/.test(errMsg)) {
+      add(src.replace(/\s*$/, "") + "]", "closed the trailing '[' with ']'");
+    }
+
+    // (3) a stray trailing `end` (the mirror image of a doubled close)
+    if (/unexpected 'end'/.test(errMsg)) {
+      const lines = src.split("\n");
+      for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
+        if (/^\s*end\s*;?\s*$/.test(lines[i])) {
+          const copy = lines.slice();
+          copy.splice(i, 1);
+          add(copy.join("\n"), "removed a stray trailing 'end'");
+          break;
+        }
+      }
+    }
+
+    const tried = candidates.slice(0, _REPAIR_MAX - 1);
+    for (const cand of tried) {
+      let got;
+      try { got = analyseInner(cand.text); } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.repairTry", _e); continue; }
+      if (got.ok) {
+        got.repairedFrom = { line: first.line, col: first.col, error: first.error };
+        got.repair = cand.note;
+        got.repaired = cand.text;      // the repaired SOURCE (callers may send it)
+        got.note = "static analysis only — the block was auto-repaired (" + cand.note + "); runtime behaviour must be verified in Studio";
+        return got;
+      }
+    }
+    return null;
   }
 
   function analyseInner(src) {
@@ -981,8 +1198,74 @@
     return warnings;
   }
 
+  // `analyseStrict` never auto-repairs. The repair stage exists to keep a turn
+  // alive, so anything that must observe the RAW verdict (the reject-direction
+  // regression tests, and a caller that wants to tell the model "you forgot an
+  // end" rather than "I fixed it") asks for it explicitly.
+  function analyseStrict(code) {
+    const src = String(code == null ? "" : code);
+    if (!src.trim()) return { ok: false, kind: "syntax", error: "empty code block", line: 0 };
+    return analyseInner(src);
+  }
+
   // ── Back-compat entry points (main.js calls dryRunLuau) ──────────────────
   function dryRunLuau(code) { return analyseLuau(code); }
+  // ── 4.8.1: multi_edit PAYLOAD ANALYSER ────────────────────────────────────
+  // multi_edit had NO syntax gate at all: the Luau present-check only ran for
+  // execute_luau, so a batch of script edits went to Studio unchecked. Studio then
+  // applied 24 edits atomically and failed the WHOLE batch on the last one — the
+  // model got "old_string not found" or a parse error and had no idea which of its
+  // edits was wrong. This validates each edit's NEW source as Luau (when the edit
+  // targets a script body) and reports the offending index.
+  //
+  // Honest scope: this parses the replacement text, not the resulting file. It
+  // cannot see whether old_string actually occurs (only Studio can), and it does
+  // not run the code.
+  function analyseMultiEdit(edits, opts) {
+    const o = opts || {};
+    const list = Array.isArray(edits) ? edits : [];
+    const out = { ok: true, errors: [], repaired: null, checked: 0, skipped: 0 };
+    if (!list.length) return { ...out, ok: false, errors: [{ index: -1, error: "edits[] is empty — nothing would be changed" }] };
+    const className = String(o.className || "").toLowerCase();
+    const isScriptTarget = o.isScript === true || /script/.test(className);
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i] || {};
+      const src = typeof e.new_string === "string" ? e.new_string : "";
+      // An edit that only touches a non-script property is not Luau; skip it.
+      // A create (old_string === "") carries the WHOLE script, so it always counts.
+      const isCreate = e.old_string === "" || e.old_string == null;
+      if (!isScriptTarget && !isCreate) { out.skipped++; continue; }
+      if (!src.trim()) {
+        // Deleting a script body wholesale is legal Lua (an empty script parses),
+        // but only when the edit is a full replacement, not a fragment.
+        if (isCreate) { out.checked++; continue; }
+        out.skipped++; continue;
+      }
+      out.checked++;
+      const r = analyseStrict ? analyseStrict(src) : analyseLuau(src);
+      if (!r.ok) {
+        out.ok = false;
+        out.errors.push({ index: i, line: r.line, error: r.error, hint: r.hint });
+      }
+    }
+    if (!out.ok && out.errors.length) {
+      const first = out.errors[0];
+      out.error = `multi_edit edit #${first.index + 1}${out.errors.length > 1 ? ` (and ${out.errors.length - 1} more)` : ""} does not parse as Luau: ${first.error}`;
+      out.hint = first.hint;
+    }
+    return out;
+  }
+
+  // ── 4.8.1: unbounded batches ──────────────────────────────────────────────
+  // The prompt used to say "MAX: batch up to 24 edits per call" and nothing
+  // enforced it, so the number was pure suggestion: a model that believed the cap
+  // split work it could have done in one turn, and a model that ignored the cap
+  // was not stopped because no code checked it. Batching is now genuinely
+  // unbounded (Studio applies them atomically in order); the only real limits are
+  // the provider's message size and Studio's own timeout, which are reported by
+  // the bridge rather than guessed here. This helper exists so tests and docs
+  // have one place to point at.
+  const MULTI_EDIT_UNBOUNDED = true;
   function checkLuauSyntax(code) {
     const r = analyseLuau(code);
     // legacy contract: { ok, error, hint, warning }
@@ -1073,10 +1356,12 @@
 
   const ZSSandbox = {
     version: VERSION,
-    analyseLuau, dryRunLuau, checkLuauSyntax, checkJS, dryRunJS,
+    analyseLuau, analyseStrict, dryRunLuau, analyseMultiEdit, MULTI_EDIT_UNBOUNDED,
+    checkLuauSyntax, checkJS, dryRunJS,
     dryRunReply, extractPayloads, formatFixFeedback, inferTestContract, tokenize,
+    repairLuau,
     // explicit capability statement, so nothing downstream can over-claim
-    capabilities: { luau: "static-only", js: "parse-only", runtimeExecution: false },
+    capabilities: { luau: "static-only", js: "parse-only", runtimeExecution: false, autoRepair: "bracket/block closing only", multiEdit: "per-edit Luau parse, before Studio" },
   };
   try { if (typeof window !== "undefined") window.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }
   if (typeof self !== "undefined") try { self.ZSSandbox = ZSSandbox; } catch (_e) { globalThis.ZSSafe?.seen?.("sandbox.m2", _e); }

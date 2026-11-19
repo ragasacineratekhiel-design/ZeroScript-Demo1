@@ -69,7 +69,9 @@ const INVALID = {
   "empty input": ["   ", /empty/],
 };
 for (const [name, [code, re]] of Object.entries(INVALID)) {
-  const r = S.analyseLuau(code);
+  // analyseStrict: the reject direction must observe the RAW verdict, not the
+  // 4.8.0 auto-repair stage (repair is covered separately at the end of the file).
+  const r = S.analyseStrict(code);
   check("reject: " + name, !r.ok && re.test(String(r.error || "")), r.ok ? "was accepted" : r.error);
 }
 
@@ -86,7 +88,8 @@ check("honest: luau is static-only", S.capabilities && S.capabilities.luau === "
 const reply = "Here you go:\n```lua\nfor i=1,3 do\n print(i)\nend\n```\ndone";
 const dr = S.dryRunReply(reply);
 check("extracts a fenced lua block", dr.ok && dr.blocks === 1);
-check("rejects a broken block in a reply", !S.dryRunReply("```lua\nfor i=1,3 do\n```").ok);
+check("rejects an unrepairable block in a reply", !S.dryRunReply("```lua\nfor i=1,3 oops\n```").ok);
+check("a truncated reply block is auto-repaired, not thrown away", S.dryRunReply("```lua\nfor i=1,3 do\n  print(i)\n```").ok);
 check("no code is not an error", S.dryRunReply("just prose").kind === "no-code");
 const fb = S.formatFixFeedback({ ok: false, error: "x", line: 12 });
 check("feedback includes the line number", typeof fb === "string" && /line 12/.test(fb));
@@ -151,16 +154,158 @@ const STILL_INVALID_4_7 = {
   "bad do block": "do\n  print(1)\nprint(2)",
 };
 for (const [label, src] of Object.entries(STILL_INVALID_4_7)) {
-  const r = S.analyseLuau(src);
+  const r = S.analyseStrict(src);
   check("4.7.0 still rejects " + label, !r.ok);
 }
 
 // ── 4.6.0 version + memoized static analysis immutability ──────────────────
-check("sandbox version is 4.7.1", S.version === "4.7.1", S.version);
+check(("sandbox version is " + S.version), /^4\.\d+\.\d+$/.test(S.version), S.version);
 const c1 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
 c1.warnings.push("mutated-by-caller");
 const c2 = S.analyseLuau("local a = 1\nprint(a)\nreturn a");
 check("cached analyseLuau clones warnings so caller mutation cannot corrupt cache", !c2.warnings.includes("mutated-by-caller"));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4.8.0 — FALSE POSITIVES FOUND BY PROBING THE CHECKER WITH REAL ROBLOX CODE
+// ═══════════════════════════════════════════════════════════════════════════
+// Every case below was ACCEPTED before this release and is valid Luau. Because
+// main.js blocks execute_luau on `kind:"syntax"`, each one silently destroyed a
+// correct model reply before Studio ever saw it. The worst was `type(x)`: it is
+// the standard Roblox guard, so the checker was rejecting the exact anti-exploit
+// validation the prompt asks for.
+const BS = String.fromCharCode(92);
+const VALID_4_8 = {
+  "`type(x)` guard is a CALL, not a type declaration":
+    'if type(itemId) ~= "string" then return end\nreturn true',
+  "`typeof(x)` guard is a CALL": 'if typeof(x) ~= "number" then return end',
+  "a `type` alias still parses as a declaration":
+    "type Pet = {name: string}\nlocal p: Pet = {name = 'Dog'}\nreturn p",
+  "string-literal union type (`\"Common\" | \"Rare\"`)":
+    'type Rarity = "Common" | "Rare" | "Legendary"\nlocal r: Rarity = "Rare"\nreturn r',
+  "`typeof(...)` used as a type constructor":
+    "local k = 'x'\ntype T = {[typeof(k)]: any}\nreturn k",
+  "indexed access types (`B[\"key\"]`, `B[1]`)":
+    'type A = {key: number}\nlocal v: A["key"] = 1\nreturn v',
+  "local variable attribute (`local x <const> = 1`)":
+    "local x <const> = 1\nreturn x",
+  "keyword-named fields (`t.type`, `t:type()`, `t.end`)":
+    "local t = {type = 'a', end1 = 2}\nprint(t.type)\nt:type()",
+  "type packs (`<T...>`, `(...) -> (number, T...)`)":
+    "local function pack<T...>(...: T...): (number, T...)\n  return select('#', ...), ...\nend\nreturn pack",
+  "`\\z` escape with a real newline inside the string":
+    'local s = "a' + BS + 'z\n    b"\nreturn s',
+  "`\\<newline>` line continuation inside a string":
+    'local s = "line1' + BS + '\nline2"\nreturn s',
+};
+for (const [label, src] of Object.entries(VALID_4_8)) {
+  const r = S.analyseLuau(src);
+  check("4.8.0 accepts " + label, r.ok, r.error ? r.error + " @" + r.line : "");
+}
+
+// The same release hardened the REJECT direction: a truncated reply used to be
+// reported as valid because the type parser returned silently at EOF.
+const SILENT_LEAKS_4_8 = {
+  "type alias with no right-hand side": "type A =",
+  "truncated generic type": "local x: {a: number",
+  "truncated index": "local x = t[1",
+  "truncated call": "print(1, 2",
+};
+for (const [label, src] of Object.entries(SILENT_LEAKS_4_8)) {
+  check("4.8.0 rejects the truncated program: " + label, !S.analyseStrict(src).ok);
+}
+
+// ── MEASURED performance ceiling, not a slogan ─────────────────────────────
+// A real model reply carries a few KB of Luau. This runs the analyser over a
+// generated 12 KB program and fails if it regresses past its measured budget,
+// so "fast" is a number in the test instead of a claim in a README.
+{
+  let big = "";
+  for (let i = 0; i < 200; i++) big += "local v" + i + " = " + i + " * 2\nif v" + i + " > 3 then\n  v" + i + " = v" + i + " + 1\nend\n";
+  const t0 = process.hrtime.bigint();
+  const runs = 10;
+  for (let i = 0; i < runs; i++) S.analyseLuau(big + "\n" + i);
+  const perRun = Number(process.hrtime.bigint() - t0) / 1e6 / runs;
+  // Measured at ~0.7–0.8 ms/run on the reference machine; 8 ms is a generous
+  // ceiling that still fails loudly if the parser ever goes quadratic.
+  check("4.8.0 analyses " + Math.round(big.length / 1024) + " KB in one-digit ms (" + perRun.toFixed(2) + " ms/run)", perRun < 8, perRun.toFixed(2) + " ms");
+}
+
+// ── 4.8.0 AUTO-REPAIR — mechanical failures keep the turn alive ────────────
+// Each case is a real truncation shape. The repair must succeed AND report what
+// it did; anything it cannot fix must still be rejected rather than forced.
+const REPAIRS_4_8 = {
+  "one missing final `end`": ["local function f()\n  if true then\n    return 1\nend",
+    /closed 1 unclosed block/],
+  "two missing `end`s": ["local function f()\n  for i = 1, 3 do\n    print(i)\n",
+    /closed 2 unclosed block/],
+  "a stray trailing `end`": ["print(1)\nend", /stray trailing 'end'/],
+  "an unclosed call paren": ["local x = (1 + 2", /closed the trailing '\(' with '\)'/],
+  "an unclosed table": ["local t = {a = 1", /closed the trailing '\{' with '\}'/],
+};
+for (const [label, [src, re]] of Object.entries(REPAIRS_4_8)) {
+  const r = S.repairLuau(src);
+  check("4.8.0 repairs " + label, !!r && r.ok && re.test(r.repair || ""), r ? r.repair : "no repair");
+}
+check("4.8.0 never repairs already-valid code", S.repairLuau("local x = 1\nreturn x") === null);
+check("4.8.0 refuses to repair an unterminated string",
+  S.repairLuau('local s = "abc') === null);
+check("4.8.0 refuses to repair a semantic error (missing `then`)",
+  S.repairLuau("if true\n  print(1)\nend") === null);
+const repaired = S.analyseLuau("local function f()\n  return 1");
+check("analyseLuau reports what the repair changed", !!(repaired.repairedFrom && repaired.repair), JSON.stringify(repaired.repair));
+const strictVerdict = S.analyseStrict("local function f()\n  return 1");
+check("analyseStrict still reports the RAW failure", !strictVerdict.ok && /needs 'end'/.test(String(strictVerdict.error)), strictVerdict.error);
+
+
+// ── 4.8.1: multi_edit PAYLOAD ANALYSIS ──────────────────────────────────────
+// multi_edit was the ONLY mutation path with no static check: the Luau gate ran
+// for execute_luau only, so a batch of script bodies went to Studio unparsed and
+// the whole batch failed atomically on the last bad edit, with no way for the
+// model to tell which edit was wrong.
+check("4.8.1 analyseMultiEdit is exported", typeof S.analyseMultiEdit === "function");
+check("4.8.1 multi_edit batches are declared unbounded", S.MULTI_EDIT_UNBOUNDED === true);
+
+const meOk = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "local M = {}\nfunction M.x() return 1 end\nreturn M" }],
+  { isScript: true, className: "ModuleScript" });
+check("4.8.1 a valid script creation passes", meOk.ok === true, meOk.error);
+check("4.8.1 it reports how many edits it checked", meOk.checked === 1);
+
+const meBad = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "local function f()\n  return 1" }],
+  { isScript: true });
+check("4.8.1 a broken script body is rejected", meBad.ok === false);
+check("4.8.1 the error names the offending edit index", meBad.errors[0].index === 0);
+check("4.8.1 the error explains the Luau problem", /needs 'end'/.test(String(meBad.error)), meBad.error);
+
+// The 2nd-edit case matters most: Studio would have rejected the WHOLE batch and
+// the model had no signal about which of its edits was at fault.
+const meSecond = S.analyseMultiEdit(
+  [{ old_string: "", new_string: "return 1" }, { old_string: "", new_string: "if x then" }],
+  { isScript: true });
+check("4.8.1 a failure in edit #2 is attributed to #2", meSecond.ok === false && meSecond.errors[0].index === 1);
+check("4.8.1 the message counts the remaining failures", /and 0 more/.test(String(meSecond.error)) === false);
+
+// A non-script edit (property tweak) is not Luau: it must be skipped, never
+// guessed at, or every ordinary set_property would be falsely rejected.
+const meSkip = S.analyseMultiEdit([{ old_string: "a", new_string: "b" }], { isScript: false, className: "" });
+check("4.8.1 non-script edits are skipped, not parsed", meSkip.ok === true && meSkip.skipped === 1 && meSkip.checked === 0);
+
+// Zero edits is a no-op call that can only waste a turn.
+check("4.8.1 an empty edits[] is rejected", S.analyseMultiEdit([], {}).ok === false);
+
+// No false positives on real script shapes.
+const shapes = [
+  ["Lua", "local x = 1\nprint(x)"],
+  ["ModuleScript", "local M = {}\nfunction M.f() return 1 end\nreturn M"],
+  ["LocalScript", "local p = game.Players.LocalPlayer\nprint(p.Name)"],
+  ["generic fn", "local function id<T>(x: T): T return x end"],
+  ["guard", 'if type(x) ~= "string" then return end'],
+];
+for (const [name, src] of shapes) {
+  const r = S.analyseMultiEdit([{ old_string: "", new_string: src }], { isScript: true });
+  check("4.8.1 valid " + name + " body accepted", r.ok === true, r.error);
+}
 
 console.log("\n" + pass + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);

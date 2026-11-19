@@ -10,6 +10,83 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ---
 
+## 4.8.2 — GUI & logo generation (code, not prompts)
+
+Full accounting: [`docs/GUI_LOGO_4.8.2.md`](docs/GUI_LOGO_4.8.2.md).
+
+The prompt already said *"scale-based GUI (UDim2.fromScale), TextScaled, mobile safe
+area 0.05, UICorner 8"* for several releases, and the GUI still looked wrong. More
+prose could not fix it: a model writing GUI by hand has no pixel coordinates, no
+feedback on what it drew, and no way to keep eight widgets consistent.
+
+So the layout maths moved into code. `core/gui.js` + two new commands:
+
+| Command | Output | Verified by |
+|---|---|---|
+| `generate_gui {theme, screen, widgets, title}` | Complete Luau `ScreenGui`, 10 widget types / 5 screens | parsed by the same analyser that gates `execute_luau` |
+| `generate_logo {style, theme, initials, size}` | Vector logo (no upload needed — Roblox can't upload from Luau), aspect-locked | same |
+
+**Measured, not claimed:** 7 themes, every body-text pair clears **WCAG AA 4.5:1**
+(worst 6.63:1, computed from the real luminance formula); every geometry value is
+`UDim2.fromScale`; every widget gets radius/stroke/gradient from one shared function
+so no widget can have a one-off corner; buttons get real `TweenService` hover/press;
+the HUD reads `GetAttribute("Coins")` instead of invented text.
+
+```
+node zeroscript-extension-v2/test-gui.js   → 89 passed, 0 failed
+73 theme×screen×widget×logo outputs        → 73 parse as valid Luau, 0 failures
+```
+
+**Honest limits:** this removes the opportunity to get layout arithmetic wrong; it
+does not make a model artistic. It produces code, not pixels — `capabilities.vision
+=== false` — which is why the prompt now requires `screen_capture` after a GUI change
+and calls an uncaptured GUI UNVERIFIED. On ChatGPT `screen_capture` is blocked
+(`supportsVision: false`, free-tier image quota), so `generate_gui` still works but
+the model cannot look; the tool note says so.
+
+---
+
+## 4.8.1 — multi-edit, hallucinated connections, solo coder
+
+Four reported problems. Full accounting with reproduced evidence is in
+[`docs/REPAIR_NOTES_4.8.1.md`](docs/REPAIR_NOTES_4.8.1.md).
+
+| Report | Root cause | Fix | Verified |
+|---|---|---|---|
+| **"Support multi edit, unlimited edits"** | The prompt claimed `MAX: batch up to 24 edits per call` and **no code enforced it** — a grep found the string and nothing else. Worse, `multi_edit` had **no syntax check at all** (the Luau gate was `execute_luau`-only), so a batch went to Studio unparsed and Studio rejected **all of it** on one bad edit, with no clue which one. | `analyseMultiEdit()` parses every replacement before the round trip and **names the offending edit index**; the cap text is replaced with `NO EDIT CAP`. | `test-sandbox.js` 105 assertions |
+| **"It says it's connected to another agent"** | For `plan=direct` — one AI, zero peers — `getMagicForPrompt()` returned `connected:true`, `external:true`, `magic:"im connected to other agent"`. | `connected` now means "a peer is reachable". Solo exports `connected:false, solo:true, peers:0` and its own truthful magic line. | `test-plan-wall.js` 38 assertions |
+| **"Declare single mode as coder always"** | `effectiveRole()` returned `null` outside team mode, so nothing ever told the model which role it was — and it invented teammates. | Returns `"coder"`, surfaced as a T0 `YOUR ROLE:` line that no budget can drop. | `test-prompt.js` 96 assertions |
+| **"Hallucinating even with a clear prompt"** | No rule forbade invented *capability/connection* claims. | Rule 1b `NO INVENTED CONNECTION`: no tool result = no proof. | `test-prompt.js` |
+
+**Two latent bugs found by the tests, both real:**
+
+1. The user's custom prompt was **silently dropped** on any provider whose budget
+   was below the T0 floor (`room() > 200` is false when `room()` is negative).
+2. A `/**` comment in `main.js` became the terminator for a stray `/*` on line 3
+   (`providers/*.js`), swallowing **78,195 bytes** during comment stripping and
+   breaking `test-composer.js`'s source slicing.
+
+---
+
+## 4.8.0 — three reported problems, fixed with measured evidence
+
+This release changes exactly three things, because these are the three defects that
+were reported. Every number is reproducible; the full account with the before/after
+tables is in [`docs/REPAIR_NOTES_4.8.0.md`](docs/REPAIR_NOTES_4.8.0.md).
+
+| Report | What was actually wrong | Fix | Verified by |
+|---|---|---|---|
+| **"External prompts don't give better results and the claims are fake"** | Both halves were true. The claims were invented (`~35-40% closer to Pro`, `~30%`, `syntax -28%`) — there is no eval harness in this repo that could measure them. And the enhancer *did* make things worse: `isBadPrompt()` treated any ≤4-word message as vague, so `"thanks"` got **+5,400 chars** of simulator spec, and `isBadPrompt()` was also the only gate on the spec path, so **`"why"` got +5,397 chars** too. | Every percentage deleted. Noise prompts, one-word questions and clear short requests now return `changed:false` — byte-identical on the wire. `needsSpec()` is a separate predicate that fires only on a bare BUILD ask. The `detailed` path no longer re-appends the protocol. | `test-enhancer.js` — **114 assertions** |
+| **"The built-in syntax checker is garbage"** | 5 of 64 valid Luau snippets were rejected, including `if type(x) ~= "string" then return end` — *the* standard Roblox guard, and exactly the anti-exploit validation the prompt asks for. Meanwhile truncated code (`type A =`) was reported **valid**. `main.js` blocks `execute_luau` on a syntax verdict, so every false positive silently destroyed a correct reply. | 8 grammar defects fixed (contextual `type`/`typeof`, string-literal unions, keyword field names, `<const>`, indexed access types, type packs, `typeof(...)` types, `\z` escapes). Truncated input is now an error. Added `repairLuau()`: a bounded, provable auto-repair that only closes a block the open-block ledger names, and tells the model what it changed. | `test-sandbox.js` — **89 assertions**, 64/64 valid accepted, 15/15 broken rejected, plus a measured ms/run ceiling |
+| **"The startup command is so long it will cause hallucination"** | Measured: **37,983 chars ≈ 9,500 tokens** before the user types anything — 16 accreted sections, the 4.2 KB simulator blueprint in *every* prompt, the self-heal loop printed **3×**, `Ready — ZeroScript MAX 4.3.0` (three releases stale), invented latencies, and `Measured … +40-50% Pro proximity` three lines above "we quote no percentage". | Rebuilt as ranked tiers with a hard budget: **6,656 chars (−82.5%)**, ≈1,664 tokens, 9 sections, every rule stated exactly once, a numbered priority order for conflicts, and honest latency text. `promptBudgetFor(provider)` derives the budget from the provider's real `sendCharBudget`; the lowest tier truncates first and the command format never does. | `test-prompt.js` — **78 assertions** pinning size, budget, non-duplication, honesty and tier ordering |
+
+Nothing else was changed. `bridge.py`, `team_hub.py`, `team_console.py` and
+`start.py` were read and exercised (55 Python tests + 26 bridge-lifecycle
+assertions) but contain none of the three defects, and inventing edits to correct
+files would be the dishonesty this release is about.
+
+---
+
 ## Existing MAX features (retained from main)
 
 # ZeroScript MAX 4.7.0 × Roblox Studio Agent

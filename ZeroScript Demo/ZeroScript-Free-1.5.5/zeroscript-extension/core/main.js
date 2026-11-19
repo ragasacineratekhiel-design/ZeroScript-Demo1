@@ -261,6 +261,10 @@
     truthPending: false,
     truthReads: 0,
     truthRetries: 0,
+    // 4.8.0 static Luau auto-repair: how many blocks were closed mechanically,
+    // and the note to append to the NEXT feedback so the model learns what changed.
+    sandboxRepairs: 0,
+    sandboxRepairNote: "",
     toolList: [],
     toolNames: new Set(),
     // Successful tool calls since the last command-list reminder. DeepSeek (and
@@ -1200,6 +1204,26 @@
     diag("tools.fetched", { ms: Date.now() - t0, n: (r && r.tools && r.tools.length) || 0 });
     if (r && r.tools && r.tools.length) {
       const tools = r.tools.filter((t) => !isBlockedTool(t.name));
+      // 4.8.2: the GUI/logo generators are VIRTUAL commands — they run in the
+      // extension, so the bridge has never heard of them and list_commands would
+      // not advertise them. A model cannot use a command it cannot see, so they
+      // are injected into the catalogue here with their real signatures.
+      const VIRTUAL = [
+        { name: "generate_gui", server: "roblox", description: "Generate a complete, scale-based Roblox GUI as verified Luau. Use instead of hand-writing UDim2.",
+          inputSchema: { type: "object", properties: {
+            theme: { type: "string", description: "neon|glass|sunset|forest|mono|candy|gold" },
+            screen: { type: "string", description: "hud|shop|menu|modal|inv" },
+            widgets: { type: "array", items: { type: "string" }, description: "hud|stats|currency|buttons|shop|inventory|dialog|toast|progress|title" },
+            title: { type: "string", description: "visible title text" } } } },
+        { name: "generate_logo", server: "roblox", description: "Generate a vector logo (no upload needed) as verified Luau.",
+          inputSchema: { type: "object", properties: {
+            style: { type: "string", description: "monogram|mark|shield|bolt" },
+            theme: { type: "string", description: "neon|glass|sunset|forest|mono|candy|gold" },
+            initials: { type: "string", description: "1-2 letters" },
+            size: { type: "number", description: "reference pixels, 32-1024" },
+            glow: { type: "boolean", description: "outer stroke" } } } },
+      ];
+      for (const v of VIRTUAL) if (!tools.some((t) => t.name === v.name)) tools.push(v);
       A.toolList = tools;
       A.toolNames = new Set(tools.map((t) => t.name));
       A.toolsAt = Date.now();
@@ -1327,7 +1351,29 @@
         }
       }
     } catch (_e) { globalThis.ZSSafe?.seen?.("main.effectiveRole", _e); }
-    return null; // direct/single-AI mode: no role gate (one AI does everything)
+    // 4.8.1: DECLARE THE ROLE. This used to `return null` for direct/single-AI
+    // mode, which was safe (no role gate) but silent: nothing in the prompt or the
+    // tool result said WHICH role was running, so a solo tab would narrate "I'll
+    // send this to the coder" / "the checker should verify" — inventing teammates
+    // that do not exist. Single mode IS the coder: it is the one role that may
+    // mutate Studio, and in a solo run the single AI must do exactly that.
+    // Returning "coder" also keeps the mutation gate closed for anyone holding a
+    // stale planner/checker assignment, because roleAllowsTool("coder", …) allows
+    // every tool the solo agent is supposed to have.
+    return "coder";
+  }
+  // Human-readable identity for the overlay/prompt: always non-empty.
+  // NOTE: never use a JSDoc-style `/**` opener in this file. Line 3 contains the
+  // literal `providers/*.js` inside a header comment, and `/*` there has no
+  // closer anywhere before it — so the first `/**` further down becomes its
+  // accidental terminator, swallowing everything in between. That silently broke
+  // test-composer.js's source slicing in 4.8.1. Plain `//` comments cannot do it.
+  function declaredRole() {
+    try {
+      const r = effectiveRole();
+      const teamed = typeof team !== "undefined" && (team.active || team.joined);
+      return { role: r || "coder", assigned: !!teamed, solo: !teamed };
+    } catch (_e) { globalThis.ZSSafe?.seen?.("main.declaredRole", _e); return { role: "coder", assigned: false, solo: true }; }
   }
   function isReadTool(name) {
     const bare = String(name || "").split("/").pop();
@@ -1392,6 +1438,41 @@
       if (!r || !r.ok) return "ERROR: verify_fact could not read Studio: " + String((r && r.error) || "bridge offline") + ". Say NOT VERIFIED for this claim.";
       if (A.truthPending) A.truthReads++;
       return "Output of 'verify_fact':\n" + String(r.text || "") + "\n[VERIFIED via " + String(r.tool || "inspect_instance") + " sha256:" + String(r.sha256 || "").slice(0, 12) + "]";
+    }
+    // ── 4.8.2: generate_gui — DETERMINISTIC layout, not a prompt ─────────────
+    // The model used to hand-write every UDim2 number, which is why GUI output was
+    // inconsistent and why "just prompt better" could not fix it: the model has no
+    // pixel feedback. This command computes the layout in core/gui.js and returns
+    // REAL Luau, already parsed by the same analyser that gates execute_luau. The
+    // model's job drops from "invent coordinates" to "pick a theme and widgets".
+    if (name === "generate_gui" || name === "generate_logo") {
+      try {
+        if (!window.ZSGui) return "ERROR: the GUI generator is not loaded in this tab. Reload the page (the extension's core/gui.js did not run).";
+        const isLogo = name === "generate_logo";
+        const r = window.ZSGui.build({ ...args, kind: isLogo ? "logo" : (args.kind || "gui") });
+        if (r.problems && r.problems.length) {
+          // Report unknown choices instead of silently defaulting: a wrong theme
+          // name is a typo the model can fix in one turn.
+          return `ERROR in ${name}: ${r.problems.join("; ")}`;
+        }
+        // Never hand back code that the execute path would reject. Same analyser,
+        // so "generated" and "parses" cannot disagree.
+        const verdict = window.ZSSandbox ? window.ZSSandbox.analyseStrict(r.script) : { ok: true };
+        if (!verdict.ok) {
+          diag("gui.generatedInvalid", { error: verdict.error });
+          return `ERROR in ${name}: the generator produced Luau that does not parse (${verdict.error}). This is an extension bug, not your mistake - tell the user and do not retry.`;
+        }
+        diag("gui.generated", { kind: r.kind, chars: r.meta.chars, lines: r.meta.lines });
+        const vt = isLogo ? (r.meta.style + " logo") : (r.meta.screen + " screen");
+        return `Output of '${name}':\nGENERATED ${vt} — theme ${r.meta.theme}, ${r.meta.lines} lines, ${r.meta.chars} chars, verified to parse.\n` +
+          `Contrast (WCAG): text/bg ${r.meta.contrast.textOnBg.toFixed(2)}:1, muted/bg ${r.meta.contrast.mutedOnBg.toFixed(2)}:1.\n` +
+          `Send this EXACTLY as a create through multi_edit (className Script/LocalScript, old_string "", new_string = this source). ` +
+          `Do not rewrite the layout numbers by hand - if you need a change, call ${name} again with different args.\n` +
+          `\`\`\`lua\n${r.script}\`\`\``;
+      } catch (e) {
+        diag("gui.error", { e: String(e) });
+        return `ERROR in ${name}: ${String(e && e.message || e)}. Report this to the user; do not retry the same call.`;
+      }
     }
     // ROLE GATE: planner/checker mutations are rejected with a redirect.
     // The model sees a clear ERROR and learns to hand off via team_send.
@@ -1538,10 +1619,49 @@
         const dry = window.ZSSandbox.dryRunLuau(args.code||"", 5);
         if(!dry.ok && dry.kind==="syntax"){
           diag("sandbox.block", { name, error: dry.error });
-          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
+          // 4.8.0: when the analyser could only fail because the block was
+          // TRUNCATED (a cut-off reply), say that instead of sending the model on
+          // a syntax hunt. It is the commonest real cause and the model cannot
+          // see that its own output was clipped.
+          const truncated = /end of input|never closed|unterminated/i.test(String(dry.error||""));
+          return `ERROR in execute_luau: ${dry.error}\nHint: ${dry.hint||"check syntax: missing end/quote/paren, fix via script_read→retry"}\n${truncated ? "(the block ends mid-code — if your previous reply was cut off by a length limit, re-send ONLY the missing tail; otherwise add the missing closer)\n" : ""}(caught by the static Luau pre-check BEFORE Studio — no Studio round trip spent; this is syntax only, runtime behaviour is still unverified)`;
+        }
+        // 4.8.0 AUTO-REPAIR: a mechanically-closable block (missing final `end`,
+        // unclosed paren/table) is sent as repaired instead of being bounced back.
+        // The model is told exactly what changed so it never "learns" that its
+        // unfinished code was correct.
+        if(dry.ok && dry.repair && dry.repaired){
+          diag("sandbox.repaired", { name, repair: dry.repair });
+          args.code = dry.repaired;
+          A.sandboxRepairs = (A.sandboxRepairs||0)+1;
+          A.sandboxRepairNote = `Auto-repaired your Luau before sending it: ${dry.repair}. The rest of the code was NOT changed — if the repair was not what you meant, re-send the block completed.`;
         }
         // runtime-heuristic block could be surfaced too, but keep permissive: only hard syntax blocks to avoid false positives
       }catch(e){ try{ diag("sandbox.err", {e:String(e)});}catch (_e) { globalThis.ZSSafe?.seen?.("main.props", _e); } }
+    }
+    // ── 4.8.1: multi_edit PAYLOAD GATE ────────────────────────────────────────
+    // multi_edit was the ONE mutation path with no static check: the Luau gate
+    // above only covers execute_luau, so a batch of script bodies went to Studio
+    // unparsed and the WHOLE batch failed atomically on the last bad edit. The
+    // model saw a generic studio error with no indication which edit was wrong.
+    // Now each replacement is parsed before the round trip and the offender is
+    // named by index. Non-script edits are skipped, never guessed at.
+    if (bareName === "multi_edit" && typeof window.ZSSandbox !== "undefined" && window.ZSSandbox.analyseMultiEdit) {
+      try {
+        const me = window.ZSSandbox.analyseMultiEdit(args.edits, {
+          className: args.className || args.class_name || "",
+          isScript: !!args.is_script,
+          target: args.target_file || args.file_path || args.path || "",
+        });
+        if (!me.ok) {
+          diag("sandbox.multiEditBlock", { errors: me.errors.length, first: me.error });
+          const li = me.errors[0] && typeof me.errors[0].index === "number" ? me.errors[0].index : -1;
+          return `ERROR in multi_edit: ${me.error}\nHint: ${me.hint || "fix the Luau in that edit before re-sending."}\n` +
+            `Nothing was sent to Studio, so NO edit in this batch was applied — re-send the full corrected batch. ` +
+            `(edit index is 0-based: #${li + 1} of ${(args.edits || []).length})`;
+        }
+        if (me.checked) diag("sandbox.multiEditOk", { checked: me.checked, skipped: me.skipped });
+      } catch (e) { try { diag("sandbox.multiEditErr", { e: String(e) }); } catch (_e) { globalThis.ZSSafe?.seen?.("main.multiEdit", _e); } }
     }
     // The player-input tools only run against the Client datamodel (play mode) and
     // "Client" is the sole allowed value, so default it when the model omits it -
@@ -1624,7 +1744,12 @@
         A.truthReads++;
         return `Output of '${name}':\n${text}\n[VERIFIED via ${bareName} digest:${truthDigest(text)}]`;
       }
-      return `Output of '${name}':\n${text}`;
+      // 4.8.0: surface the auto-repair on the RESULT, once. The model must know
+      // that what Studio ran is not byte-identical to what it wrote, otherwise
+      // it "learns" that an unfinished block was accepted.
+      let note = "";
+      if (A.sandboxRepairNote) { note = `\n[${A.sandboxRepairNote}]`; A.sandboxRepairNote = ""; }
+      return `Output of '${name}':\n${text}${note}`;
     }
     // Orphaned content script - a page reload is the only cure, so say exactly
     // that instead of blaming the bridge (see bg / isContextInvalidated).
@@ -2504,11 +2629,21 @@
         if(full && stats && stats.wallLen > 400) wallDigest = full.slice(0, 1400);
       }
     }catch (_e) { globalThis.ZSSafe?.seen?.("main.systemPrompt", _e); }
+    // 4.8.0: the prompt is BUDGETED per provider. sendCharBudget is the real
+    // limit we know the composer/model accepts; promptBudgetFor turns it into a
+    // character budget for the prompt so a large custom prompt or memory digest
+    // truncates the LOWEST-tier prose instead of the command protocol.
+    // 4.8.1: state the role THIS tab is running, and whether a peer actually
+    // exists. `solo` is derived from live state (team.active), never assumed.
+    const dr = declaredRole();
     return ZS.buildSystemPrompt({
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
       providerNotes: P.promptExtra || "",
       memoryDigest: wallDigest,
+      budget: ZS.promptBudgetFor ? ZS.promptBudgetFor(P) : undefined,
+      role: dr.role,
+      solo: dr.solo,
     });
   }
 
@@ -3809,7 +3944,10 @@
               if(st.need>1){
                 warnEl.hidden=false;
                 warnEl.style.background="rgba(16,185,129,0.12)"; warnEl.style.borderColor="rgba(16,185,129,0.28)"; warnEl.style.color="#a7f3d0";
-                warnEl.textContent = `✓ ${st.magic} — ${st.have} tabs ready (${st.arena?st.arena+" Arena ":""}), external ${st.external?"/code /force etc active":"blocked"}`;
+                // 4.8.1: `external` only ever meant "peers exist", not "commands
+                // work" — slash commands run locally in every mode. Saying
+                // "external blocked" for a solo run was a second false report.
+                warnEl.textContent = `✓ ${st.magic} — ${st.have} tab(s), ${st.arena?st.arena+" Arena, ":""}peers ${st.external?"connected":"none (solo)"}`;
               }
             }
             // store for prompt injection

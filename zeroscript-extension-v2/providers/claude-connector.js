@@ -7,7 +7,7 @@
 const ZSClaudeConnector = (() => {
   "use strict";
 
-  const CONNECTOR_VERSION = "4.7.1";
+  const CONNECTOR_VERSION = "4.8.2";
   const CONNECTOR_ID = "claude-custom-connector";
   const HANDSHAKE_TTL_MS = 1500;
 

@@ -826,7 +826,7 @@ try {
 
   return {
     id: "meta",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "Meta AI",
     // Meta's composer accepts image uploads (hidden multi-file input → inline
     // Lexical preview → uploaded on send; see attachImages). Vision-capable, so

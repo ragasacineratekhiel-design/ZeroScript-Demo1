@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One service worker already serves every tab. Mutations are sent ONCE: never
 // hedge/replay them across transports after an ambiguous timeout.
-const VERSION = "4.7.1";
+const VERSION = "4.8.2";
 const WS_URL = 'ws://127.0.0.1:17613';
 const HTTP_BASE = 'http://127.0.0.1:17614';
 // Timings come from core/config.js (ZS.T) when it is available, so the service

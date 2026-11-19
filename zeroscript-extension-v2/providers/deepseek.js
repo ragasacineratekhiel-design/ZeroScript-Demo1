@@ -1038,7 +1038,7 @@ try {
 
   return {
     id: "deepseek",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "DeepSeek",
     // DYNAMIC: DeepSeek's Instant/Expert models are text-only, but the V4 UI has a
     // dedicated "Vision" model tab. When the user selects Vision we honour it (see

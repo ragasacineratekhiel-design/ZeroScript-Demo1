@@ -753,7 +753,7 @@ try {
 
   return {
     id: "gemini",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "Gemini",
     // Gemini's web model is natively multimodal (image understanding), so
     // screen_capture is safe to expose here. Other providers default this
