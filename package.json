@@ -1,6 +1,6 @@
 {
   "name": "zeroscript-max",
-  "version": "4.7.1",
+  "version": "4.8.2",
   "private": true,
   "description": "ZeroScript MAX \u2014 browser extension + local bridge that lets any AI chat drive Roblox Studio",
   "license": "GPL-3.0-or-later",
@@ -20,7 +20,8 @@
     "test:team": "node tests/test-extension.js && node tests/test-team-dom.js && node tests/test-claude-dom.js && node tests/test-provider-startup.js && node tests/test-popup.js && node zeroscript-extension-v2/test-parser.js && node zeroscript-extension-v2/test-chatgpt.js",
     "test:exec": "node zeroscript-extension-v2/test-exec-modes.js",
     "test:prompt": "node zeroscript-extension-v2/test-prompt.js",
-    "test:enhancer": "node zeroscript-extension-v2/test-enhancer.js"
+    "test:enhancer": "node zeroscript-extension-v2/test-enhancer.js",
+    "test:gui": "node zeroscript-extension-v2/test-gui.js"
   },
   "engines": {
     "node": ">=18"

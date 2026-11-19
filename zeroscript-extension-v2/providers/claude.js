@@ -675,7 +675,7 @@ You are the Claude tab registered with ZeroScript. Model tier and accuracy are n
     thinkingSel: S.thinking,
     coverTarget,
     coverMaxH: 320,
-    version: "4.7.1",
+    version: "4.8.2",
     init({diag:d}={}){
       if(d) diag=d;
       try{document.documentElement.setAttribute("data-zs-claude-ver","4.7.1");}catch (_e) { globalThis.ZSSafe?.seen?.("claude.init", _e); }

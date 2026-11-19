@@ -847,7 +847,7 @@ try {
 
   return {
     id: "kimi",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "Kimi",
     // Confirmed live: Kimi (K2.6) reads attached images - it correctly described
     // a test screenshot's content. So screen_capture is exposed here (see main.js

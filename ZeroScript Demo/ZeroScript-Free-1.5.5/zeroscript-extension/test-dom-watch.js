@@ -30,7 +30,7 @@ const DW = w.ZSDomWatch;
 (async () => {
   check("exports the documented API",
     !!DW && ["waitForDOMChange", "waitFor", "onDomChange", "stats"].every((k) => typeof DW[k] === "function"));
-  check("version is 4.7.1", DW.version === "4.7.1", DW.version);
+  check("version is 4.8.2", DW.version === "4.8.2", DW.version);
 
   // ── region filtering ─────────────────────────────────────────────────────
   const all = DW.waitForDOMChange(400);

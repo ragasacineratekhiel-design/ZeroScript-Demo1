@@ -8,7 +8,7 @@ const ZS = (() => {
 
   // ZeroScript MAX 4.7.0 — verified loop + real Luau parser + event-driven wall
   const APP_NAME = "ZeroScript MAX";
-  const APP_VERSION = "4.7.1";
+  const APP_VERSION = "4.8.2";
 
   // ── STUDIO BUILD MODE (adopted from the 4.6.1 nested copy) ───────────────
   // The nested compatibility copy had already shipped this anti-"static text"
@@ -367,7 +367,11 @@ Aim for correct, maintainable Roblox code. Do not claim publish-readiness or "no
   // ── T1: mid-task detail (one copy of each rule) ────────────────────────────
   const P_QUALITY = `━━━ BUILD BAR (when the task is "build something") ━━━
 Every script complete and commented; server authority with RemoteEvent validation (type/size/cooldown/distance); pcall around DataStore with retry and autosave + BindToClose; leaderstats and a save table; TweenService/Sound/particles for feel; scale-based GUI (UDim2.fromScale), TextScaled, mobile safe area 0.05, UICorner 8. Performance: no while true without task.wait(1), debounce, connection cleanup, StreamingEnabled where it helps.
-Finish with a Play test (start_stop_play true → exercise the feature in Client/Server → stop) when the feature needs a live check.`;
+Finish with a Play test (start_stop_play true → exercise the feature in Client/Server → stop) when the feature needs a live check.
+
+━━━ GUI & LOGO: GENERATE, THEN LOOK ━━━
+Never hand-write GUI layout: you have no pixels, so every UDim2 number you invent is a guess. Call generate_gui {theme,screen,widgets,title} or generate_logo {style,theme,initials} and send the returned source through multi_edit EXACTLY as given (LocalScript, old_string "", new_string = source) — do not retype the layout.
+THEN LOOK: start_stop_play true → screen_capture → judge what you SEE (overlap, clipping, contrast). Fix by re-calling the generator with different args, never by nudging numbers. A GUI you never captured is UNVERIFIED — say so.`;
 
   const P_MEMORY = `━━━ PROJECT MEMORY (durable, shared across AIs) ━━━
 game.ServerStorage.ZeroScript.Memory is a ModuleScript that holds lasting facts: what the project is, where key scripts live, conventions, decisions, user preferences. Read it the first time a request needs the place (not at startup, not for chit-chat); update the right section with multi_edit when you learn something durable. Never store a guess as fact, and never store a task log. If it contradicts the real place, verify against the place, then fix the memory.`;
@@ -570,6 +574,16 @@ Exec mode: ${(typeof window !== "undefined" && window.__zsExecMode) || "single"}
       "(e.g. '... : Vector3 expected, got string', or 'Failed to parse command code' for syntax error). " +
       "Create objects with Instance.new and set .Parent; reach services via game:GetService(\"Name\"). MAX: bulk loop 20+ Instances per call. " +
       "⚠️ PLAY+SYNTAX ENFORCE: Bare ###LUA### targets Edit only — if get_studio_state shows playing, STOP first via start_stop_play {is_start:false} then Edit. For live read/tweak, use ###LUA:Server### or ###LUA:Client### explicitly. On ANY error (syntax/parse/nil value/unexpected) do self-heal STOP-loop: get_studio_state→start_stop_play false if playing→verify→script_read→fix→retry (≤3). Edit datamodel is not available in Play mode = you forgot to STOP; Failed to parse = syntax fix needed.",
+    generate_gui:
+      "VIRTUAL command (runs in the extension, not Studio). Generates a COMPLETE, scale-based Roblox GUI as real Luau and verifies it parses. " +
+      "USE THIS INSTEAD OF HAND-WRITING GUI CODE - hand-written UDim2 numbers are the \"garbage GUI\" failure mode. " +
+      "Args: theme (neon|glass|sunset|forest|mono|candy|gold), screen (hud|shop|menu|modal|inv), widgets[] (hud|stats|currency|buttons|shop|inventory|dialog|toast|progress|title), title. " +
+      "Every colour pair clears WCAG AA 4.5:1 (measured). Returns full source: send it EXACTLY through multi_edit (className LocalScript, old_string \"\", new_string = source). Never retype the layout. " +
+      "After creating it, start_stop_play true and screen_capture to actually LOOK at it, then fix what you SEE.",
+    generate_logo:
+      "VIRTUAL command. Generates a VECTOR logo (no image upload needed - Roblox cannot upload images from Luau) that stays crisp from 32px to 1024px. " +
+      "Args: style (monogram|mark|shield|bolt), theme, initials, size, glow. Aspect-locked so it cannot be squashed. Returns full Luau source - send via multi_edit exactly as returned. " +
+      "For a place icon in Studio's own UI you still need a human to screenshot the rendered logo; say so instead of pretending a .png was created.",
     multi_edit:
       "old_string must match script's current text EXACTLY, byte-for-byte, including tabs/spaces - otherwise " +
       "'old_string ... not found'. ALWAYS script_read first and copy exact text. " +

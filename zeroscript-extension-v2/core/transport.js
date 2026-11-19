@@ -5,7 +5,7 @@
 // non-replayed tool/batch/verifyFact calls.
 (() => {
   "use strict";
-  const VERSION = "4.7.1";
+  const VERSION = "4.8.2";
   const ZS_Transport = (() => {
     const CACHE_MS = 600;
     const _cache = new Map();

@@ -1204,6 +1204,26 @@
     diag("tools.fetched", { ms: Date.now() - t0, n: (r && r.tools && r.tools.length) || 0 });
     if (r && r.tools && r.tools.length) {
       const tools = r.tools.filter((t) => !isBlockedTool(t.name));
+      // 4.8.2: the GUI/logo generators are VIRTUAL commands — they run in the
+      // extension, so the bridge has never heard of them and list_commands would
+      // not advertise them. A model cannot use a command it cannot see, so they
+      // are injected into the catalogue here with their real signatures.
+      const VIRTUAL = [
+        { name: "generate_gui", server: "roblox", description: "Generate a complete, scale-based Roblox GUI as verified Luau. Use instead of hand-writing UDim2.",
+          inputSchema: { type: "object", properties: {
+            theme: { type: "string", description: "neon|glass|sunset|forest|mono|candy|gold" },
+            screen: { type: "string", description: "hud|shop|menu|modal|inv" },
+            widgets: { type: "array", items: { type: "string" }, description: "hud|stats|currency|buttons|shop|inventory|dialog|toast|progress|title" },
+            title: { type: "string", description: "visible title text" } } } },
+        { name: "generate_logo", server: "roblox", description: "Generate a vector logo (no upload needed) as verified Luau.",
+          inputSchema: { type: "object", properties: {
+            style: { type: "string", description: "monogram|mark|shield|bolt" },
+            theme: { type: "string", description: "neon|glass|sunset|forest|mono|candy|gold" },
+            initials: { type: "string", description: "1-2 letters" },
+            size: { type: "number", description: "reference pixels, 32-1024" },
+            glow: { type: "boolean", description: "outer stroke" } } } },
+      ];
+      for (const v of VIRTUAL) if (!tools.some((t) => t.name === v.name)) tools.push(v);
       A.toolList = tools;
       A.toolNames = new Set(tools.map((t) => t.name));
       A.toolsAt = Date.now();
@@ -1418,6 +1438,41 @@
       if (!r || !r.ok) return "ERROR: verify_fact could not read Studio: " + String((r && r.error) || "bridge offline") + ". Say NOT VERIFIED for this claim.";
       if (A.truthPending) A.truthReads++;
       return "Output of 'verify_fact':\n" + String(r.text || "") + "\n[VERIFIED via " + String(r.tool || "inspect_instance") + " sha256:" + String(r.sha256 || "").slice(0, 12) + "]";
+    }
+    // ── 4.8.2: generate_gui — DETERMINISTIC layout, not a prompt ─────────────
+    // The model used to hand-write every UDim2 number, which is why GUI output was
+    // inconsistent and why "just prompt better" could not fix it: the model has no
+    // pixel feedback. This command computes the layout in core/gui.js and returns
+    // REAL Luau, already parsed by the same analyser that gates execute_luau. The
+    // model's job drops from "invent coordinates" to "pick a theme and widgets".
+    if (name === "generate_gui" || name === "generate_logo") {
+      try {
+        if (!window.ZSGui) return "ERROR: the GUI generator is not loaded in this tab. Reload the page (the extension's core/gui.js did not run).";
+        const isLogo = name === "generate_logo";
+        const r = window.ZSGui.build({ ...args, kind: isLogo ? "logo" : (args.kind || "gui") });
+        if (r.problems && r.problems.length) {
+          // Report unknown choices instead of silently defaulting: a wrong theme
+          // name is a typo the model can fix in one turn.
+          return `ERROR in ${name}: ${r.problems.join("; ")}`;
+        }
+        // Never hand back code that the execute path would reject. Same analyser,
+        // so "generated" and "parses" cannot disagree.
+        const verdict = window.ZSSandbox ? window.ZSSandbox.analyseStrict(r.script) : { ok: true };
+        if (!verdict.ok) {
+          diag("gui.generatedInvalid", { error: verdict.error });
+          return `ERROR in ${name}: the generator produced Luau that does not parse (${verdict.error}). This is an extension bug, not your mistake - tell the user and do not retry.`;
+        }
+        diag("gui.generated", { kind: r.kind, chars: r.meta.chars, lines: r.meta.lines });
+        const vt = isLogo ? (r.meta.style + " logo") : (r.meta.screen + " screen");
+        return `Output of '${name}':\nGENERATED ${vt} — theme ${r.meta.theme}, ${r.meta.lines} lines, ${r.meta.chars} chars, verified to parse.\n` +
+          `Contrast (WCAG): text/bg ${r.meta.contrast.textOnBg.toFixed(2)}:1, muted/bg ${r.meta.contrast.mutedOnBg.toFixed(2)}:1.\n` +
+          `Send this EXACTLY as a create through multi_edit (className Script/LocalScript, old_string "", new_string = this source). ` +
+          `Do not rewrite the layout numbers by hand - if you need a change, call ${name} again with different args.\n` +
+          `\`\`\`lua\n${r.script}\`\`\``;
+      } catch (e) {
+        diag("gui.error", { e: String(e) });
+        return `ERROR in ${name}: ${String(e && e.message || e)}. Report this to the user; do not retry the same call.`;
+      }
     }
     // ROLE GATE: planner/checker mutations are rejected with a redirect.
     // The model sees a clear ERROR and learns to hand off via team_send.

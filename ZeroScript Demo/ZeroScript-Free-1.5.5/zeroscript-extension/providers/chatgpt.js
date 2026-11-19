@@ -1088,7 +1088,7 @@ try {
 
   return {
     id: "chatgpt",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "ChatGPT",
     timings,
     // Exported for test-chatgpt.js (the Node smoke test drives it against a stub

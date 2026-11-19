@@ -36,7 +36,7 @@ vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(__dirname + "/core/agent_stability.js", "utf8") + "\nglobalThis.__S = ZSAgentStability;", sandbox);
 const S = sandbox.__S;
 
-check("module version is 4.7.1", S.version === "4.7.1", S.version);
+check("module version is 4.8.2", S.version === "4.8.2", S.version);
 check("studio monitor is exported", typeof S.startStudioMonitor === "function");
 
 let studio = true, drops = 0, polls = 0;

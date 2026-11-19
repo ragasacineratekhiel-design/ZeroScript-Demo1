@@ -36,7 +36,7 @@
 const ZSParse = (() => {
   "use strict";
 
-  const VERSION = "4.7.1";
+  const VERSION = "4.8.2";
 
   // ── O(1) fingerprint cache ────────────────────────────────────────────────
   const CACHE_MAX = 256;   // entries; bounded on purpose

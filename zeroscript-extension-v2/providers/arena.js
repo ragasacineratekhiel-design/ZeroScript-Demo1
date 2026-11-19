@@ -932,7 +932,7 @@ try {
 
   return {
     id: "arena",
-    version: "4.7.1",
+    version: "4.8.2",
     displayName: "Arena",
     // Arena's chat composer accepts image uploads (hidden `input[type=file]` in
     // the form → staged preview card → uploaded on send; see attachImages). The

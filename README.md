@@ -10,6 +10,42 @@ This branch integrates main's execution modes, slash commands, static Luau sandb
 
 ---
 
+## 4.8.2 — GUI & logo generation (code, not prompts)
+
+Full accounting: [`docs/GUI_LOGO_4.8.2.md`](docs/GUI_LOGO_4.8.2.md).
+
+The prompt already said *"scale-based GUI (UDim2.fromScale), TextScaled, mobile safe
+area 0.05, UICorner 8"* for several releases, and the GUI still looked wrong. More
+prose could not fix it: a model writing GUI by hand has no pixel coordinates, no
+feedback on what it drew, and no way to keep eight widgets consistent.
+
+So the layout maths moved into code. `core/gui.js` + two new commands:
+
+| Command | Output | Verified by |
+|---|---|---|
+| `generate_gui {theme, screen, widgets, title}` | Complete Luau `ScreenGui`, 10 widget types / 5 screens | parsed by the same analyser that gates `execute_luau` |
+| `generate_logo {style, theme, initials, size}` | Vector logo (no upload needed — Roblox can't upload from Luau), aspect-locked | same |
+
+**Measured, not claimed:** 7 themes, every body-text pair clears **WCAG AA 4.5:1**
+(worst 6.63:1, computed from the real luminance formula); every geometry value is
+`UDim2.fromScale`; every widget gets radius/stroke/gradient from one shared function
+so no widget can have a one-off corner; buttons get real `TweenService` hover/press;
+the HUD reads `GetAttribute("Coins")` instead of invented text.
+
+```
+node zeroscript-extension-v2/test-gui.js   → 89 passed, 0 failed
+73 theme×screen×widget×logo outputs        → 73 parse as valid Luau, 0 failures
+```
+
+**Honest limits:** this removes the opportunity to get layout arithmetic wrong; it
+does not make a model artistic. It produces code, not pixels — `capabilities.vision
+=== false` — which is why the prompt now requires `screen_capture` after a GUI change
+and calls an uncaptured GUI UNVERIFIED. On ChatGPT `screen_capture` is blocked
+(`supportsVision: false`, free-tier image quota), so `generate_gui` still works but
+the model cannot look; the tool note says so.
+
+---
+
 ## 4.8.1 — multi-edit, hallucinated connections, solo coder
 
 Four reported problems. Full accounting with reproduced evidence is in

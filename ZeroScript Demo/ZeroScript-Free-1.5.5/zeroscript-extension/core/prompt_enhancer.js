@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const ENHANCER_VERSION = "4.7.1";
+  const ENHANCER_VERSION = "4.8.2";
 
   function getPlanOrchestration(raw){
     try{
